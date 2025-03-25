@@ -445,8 +445,6 @@ impl<'a> Gen<'a> {
         if op_opt != Some("=".to_string()) {
             r1 = self.eval_term(lhs.clone(), rhs_opt.is_none())?;
             self.lock_reg(&r1, true);
-        } else {
-            println!("ski {:?} {:?} {:?}={:?}", lhs, op_opt, rhs_opt, res);
         }
         let mut r2;
         if let Some(rhs) = rhs_opt {

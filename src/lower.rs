@@ -292,19 +292,25 @@ impl<'a> Lower<'a> {
     fn r#loop(&mut self, r#loop: &node::Loop) {
         self.label_count += 2;
         let s = self.label_count - 1;
+        self.loop_start.push(s);
         let e = self.label_count;
+        self.loop_exit.push(e);
         self.push_op(ir::Op::Label(s), r#loop.pos_id);
         self.push_op(ir::Op::LoopStart, 0);
         self.scope(&r#loop.scope);
         self.push_op(ir::Op::LoopEnd, 0);
         self.push_op(ir::Op::Jump(s), r#loop.pos_id);
         self.push_op(ir::Op::Label(e), r#loop.pos_id);
+        self.loop_start.pop();
+        self.loop_exit.pop();
     }
     fn r#while(&mut self, r#while: &node::While) {
         self.label_count += 3;
         let s = self.label_count - 2;
+        self.loop_start.push(s);
         let c = self.label_count - 1;
         let e = self.label_count;
+        self.loop_exit.push(e);
         self.push_op(ir::Op::Jump(c), r#while.pos_id);
         self.push_op(ir::Op::Label(s), r#while.pos_id);
         self.push_op(ir::Op::LoopStart, 0);
@@ -321,5 +327,7 @@ impl<'a> Lower<'a> {
         );
         self.push_op(ir::Op::Label(e), r#while.pos_id);
         self.push_op(ir::Op::NaturalFlow, r#while.pos_id);
+        self.loop_start.pop();
+        self.loop_exit.pop();
     }
 }

@@ -230,7 +230,6 @@ impl<'a> Opt<'a> {
             }
         }
         println!("unused {:?}", unused_table);
-        println!("{:?}", new_block);
 
         // Second pass - apply unused table
         let mut new_block_2 = Block::new();
@@ -327,7 +326,6 @@ impl<'a> Opt<'a> {
         //Self::remove_circular_references(&mut label_replace);
         println!("repl {:?}", label_replace);
         println!("used {:?}", used_labels);
-        println!("{:?}", new_block_3);
 
         // Fourth pass - apply label replace table
         let mut new_block_4 = Block::new();
@@ -353,7 +351,6 @@ impl<'a> Opt<'a> {
                     if !used_labels.contains(&label) {
                         println!("removing L{}", label);
                         while let Some(o) = iter_4.next() {
-                            println!("skip {:?}", o);
                             loc_iter_4.next();
                             match o {
                                 Op::NaturalFlow => break,
