@@ -1,0 +1,16 @@
+[package]
+name = "ren"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[[bin]]
+name = "ren"
+path = "src/main.rs"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3

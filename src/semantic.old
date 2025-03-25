@@ -1,0 +1,273 @@
+use std::collections::HashMap;
+
+use crate::ir::{self, Block, Symbol, Type};
+use crate::node::{self, PosStr};
+
+/// Check the code for semantic errors
+/// Produce an unoptimized IR in the process 
+pub fn validate(stmts: &mut Vec<node::Stmt>) -> Result<HashMap<String, Symbol>, SemanticError> {
+    let mut check = Validate::new();
+    for s in stmts {
+        check.stmt(s)?;
+    }
+    Ok(check.symbol_table)
+}
+
+pub enum SemanticError {
+    InvalidType(PosStr),
+    VariableExists(PosStr),
+    UndeclaredVariable(PosStr),
+    InvalidReturn(usize),
+}
+
+struct Validate {
+    symbol_table: HashMap<String, Symbol>,
+    block_stack: Vec<Block>,
+    cur_func: Option<String>,
+    cur_ret: Option<Type>,
+    temp_count: usize,
+    label_count: u16,
+}
+
+impl Validate {
+    pub fn new() -> Self {
+        Self {
+            symbol_table: HashMap::new(),
+            block_stack: Vec::new(),
+            cur_func: None,
+            cur_ret: None,
+            temp_count: 0,
+            label_count: 0,
+        }
+    }
+
+    fn push_op(&mut self, op: ir::Op, pos_id: usize) {
+        if let Some(last_block) = self.block_stack.last_mut() {
+            last_block.ops.push(op);
+            last_block.locs.push(ir::OpLoc {
+                start_id: pos_id,
+                end_id: pos_id,
+            });
+        } else {
+            panic!("Block stack is empty!");
+        }
+    }
+
+    fn push_symbol(&mut self, name: String, sym: Symbol) {
+        self.symbol_table.insert(name.clone(), sym.clone());
+        if let Some(last_block) = self.block_stack.last_mut() {
+            last_block.symbols.insert(name, sym);
+        } else {
+            panic!("Block stack is empty!");
+        }
+    }
+    fn stmt(&mut self, stmt: &node::Stmt) -> Result<(), SemanticError> {
+        match stmt {
+            node::Stmt::Expr(expr) => {
+                self.expr(expr)?;
+                Ok(())
+            }
+            node::Stmt::Let(decl) => self.var_decl(decl),
+            node::Stmt::Fn(decl) => self.fn_decl(decl),
+            node::Stmt::Ret(ret) => self.ret(ret),
+            node::Stmt::If(r#if) => self.r#if(r#if),
+        }
+    }
+
+    fn expr(&mut self, expr: &node::Expr) -> Result<Type, SemanticError> {
+        match expr {
+            node::Expr::BinExpr(bin_expr) => self.bin_expr(bin_expr),
+            node::Expr::IntLit(pos_str) => {
+                self.temp_count += 1;
+                self.push_op(
+                    ir::Op::Tac {
+                        lhs: ir::Term::IntLit(pos_str.str.clone()),
+                        rhs: None,
+                        op: None,
+                        res: ir::Term::Temp(self.temp_count),
+                    },
+                    pos_str.pos_id,
+                );
+                Ok(Type::Int)
+            }
+            node::Expr::Variable(pos_str) => {
+                self.temp_count += 1;
+                self.push_op(
+                    ir::Op::Tac {
+                        lhs: ir::Term::Symbol(pos_str.str.clone()),
+                        rhs: None,
+                        op: None,
+                        res: ir::Term::Temp(self.temp_count),
+                    },
+                    pos_str.pos_id,
+                );
+                let sym = self.symbol_table.get(&pos_str.str);
+                if sym.is_none() {
+                    return Err(SemanticError::UndeclaredVariable(pos_str.clone()));
+                }
+                return Ok(sym.unwrap().ty.clone());
+            }
+            node::Expr::Call(call) => {
+                self.temp_count += 1;
+                let mut tmps = Vec::new();
+                for expr in call.args.iter() {
+                    self.expr(expr)?;
+                    tmps.push(self.temp_count);
+                }
+                for t in tmps.into_iter().rev() {
+                    self.push_op(ir::Op::Param(ir::Term::Temp(t)), call.name.pos_id);
+                }
+                self.temp_count += 1;
+                self.push_op(
+                    ir::Op::Call {
+                        func: call.name.str.clone(),
+                        res: ir::Term::Temp(self.temp_count),
+                    },
+                    call.name.pos_id,
+                );
+                if let Some(f) = self.symbol_table.get(&call.name.str) {
+                    if f.func_block.is_some() {
+                        return Ok(f.ty.clone());
+                    }
+                    if self.cur_func == Some(call.name.str.clone()) {
+                        return Ok(self.cur_ret.clone().unwrap());
+                    }
+                }
+                return Err(SemanticError::UndeclaredVariable(call.name.clone()));
+            }
+        }
+    }
+
+    fn var_decl(&mut self, decl: &node::Let) -> Result<(), SemanticError> {
+        if self.symbol_table.contains_key(&decl.name.str) {
+            return Err(SemanticError::VariableExists(decl.name.clone()));
+        }
+        let ty = self.expr(&decl.expr.clone())?;
+        self.push_op(
+            ir::Op::Tac {
+                lhs: ir::Term::Temp(self.temp_count),
+                rhs: None,
+                op: None,
+                res: ir::Term::Symbol(decl.name.str.clone()),
+            },
+            decl.name.pos_id,
+        );
+        self.push_symbol(
+            decl.name.str.clone(),
+            Symbol {
+                ty,
+                func_block: None,
+                loc: ir::OpLoc {
+                    start_id: decl.name.pos_id,
+                    end_id: decl.name.pos_id,
+                },
+            },
+        );
+        Ok(())
+    }
+
+    fn bin_expr(&mut self, bin: &node::BinExpr) -> Result<Type, SemanticError> {
+        self.expr(&bin.lhs)?;
+        let t1 = self.temp_count;
+        self.expr(&bin.rhs)?;
+        let t2 = self.temp_count;
+        self.temp_count += 1;
+        self.push_op(
+            ir::Op::Tac {
+                lhs: ir::Term::Temp(t1),
+                rhs: Some(ir::Term::Temp(t2)),
+                op: Some(bin.op.str.clone()),
+                res: ir::Term::Temp(self.temp_count),
+            },
+            bin.op.pos_id,
+        );
+        Ok(Type::Int)
+    }
+
+    fn fn_decl(&mut self, decl: &node::Fn) -> Result<(), SemanticError> {
+        if self.symbol_table.contains_key(&decl.name.str) {
+            return Err(SemanticError::VariableExists(decl.name.clone()));
+        }
+        self.symbol_table.insert(
+            decl.name.str.clone(),
+            Symbol {
+                ty: Type::Int,
+                func_block: None,
+                loc: ir::OpLoc {
+                    start_id: decl.name.pos_id,
+                    end_id: decl.name.pos_id,
+                },
+            },
+        );
+        self.cur_func = Some(decl.name.str.clone());
+        self.block_stack.push(Block::new());
+        for i in 0..decl.arg_names.len() {
+            let s = &decl.arg_names.get(i).unwrap().str;
+            self.push_op(ir::Op::Arg(ir::Term::Symbol(s.clone())), decl.name.pos_id);
+            self.push_symbol(
+                s.clone(),
+                Symbol {
+                    ty: Type::Int,
+                    func_block: None,
+                    loc: ir::OpLoc {
+                        start_id: decl.name.pos_id,
+                        end_id: decl.name.pos_id,
+                    },
+                },
+            );
+        }
+        self.scope(&decl.scope)?;
+        self.symbol_table
+            .get_mut(&decl.name.str)
+            .unwrap()
+            .func_block = self.block_stack.pop();
+        Ok(())
+    }
+
+    fn scope(&mut self, scope: &Vec<node::Stmt>) -> Result<(), SemanticError> {
+        for s in scope {
+            self.stmt(&s)?
+        }
+        // Remove the local symbols from the symbol table, but keep them in the block
+        for i in self.block_stack.last_mut().unwrap().symbols.keys() {
+            self.symbol_table.remove(i);
+        }
+        Ok(())
+    }
+
+    fn ret(&mut self, ret: &node::Ret) -> Result<(), SemanticError> {
+        if self.cur_func.is_none() {
+            return Err(SemanticError::InvalidReturn(ret.pos_id));
+        }
+        let ty = Some(self.expr(&ret.expr)?);
+        if self.cur_ret.is_none() {
+            self.cur_ret = ty;
+        } else if self.cur_ret != ty {
+            return Err(SemanticError::InvalidReturn(ret.pos_id));
+        }
+        self.push_op(ir::Op::Return(ir::Term::Temp(self.temp_count)), ret.pos_id);
+        Ok(())
+    }
+
+    fn r#if(&mut self, r#if: &node::If) -> Result<(), SemanticError> {
+        self.label_count += 1;
+        let _ty = Some(self.expr(&r#if.expr)?);
+        self.push_op(
+            ir::Op::CondJump {
+                cond: ir::Term::Temp(self.temp_count),
+                label: self.label_count,
+            },
+            r#if.pos_id,
+        );
+        let outer_label = self.label_count + 1;
+        self.push_op(ir::Op::Jump(outer_label), r#if.pos_id);
+        self.push_op(ir::Op::Label(self.label_count), r#if.pos_id);
+        self.block_stack.push(Block::new());
+        self.label_count += 1;
+        self.scope(&r#if.scope)?;
+        let l = self.block_stack.pop();
+        self.push_op(ir::Op::Block(l.unwrap()), r#if.pos_id);
+        self.push_op(ir::Op::Label(outer_label), r#if.pos_id);
+        Ok(())
+    }
+}

@@ -1,0 +1,136 @@
+use crate::node;
+
+pub fn gen(stmts: &Vec<node::Stmt>) -> String {
+    let mut gen = Gen::new();
+    gen.all(stmts);
+    gen.buf
+}
+
+struct Gen {
+    buf: String,
+    types: Vec<String>,
+    type_sizes: Vec<usize>,
+    vars: Vec<String>,
+    var_types: Vec<usize>,
+    var_locs: Vec<usize>,
+    sp: usize,
+}
+
+impl Gen {
+    fn new() -> Self {
+        Self {
+            buf: String::new(),
+            types: vec!["int".to_string()],
+            type_sizes: vec![4],
+            vars: Vec::new(),
+            var_types: Vec::new(),
+            var_locs: Vec::new(),
+            sp: 0,
+        }
+    }
+
+    fn all(&mut self, stmts: &Vec<node::Stmt>) {
+        self.buf.push_str(
+            r#"section .data
+    int_fmt db "%d", 0
+    newline db 10
+section .text
+    global _start
+    extern printf"#,
+        );
+        self.buf.push_str("\n_start:\n");
+        for s in stmts.iter() {
+            self.stmt(s);
+        }
+        self.buf.push_str("mov rax, 60\n");
+        // self.buf.push_str("mov rdi, 0\n");
+        self.buf.push_str("pop rdi\n");
+        self.buf.push_str("syscall\n");
+    }
+
+    fn stmt(&mut self, stmt: &node::Stmt) {
+        match stmt {
+            node::Stmt::Expr(expr) => self.expr(expr),
+            node::Stmt::Let(decl) => self.var_decl(decl),
+            node::Stmt::Fn(decl) => self.fn_decl(decl),
+        }
+    }
+
+    fn expr(&mut self, expr: &node::Expr) {
+        match expr {
+            node::Expr::Term(term) => self.term(term),
+            node::Expr::BinExpr(bin_expr) => self.bin_expr(bin_expr),
+        }
+    }
+
+    fn var_decl(&mut self, decl: &node::Let) {
+        if decl.expr.is_some() {
+            self.expr(&decl.expr.clone().unwrap());
+        }
+        self.vars.push(decl.name.str.clone());
+        let type_id = self
+            .types
+            .iter()
+            .position(|r| *r == decl.ty.str)
+            .unwrap();
+        self.var_types.push(type_id);
+        self.var_locs.push(self.sp);
+        self.sp += self.type_sizes.get(type_id).unwrap();
+    }
+
+    fn term(&mut self, term: &node::Term) {
+        match term {
+            node::Term::Ident(pos_str) => {
+                let id = self.vars.iter().position(|v| *v == pos_str.str).unwrap();
+                self.buf.push_str("mov [rsp + ");
+                self.buf.push_str(((self.sp - self.var_locs.get(id).unwrap())).to_string().as_str());
+                self.buf.push_str("], rax\n");
+                self.buf.push_str("push rax\n");
+                let type_id = self.var_types.get(id).unwrap();
+                self.sp += self.type_sizes.get(*type_id).unwrap();
+            }
+            node::Term::Int(value) => {
+                self.buf.push_str("mov rax, ");
+                self.buf.push_str(value.to_string().as_str());
+                self.buf.push_str("\npush rax\n");
+                self.sp += 4;
+
+            }
+            node::Term::Call(call) => self.call(call),
+        }
+    }
+
+    fn bin_expr(&mut self, bin: &node::BinExpr) {
+        self.expr(&bin.rhs);
+        self.expr(&bin.lhs);
+        self.buf.push_str("pop rax\npop rbx\n");
+        self.sp -= 8;
+        match bin.op.str.as_str() {
+            "+" => self.buf.push_str("add rax, rbx\n"),
+            _ => (),
+        }
+        self.buf.push_str("push rax\n");
+        self.sp += 4;
+    }
+
+    fn fn_decl(&mut self, decl: &node::Fn) {
+
+    }
+
+    fn call(&mut self, call: &node::Call) {
+        for expr in call.args.iter().rev() {
+            self.expr(&expr);
+        }
+        if call.name == "print" {
+            for _ in &call.args {
+                self.buf.push_str("mov rdi, int_fmt\n");
+                self.buf.push_str("pop rsi\n");
+                self.buf.push_str("xor rax, rax\n");
+                self.buf.push_str("call printf\n");
+            }
+            self.buf.push_str("mov rdi, newline\n");
+            self.buf.push_str("xor rax, rax\n");
+            self.buf.push_str("call printf\n");
+        }
+    }
+}
