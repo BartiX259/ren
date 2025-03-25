@@ -55,6 +55,12 @@ pub struct Loop {
     pub pos_id: usize,
     pub scope: Vec<Stmt>,
 }
+#[derive(Debug)]
+pub struct While {
+    pub pos_id: usize,
+    pub expr: Expr,
+    pub scope: Vec<Stmt>,
+}
 
 #[derive(Debug, Clone)]
 pub enum Macro {
@@ -78,6 +84,7 @@ pub enum Stmt {
     Ret(Ret),
     If(If),
     Loop(Loop),
+    While(While),
     Break(usize),
     Continue(usize),
 }

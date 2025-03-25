@@ -76,6 +76,7 @@ impl Validate {
             node::Stmt::Ret(ret) => self.ret(ret),
             node::Stmt::If(r#if) => self.r#if(r#if),
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
+            node::Stmt::While(r#while) => self.r#while(r#while),
             node::Stmt::Break(pos_id) => self.check_loop("Break", *pos_id),
             node::Stmt::Continue(pos_id) => self.check_loop("Continue", *pos_id),
         }
@@ -314,7 +315,15 @@ impl Validate {
         self.loop_count -= 1;
         Ok(())
     }
+    fn r#while(&mut self, r#while: &node::While) -> Result<(), SemanticError> {
+        self.expr(&r#while.expr)?;
+        self.loop_count += 1;
+        self.scope(&r#while.scope)?;
+        self.loop_count -= 1;
+        Ok(())
+    }
 
+    /// Checks if validator is currently in a loop
     fn check_loop(&self, name: &str, pos_id: usize) -> Result<(), SemanticError> {
         if self.loop_count == 0 {
             return Err(SemanticError::NotInLoop(name.to_string(), pos_id));

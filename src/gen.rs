@@ -221,7 +221,7 @@ impl<'a> Gen<'a> {
                     self.buf.dedent();
                     self.buf.push_line("");
                     let str = format!(".L{}:", label);
-                    self.buf.push(format!("{:<width$}", str, width = 8));
+                    self.buf.push_line(format!("{:<width$}", str, width = 8));
                     self.buf.indent();
                 }
                 ir::Op::Jump(label) => self.buf.push_line(format!("jmp .L{}", label)),
@@ -268,6 +268,7 @@ impl<'a> Gen<'a> {
                         self.symbol_table.remove(&s.0);
                     }
                 }
+                ir::Op::NaturalFlow => (),
                 ir::Op::LoopStart => self.reg_states.push(self.regs.to_vec()),
                 ir::Op::LoopEnd => self.restore_regs(),
             }
@@ -315,6 +316,10 @@ impl<'a> Gen<'a> {
                     self.eval_term_at(t, &r.1.name.clone());
                     self.save_reg(&r.1.name.clone(), t);
                     self.lock_reg(&r.1.name.clone(), r.1.locked);
+                } else {
+                    let reg = self.get_reg(&r.1.name).unwrap();
+                    reg.term = None;
+                    reg.locked = false;
                 }
             }
         }
@@ -348,7 +353,7 @@ impl<'a> Gen<'a> {
         if let Some(loc) = self.locs.get(&term) {
             res_loc = *loc;
             if self.sp == res_loc {
-                self.buf.push("mov [rsp], ");
+                self.buf.push("mov qword [rsp], ");
             } else {
                 self.buf.push(format!("mov qword [rsp + {}], ", self.sp - res_loc));
             }
@@ -440,6 +445,8 @@ impl<'a> Gen<'a> {
         if op_opt != Some("=".to_string()) {
             r1 = self.eval_term(lhs.clone(), rhs_opt.is_none())?;
             self.lock_reg(&r1, true);
+        } else {
+            println!("ski {:?} {:?} {:?}={:?}", lhs, op_opt, rhs_opt, res);
         }
         let mut r2;
         if let Some(rhs) = rhs_opt {

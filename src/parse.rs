@@ -44,6 +44,14 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
                 scope: parse_scope(tokens)?,
             }));
         }
+        Some(Token::While) => {
+            tokens.next();
+            return Ok(node::Stmt::While(node::While {
+                pos_id: tokens.prev_index(),
+                expr: parse_expr(tokens, 0)?,
+                scope: parse_scope(tokens)?
+            }));
+        }
         Some(Token::Break) => {
             tokens.next();
             check_semi(tokens)?;

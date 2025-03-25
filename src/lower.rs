@@ -69,6 +69,7 @@ impl<'a> Lower<'a> {
             node::Stmt::Ret(ret) => self.ret(ret),
             node::Stmt::If(r#if) => self.r#if(r#if),
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
+            node::Stmt::While(r#while) => self.r#while(r#while),
             node::Stmt::Break(pos_id) => self.push_op(ir::Op::Jump(*self.loop_exit.last().unwrap()), *pos_id),
             node::Stmt::Continue(pos_id) => self.push_op(ir::Op::Jump(*self.loop_start.last().unwrap()), *pos_id),
         }
@@ -289,17 +290,36 @@ impl<'a> Lower<'a> {
     }
 
     fn r#loop(&mut self, r#loop: &node::Loop) {
-        self.label_count += 1;
-        self.loop_start.push(self.label_count);
-        self.label_count += 1;
-        self.loop_exit.push(self.label_count);
-        self.push_op(ir::Op::Label(*self.loop_start.last().unwrap()), r#loop.pos_id);
+        self.label_count += 2;
+        let s = self.label_count - 1;
+        let e = self.label_count;
+        self.push_op(ir::Op::Label(s), r#loop.pos_id);
         self.push_op(ir::Op::LoopStart, 0);
         self.scope(&r#loop.scope);
-        let s = self.loop_start.pop().unwrap();
-        let e = self.loop_exit.pop().unwrap();
         self.push_op(ir::Op::LoopEnd, 0);
         self.push_op(ir::Op::Jump(s), r#loop.pos_id);
         self.push_op(ir::Op::Label(e), r#loop.pos_id);
+    }
+    fn r#while(&mut self, r#while: &node::While) {
+        self.label_count += 3;
+        let s = self.label_count - 2;
+        let c = self.label_count - 1;
+        let e = self.label_count;
+        self.push_op(ir::Op::Jump(c), r#while.pos_id);
+        self.push_op(ir::Op::Label(s), r#while.pos_id);
+        self.push_op(ir::Op::LoopStart, 0);
+        self.scope(&r#while.scope);
+        self.push_op(ir::Op::LoopEnd, 0);
+        self.push_op(ir::Op::Label(c), r#while.pos_id);
+        self.expr(&r#while.expr);
+        self.push_op(
+            ir::Op::CondJump {
+                cond: ir::Term::Temp(self.temp_count),
+                label: s,
+            },
+            r#while.pos_id,
+        );
+        self.push_op(ir::Op::Label(e), r#while.pos_id);
+        self.push_op(ir::Op::NaturalFlow, r#while.pos_id);
     }
 }

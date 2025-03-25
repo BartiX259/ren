@@ -1,5 +1,10 @@
 fn main() {
-    let a = 5;
-    return 2+2 * a;
+    let a = 4;
+    let x = 1;
+    while a > 0 {
+        x *= 2;
+        a -= 1;
+    }
+    return x;
 }
 

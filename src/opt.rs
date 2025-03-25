@@ -230,28 +230,59 @@ impl<'a> Opt<'a> {
             }
         }
         println!("unused {:?}", unused_table);
+        println!("{:?}", new_block);
 
-        // Second pass - build the label replace table
-        let mut label_replace: HashMap<u16, (u16, Vec<Op>)> = HashMap::new();
+        // Second pass - apply unused table
         let mut new_block_2 = Block::new();
         let mut iter_2 = new_block.ops.into_iter().peekable();
         let mut loc_iter_2 = new_block.locs.into_iter().peekable();
 
         while let Some(op) = iter_2.next() {
-            let last_loc = loc_iter_2.next().unwrap();
+            match op {
+                Op::Tac { lhs, rhs, op, res } => {
+                    let mut r = res.clone();
+                    if unused_table.contains(&res.clone().unwrap()) {
+                        r = None;
+                    }
+                    new_block_2.ops.push(Op::Tac { lhs, rhs, op, res: r });
+                    new_block_2.locs.push(loc_iter_2.next().unwrap());
+                }
+                Op::DerefAssign { term, op, ptr, res } => {
+                    let mut r = res.clone();
+                    if unused_table.contains(&res.clone().unwrap()) {
+                        r = None;
+                    }
+                    new_block_2.ops.push(Op::DerefAssign { term, op, ptr, res: r }) ;
+                    new_block_2.locs.push(loc_iter_2.next().unwrap());
+                }
+                _ => {
+                    new_block_2.ops.push(op);
+                    new_block_2.locs.push(loc_iter_2.next().unwrap());
+                }
+            }
+        }
+
+        // Third pass - build the label replace table
+        let mut label_replace: HashMap<u16, (u16, Vec<Op>)> = HashMap::new();
+        let mut new_block_3 = Block::new();
+        let mut iter_3 = new_block_2.ops.into_iter().peekable();
+        let mut loc_iter_3 = new_block_2.locs.into_iter().peekable();
+
+        while let Some(op) = iter_3.next() {
+            let last_loc = loc_iter_3.next().unwrap();
             match op {
                 Op::Label(label) => {
                     if label_no_replace.contains(&label) || !used_labels.contains(&label) {
-                        new_block_2.ops.push(op);
-                        new_block_2.locs.push(last_loc);
+                        new_block_3.ops.push(op);
+                        new_block_3.locs.push(last_loc);
                         continue;
                     }
-                    if let Some(next_op) = iter_2.peek() {
+                    if let Some(next_op) = iter_3.peek() {
                         if let Op::Jump(rep_label) = next_op {
                             label_replace.insert(label, (*rep_label, Vec::new()));
                             label_no_replace.insert(*rep_label);
-                            iter_2.next();
-                            loc_iter_2.next();
+                            iter_3.next();
+                            loc_iter_3.next();
                             continue;
                         } else if let Op::Label(rep_label) = next_op {
                             label_replace.insert(label, (*rep_label, Vec::new()));
@@ -261,7 +292,7 @@ impl<'a> Opt<'a> {
                         } else {
                             let mut vec = vec![next_op.clone()];
                             let mut rep_label = 0;
-                            let mut n_iter = iter_2.clone();
+                            let mut n_iter = iter_3.clone();
                             n_iter.next();
                             while let Some(n_op) = n_iter.next() {
                                 if let Op::Jump(r) = n_op {
@@ -274,8 +305,8 @@ impl<'a> Opt<'a> {
                             }
                             if rep_label != 0 {
                                 for _ in 0..vec.len() {
-                                    iter_2.next();
-                                    loc_iter_2.next();
+                                    iter_3.next();
+                                    loc_iter_3.next();
                                 }
                                 label_replace.insert(label, (rep_label, vec));
                                 label_no_replace.insert(rep_label);
@@ -283,12 +314,12 @@ impl<'a> Opt<'a> {
                             }
                         }
                     }
-                    new_block_2.ops.push(op);
-                    new_block_2.locs.push(last_loc);
+                    new_block_3.ops.push(op);
+                    new_block_3.locs.push(last_loc);
                 }
                 _ => {
-                    new_block_2.ops.push(op);
-                    new_block_2.locs.push(last_loc);
+                    new_block_3.ops.push(op);
+                    new_block_3.locs.push(last_loc);
                 }
             }
         }
@@ -296,49 +327,36 @@ impl<'a> Opt<'a> {
         //Self::remove_circular_references(&mut label_replace);
         println!("repl {:?}", label_replace);
         println!("used {:?}", used_labels);
+        println!("{:?}", new_block_3);
 
-        // Third pass - apply unused table and label replace table
-        let mut new_block_3 = Block::new();
-        let mut iter_3 = new_block_2.ops.into_iter().peekable();
-        let mut loc_iter_3 = new_block_2.locs.into_iter().peekable();
+        // Fourth pass - apply label replace table
+        let mut new_block_4 = Block::new();
+        let mut iter_4 = new_block_3.ops.into_iter().peekable();
+        let mut loc_iter_4 = new_block_3.locs.into_iter().peekable();
 
-        while let Some(op) = iter_3.next() {
+        while let Some(op) = iter_4.next() {
             match op {
-                Op::Tac { lhs, rhs, op, res } => {
-                    let mut r = res.clone();
-                    if unused_table.contains(&res.clone().unwrap()) {
-                        r = None;
-                    }
-                    new_block_3.ops.push(Op::Tac { lhs, rhs, op, res: r });
-                    new_block_3.locs.push(loc_iter_3.next().unwrap());
-                }
-                Op::DerefAssign { term, op, ptr, res } => {
-                    let mut r = res.clone();
-                    if unused_table.contains(&res.clone().unwrap()) {
-                        r = None;
-                    }
-                    new_block_3.ops.push(Op::DerefAssign { term, op, ptr, res: r }) ;
-                    new_block_3.locs.push(loc_iter_3.next().unwrap());
-                }
                 Op::Jump(label) => {
                     let mut l = label;
                     while label_replace.contains_key(&l) {
                         let repl = label_replace.get(&l).unwrap();
                         for o in repl.1.iter() {
-                            new_block_3.ops.push(o.clone());
-                            new_block_3.locs.push(loc_iter_3.peek().clone().unwrap().clone());
+                            new_block_4.ops.push(o.clone());
+                            new_block_4.locs.push(loc_iter_4.peek().clone().unwrap().clone());
                         }
                         l = repl.0;
                     }
-                    new_block_3.ops.push(Op::Jump(l));
-                    new_block_3.locs.push(loc_iter_3.next().unwrap());
+                    new_block_4.ops.push(Op::Jump(l));
+                    new_block_4.locs.push(loc_iter_4.next().unwrap());
                 }
                 Op::Label(label) => {
                     if !used_labels.contains(&label) {
                         println!("removing L{}", label);
-                        while let Some(o) = iter_3.next() {
-                            loc_iter_3.next();
+                        while let Some(o) = iter_4.next() {
+                            println!("skip {:?}", o);
+                            loc_iter_4.next();
                             match o {
+                                Op::NaturalFlow => break,
                                 Op::Label(_) => break,
                                 Op::Jump(_) => break,
                                 Op::Return(_) => break,
@@ -346,27 +364,27 @@ impl<'a> Opt<'a> {
                             }
                         }
                     } else {
-                        new_block_3.ops.push(op);
-                        new_block_3.locs.push(loc_iter_3.next().unwrap());
+                        new_block_4.ops.push(op);
+                        new_block_4.locs.push(loc_iter_4.next().unwrap());
                     }
                 }
                 Op::Return(_) => {
-                    new_block_3.ops.push(op);
-                    new_block_3.locs.push(loc_iter_3.next().unwrap());
-                    while let Some(Op::Jump(_)) = iter_3.peek() {
-                        iter_3.next();
-                        loc_iter_3.next();
+                    new_block_4.ops.push(op);
+                    new_block_4.locs.push(loc_iter_4.next().unwrap());
+                    while let Some(Op::Jump(_)) = iter_4.peek() {
+                        iter_4.next();
+                        loc_iter_4.next();
                     }
                 }
                 _ => {
-                    new_block_3.ops.push(op);
-                    new_block_3.locs.push(loc_iter_3.next().unwrap());
+                    new_block_4.ops.push(op);
+                    new_block_4.locs.push(loc_iter_4.next().unwrap());
                 }
             }
         }
         // Fix label and temp ordering, optional
-        Self::fix_order(&mut new_block_3);
-        new_block_3
+        Self::fix_order(&mut new_block_4);
+        new_block_4
     }
 
     fn fix_order(block: &mut Block) {

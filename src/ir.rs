@@ -61,6 +61,7 @@ pub enum Op {
     Return(Term),
     LoadSymbols(usize),
     UnloadSymbols(usize),
+    NaturalFlow,
     LoopStart,
     LoopEnd,
 }
@@ -122,6 +123,7 @@ impl fmt::Debug for Op {
             Op::Return(value) => write!(f, "return {:?}", value),
             Op::LoadSymbols(i) => write!(f, "load symbols {}", i),
             Op::UnloadSymbols(i) => write!(f, "unload symbols {}", i),
+            Op::NaturalFlow => write!(f, "natural flow"),
             Op::LoopStart => write!(f, "loop start"),
             Op::LoopEnd => write!(f, "loop end"),
         }
