@@ -169,7 +169,7 @@ impl<'a> Gen<'a> {
                         }
                     }
                     for p in params {
-                        let r = self.eval_term(p.clone(), true)?;
+                        let r = self.eval_term(p.clone(), false)?;
                         self.sp += 8;
                         self.param_size += 8;
                         self.buf.push_line(format!("push {}", r));
@@ -455,7 +455,7 @@ impl<'a> Gen<'a> {
         //println!("tac {:?} {:?} {:?}={:?}", lhs, op_opt, rhs_opt, res);
         let mut r1 = "".to_string();
         if op_opt != Some("=".to_string()) {
-            r1 = self.eval_term(lhs.clone(), rhs_opt.is_none())?;
+            r1 = self.eval_term(lhs.clone(), false)?; // rhs_opt.is_none()
             self.lock_reg(&r1, true);
         }
         let mut r2;

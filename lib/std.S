@@ -27,7 +27,7 @@ int2str_rec:
         div rcx         ; t4 = x % 10
         add rdx, '0'     ; t4 = t4 + '0'
         mov rdi, [rsp + 16]
-        mov qword [rdi], rdx; *buf = t4
+        mov byte [rdi], dl; *buf = t4
         mov rdi, [rsp + 16]
         add rdi, 1      ; t5 = buf + 1
         mov rax, rdi
