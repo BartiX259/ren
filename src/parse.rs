@@ -28,6 +28,7 @@ pub enum ParseError {
 fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
     match tokens.peek() {
         Some(Token::Let) => return Ok(node::Stmt::Let(parse_let(tokens)?)),
+        Some(Token::Decl) => return Ok(node::Stmt::Decl(parse_decl(tokens)?)),
         Some(Token::Fn) => return Ok(node::Stmt::Fn(parse_fn_decl(tokens)?)),
         Some(Token::Return) => {
             tokens.next();
@@ -52,6 +53,7 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
                 scope: parse_scope(tokens)?
             }));
         }
+        Some(Token::For) => return Ok(node::Stmt::For(parse_for(tokens)?)),
         Some(Token::Break) => {
             tokens.next();
             check_semi(tokens)?;
@@ -153,7 +155,7 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
 }
 
 fn parse_let(tokens: &mut VecIter<Token>) -> Result<node::Let, ParseError> {
-    let Some(Token::Let) = tokens.next() else { unreachable!() };
+    tokens.next();
     let tok = check_none(tokens, "an identifier")?;
     let Token::Word { value: name } = tok else {
         return Err(unexp(tok, tokens.prev_index(), "an identifier"));
@@ -174,6 +176,27 @@ fn parse_let(tokens: &mut VecIter<Token>) -> Result<node::Let, ParseError> {
         return res;
     } else {
         return Err(unexp(tok, tokens.prev_index(), "'='"));
+    }
+}
+fn parse_decl(tokens: &mut VecIter<Token>) -> Result<node::Decl, ParseError> {
+    tokens.next();
+    let tok = check_none(tokens, "an identifier")?;
+    let Token::Word { value: name } = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "an identifier"));
+    };
+    let tok = check_none(tokens, "':'")?;
+    if let Token::Colon = &tok {
+        let res = Ok(node::Decl {
+            name: PosStr {
+                str: name,
+                pos_id: tokens.prev_index() - 1,
+            },
+            r#type: parse_type(tokens)?
+        });
+        check_semi(tokens)?;
+        return res;
+    } else {
+        return Err(unexp(tok, tokens.prev_index(), "':'"));
     }
 }
 
@@ -201,7 +224,7 @@ fn parse_args(tokens: &mut VecIter<Token>) -> Result<Vec<node::Expr>, ParseError
 }
 
 fn parse_fn_decl(tokens: &mut VecIter<Token>) -> Result<node::Fn, ParseError> {
-    let Token::Fn = tokens.next().unwrap() else { unreachable!() };
+    tokens.next();
     let tok = check_none(tokens, "an identifier.")?;
     let Token::Word { value: name } = tok else {
         return Err(unexp(tok, tokens.prev_index(), "an identifier"));
@@ -299,6 +322,23 @@ fn parse_if(tokens: &mut VecIter<Token>) -> Result<node::If, ParseError> {
         }
     }
     Ok(res)
+}
+
+fn parse_for(tokens: &mut VecIter<Token>) -> Result<node::For, ParseError> {
+    let pos_id = tokens.current_index();
+    let init;
+    tokens.next();
+    if let Some(Token::Let) = tokens.peek() {
+        init = node::LetOrExpr::Let(parse_let(tokens)?);
+    } else {
+        init = node::LetOrExpr::Expr(parse_expr(tokens, 0)?);
+        check_semi(tokens)?;
+    }
+    let cond = parse_expr(tokens, 0)?;
+    check_semi(tokens)?;
+    let incr = parse_expr(tokens, 0)?;
+    let scope = parse_scope(tokens)?;
+    Ok(node::For { pos_id, init, cond, incr, scope})
 }
 
 fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {

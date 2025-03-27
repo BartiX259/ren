@@ -65,11 +65,13 @@ impl<'a> Lower<'a> {
         match stmt {
             node::Stmt::Expr(expr) => self.expr(expr),
             node::Stmt::Let(decl) => self.r#let(decl),
+            node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
             node::Stmt::Ret(ret) => self.ret(ret),
             node::Stmt::If(r#if) => self.r#if(r#if),
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
             node::Stmt::While(r#while) => self.r#while(r#while),
+            node::Stmt::For(r#for) => self.r#for(r#for),
             node::Stmt::Break(pos_id) => self.push_op(ir::Op::Jump(*self.loop_exit.last().unwrap()), *pos_id),
             node::Stmt::Continue(pos_id) => self.push_op(ir::Op::Jump(*self.loop_start.last().unwrap()), *pos_id),
         }
@@ -119,6 +121,9 @@ impl<'a> Lower<'a> {
             },
             decl.name.pos_id,
         );
+    }
+    fn r#decl(&mut self, decl: &node::Decl) {
+        self.push_op(ir::Op::Decl(ir::Term::Symbol(decl.name.str.clone())), decl.name.pos_id);
     }
 
     fn r#fn(&mut self, decl: &node::Fn) {
@@ -307,9 +312,9 @@ impl<'a> Lower<'a> {
     fn r#while(&mut self, r#while: &node::While) {
         self.label_count += 3;
         let s = self.label_count - 2;
-        self.loop_start.push(s);
         let c = self.label_count - 1;
         let e = self.label_count;
+        self.loop_start.push(s);
         self.loop_exit.push(e);
         self.push_op(ir::Op::Jump(c), r#while.pos_id);
         self.push_op(ir::Op::Label(s), r#while.pos_id);
@@ -327,6 +332,37 @@ impl<'a> Lower<'a> {
         );
         self.push_op(ir::Op::Label(e), r#while.pos_id);
         self.push_op(ir::Op::NaturalFlow, r#while.pos_id);
+        self.loop_start.pop();
+        self.loop_exit.pop();
+    }
+    fn r#for(&mut self, r#for: &node::For) {
+        match &r#for.init {
+            node::LetOrExpr::Let(r#let) => self.r#let(r#let),
+            node::LetOrExpr::Expr(expr) => self.expr(expr)
+        }
+        self.label_count += 3;
+        let s = self.label_count - 2;
+        let c = self.label_count - 1;
+        let e = self.label_count;
+        self.loop_start.push(c);
+        self.loop_exit.push(e);
+        self.push_op(ir::Op::Label(s), r#for.pos_id);
+        self.push_op(ir::Op::LoopStart, 0);
+        self.scope(&r#for.scope);
+        self.push_op(ir::Op::LoopEnd, 0);
+        self.push_op(ir::Op::Label(c), r#for.pos_id);
+        self.push_op(ir::Op::NaturalFlow, r#for.pos_id);
+        self.expr(&r#for.incr);
+        self.expr(&r#for.cond);
+        self.push_op(
+            ir::Op::CondJump {
+                cond: ir::Term::Temp(self.temp_count),
+                label: s,
+            },
+            r#for.pos_id,
+        );
+        self.push_op(ir::Op::Label(e), r#for.pos_id);
+        self.push_op(ir::Op::NaturalFlow, r#for.pos_id);
         self.loop_start.pop();
         self.loop_exit.pop();
     }

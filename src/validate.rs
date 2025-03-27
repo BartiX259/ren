@@ -72,11 +72,13 @@ impl Validate {
         match stmt {
             node::Stmt::Expr(expr) => self.expr(expr).map(|_| ()),
             node::Stmt::Let(decl) => self.r#let(decl),
+            node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
             node::Stmt::Ret(ret) => self.ret(ret),
             node::Stmt::If(r#if) => self.r#if(r#if),
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
             node::Stmt::While(r#while) => self.r#while(r#while),
+            node::Stmt::For(r#for) => self.r#for(r#for),
             node::Stmt::Break(pos_id) => self.check_loop("Break", *pos_id),
             node::Stmt::Continue(pos_id) => self.check_loop("Continue", *pos_id),
         }
@@ -105,6 +107,14 @@ impl Validate {
             return Err(SemanticError::SymbolExists(decl.name.clone()));
         }
         let ty = self.expr(&decl.expr)?;
+        self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
+        Ok(())
+    }
+    fn r#decl(&mut self, decl: &node::Decl) -> Result<(), SemanticError> {
+        if self.symbol_table.contains_key(&decl.name.str) {
+            return Err(SemanticError::SymbolExists(decl.name.clone()));
+        }
+        let ty = self.r#type(&decl.r#type)?;
         self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
         Ok(())
     }
@@ -319,6 +329,18 @@ impl Validate {
         self.expr(&r#while.expr)?;
         self.loop_count += 1;
         self.scope(&r#while.scope)?;
+        self.loop_count -= 1;
+        Ok(())
+    }
+    fn r#for(&mut self, r#for: &node::For) -> Result<(), SemanticError> {
+        match &r#for.init {
+            node::LetOrExpr::Let(r#let) => self.r#let(r#let)?,
+            node::LetOrExpr::Expr(expr) => self.expr(expr).map(|_| ())?
+        }
+        self.expr(&r#for.cond)?;
+        self.expr(&r#for.incr)?;
+        self.loop_count += 1;
+        self.scope(&r#for.scope)?;
         self.loop_count -= 1;
         Ok(())
     }

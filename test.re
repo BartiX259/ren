@@ -1,9 +1,7 @@
 fn main() {
-    let a = 4;
-    let x = 1;
-    while a > 0 {
-        x *= 2;
-        a -= 1;
+    let x = 50;
+    for let i = 0; i < 10; i += 1 {
+        x -= 1;
     }
     return x;
 }

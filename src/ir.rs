@@ -50,6 +50,7 @@ pub enum Op {
     Tac { lhs: Term, rhs: Option<Term>, op: Option<String>, res: Option<Term> },
     Unary { term: Term, op: String, res: Term },
     DerefAssign { term: Term, op: String, ptr: Term, res: Option<Term> },
+    Decl(Term),
     Arg(Term),
     Param(Term),
     Call { func: String, res: Term },
@@ -106,6 +107,7 @@ impl fmt::Debug for Op {
                     write!(f, "*{:?} {} {:?}", ptr, op, term)
                 }
             }
+            Op::Decl(term) => write!(f, "decl {:?}", term),
             Op::Arg(term) => write!(f, "arg {:?}", term),
             Op::Param(term) => write!(f, "param {:?}", term),
             Op::Call { func, res } => write!(f, "{:?} = call {}", res, func),

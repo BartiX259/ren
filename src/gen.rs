@@ -138,6 +138,11 @@ impl<'a> Gen<'a> {
                 ir::Op::Tac { lhs, rhs, op, res } => self.tac(lhs, rhs, op, res)?,
                 ir::Op::Unary { term, op, res } => self.unary(term, op, res)?,
                 ir::Op::DerefAssign { term, op, ptr, res } => self.deref_assign(term, op, ptr, res)?,
+                ir::Op::Decl(term) => {
+                    self.sp += 8;
+                    self.buf.push_line(format!("sub rsp, {}", 8));
+                    self.locs.insert(term, self.sp);
+                }
                 ir::Op::Arg(term) => {
                     self.arg_ptr -= 8;
                     self.locs.insert(term, self.arg_ptr);

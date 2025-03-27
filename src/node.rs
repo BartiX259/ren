@@ -8,6 +8,11 @@ pub struct Let {
     pub name: PosStr,
     pub expr: Expr,
 }
+#[derive(Debug)]
+pub struct Decl {
+    pub name: PosStr,
+    pub r#type: Type,
+}
 #[derive(Debug, Clone)]
 pub struct Call {
     pub name: PosStr,
@@ -49,7 +54,11 @@ pub struct If {
     pub scope: Vec<Stmt>,
     pub els: Option<Box<If>>
 }
-
+#[derive(Debug)]
+pub enum LetOrExpr {
+    Let(Let),
+    Expr(Expr)
+}
 #[derive(Debug)]
 pub struct Loop {
     pub pos_id: usize,
@@ -59,6 +68,14 @@ pub struct Loop {
 pub struct While {
     pub pos_id: usize,
     pub expr: Expr,
+    pub scope: Vec<Stmt>,
+}
+#[derive(Debug)]
+pub struct For {
+    pub pos_id: usize,
+    pub init: LetOrExpr,
+    pub cond: Expr,
+    pub incr: Expr,
     pub scope: Vec<Stmt>,
 }
 
@@ -80,11 +97,13 @@ pub enum Expr {
 pub enum Stmt {
     Expr(Expr),
     Let(Let),
+    Decl(Decl),
     Fn(Fn),
     Ret(Ret),
     If(If),
     Loop(Loop),
     While(While),
+    For(For),
     Break(usize),
     Continue(usize),
 }
