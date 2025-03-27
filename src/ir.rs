@@ -5,13 +5,13 @@ use std::fmt;
 pub enum Symbol {
     Struct { attrs: HashMap<String, Type> },
     Var { ty: Type },
-    Func { ty: Type, block: Block, symbols: Vec<Vec<(String, Symbol)>>, macros: Vec<Macro> },
+    Func { ty: Type, block: Block, symbols: Vec<Vec<(String, Symbol)>> },
     ExternFunc { ty: Type, args: Vec<Type> },
 }
 
 #[derive(Debug, Clone)]
 pub enum Macro {
-    Salloc { size: i64, ty: Type }
+    Salloc { size: u64, ty: Type }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,13 +54,13 @@ pub enum Op {
     Arg(Term),
     Param(Term),
     Call { func: String, res: Term },
-    Macro { id: usize, res: Option<Term> },
     Label(u16),
     Jump(u16),
     CondJump { cond: Term, label: u16 },
     BinJump { lhs: Term, rhs: Term, op: String, label: u16 },
     Return(Term),
     ReturnNone,
+    Salloc { size: u32, res: Term },
     LoadSymbols(usize),
     UnloadSymbols(usize),
     NaturalFlow,
@@ -112,19 +112,13 @@ impl fmt::Debug for Op {
             Op::Arg(term) => write!(f, "arg {:?}", term),
             Op::Param(term) => write!(f, "param {:?}", term),
             Op::Call { func, res } => write!(f, "{:?} = call {}", res, func),
-            Op::Macro { id, res} => {
-                if let Some(r) = res {
-                    write!(f, "{:?} = macro {}", r, id)
-                }else {
-                    write!(f, "macro {}", id)
-                }
-            }
             Op::Label(label) => write!(f, "L{}:", label),
             Op::Jump(label) => write!(f, "jump L{}", label),
             Op::CondJump { cond, label } => write!(f, "if {:?} jump L{}", cond, label),
             Op::BinJump { lhs, rhs, op, label } => write!(f, "if {:?} {} {:?} jump L{}", lhs, op, rhs, label),
             Op::Return(value) => write!(f, "return {:?}", value),
             Op::ReturnNone => write!(f, "return"),
+            Op::Salloc { size, res } => write!(f, "{:?} = salloc {}", res, size),
             Op::LoadSymbols(i) => write!(f, "load symbols {}", i),
             Op::UnloadSymbols(i) => write!(f, "unload symbols {}", i),
             Op::NaturalFlow => write!(f, "natural flow"),

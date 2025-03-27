@@ -15,8 +15,6 @@ struct Lower<'a> {
     ir: &'a mut HashMap<String, Symbol>,
     cur_symbols: Vec<Vec<(String, Symbol)>>,
     cur_block: Option<Block>,
-    cur_macros: Vec<Macro>,
-    macro_count: usize,
     temp_count: usize,
     label_count: u16,
     scope_id: usize,
@@ -29,8 +27,6 @@ impl<'a> Lower<'a> {
             ir,
             cur_symbols: Vec::new(),
             cur_block: None,
-            cur_macros: Vec::new(),
-            macro_count: 0,
             temp_count: 0,
             label_count: 0,
             scope_id: 0,
@@ -91,6 +87,26 @@ impl<'a> Lower<'a> {
                     pos_str.pos_id,
                 );
             }
+            node::Expr::ArrLit(arr_lit) => {
+                self.temp_count += 1;
+                let ptr = ir::Term::Temp(self.temp_count);
+                let mut i = 0;
+                self.push_op(ir::Op::Salloc { size: arr_lit.exprs.len() as u32 * 8, res: ptr.clone() }, 0);
+                for expr in &arr_lit.exprs {
+                    self.expr(expr);
+                    self.temp_count += 1;
+                    if i != 0 {
+                        self.push_op(ir::Op::Tac { lhs: ptr.clone(), rhs: Some(ir::Term::IntLit("8".to_string())), op: Some("+".to_string()), res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
+                    } else {
+                        self.push_op(ir::Op::Tac { lhs: ptr.clone(), rhs: None, op: None, res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
+                    }
+                    i += 8;
+                    self.temp_count += 1;
+                    self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 2), op: "=".to_string(), ptr: ir::Term::Temp(self.temp_count - 1), res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
+                }
+                self.temp_count += 1;
+                self.push_op(ir::Op::Tac { lhs: ptr, rhs: Some(ir::Term::IntLit((i-8).to_string())), op: Some("-".to_string()), res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
+            }
             node::Expr::Variable(pos_str) => {
                 self.temp_count += 1;
                 self.push_op(
@@ -128,11 +144,9 @@ impl<'a> Lower<'a> {
 
     fn r#fn(&mut self, decl: &node::Fn) {
         self.cur_block = Some(Block::new());
-        self.macro_count = 0;
         self.ir.get(&decl.name.str).and_then(|sym| match sym {
-            Symbol::Func { ty: _, block: _, symbols, macros } => {
+            Symbol::Func { ty: _, block: _, symbols } => {
                 symbols.clone_into(&mut self.cur_symbols);
-                macros.clone_into(&mut self.cur_macros);
                 Some(())
             }
             _ => None,
@@ -147,7 +161,7 @@ impl<'a> Lower<'a> {
         self.scope(&decl.scope);
         self.unload_symbols(0);
 
-        if let Some(Symbol::Func { ty: _, block, symbols: _, macros: _ }) = self.ir.get_mut(&decl.name.str) {
+        if let Some(Symbol::Func { ty: _, block, symbols: _, }) = self.ir.get_mut(&decl.name.str) {
             *block = self.cur_block.clone().unwrap();
         } else {
             panic!("Counldn't find {} symbol", decl.name.str);
@@ -294,8 +308,11 @@ impl<'a> Lower<'a> {
 
     fn r#macro(&mut self, r#macro: &node::Macro) {
         self.temp_count += 1;
-        self.push_op(ir::Op::Macro { id: self.macro_count, res: Some(ir::Term::Temp(self.temp_count)) }, 0);
-        self.macro_count += 1;
+        match r#macro {
+            node::Macro::Salloc { count, ty } => {
+                self.push_op(ir::Op::Salloc { size: *count, res: ir::Term::Temp(self.temp_count) }, 0);
+            }
+        }
     }
 
     fn r#loop(&mut self, r#loop: &node::Loop) {

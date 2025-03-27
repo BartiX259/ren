@@ -105,6 +105,10 @@ pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
             println!("Argument type mismatch: expected {:?} but got {:?}", ty1, ty2);
             print_file_err(text, info.get(pos_str.pos_id).unwrap());
         }
+        SemanticError::EmptyArray(pos_id) => {
+            println!("Empty arrays not allowed. Use 'decl' or initialize with values.");
+            print_file_err(text, info.get(pos_id).unwrap());
+        }
     }
 }
 

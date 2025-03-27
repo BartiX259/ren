@@ -81,13 +81,20 @@ pub struct For {
 }
 
 #[derive(Debug, Clone)]
+pub struct ArrLit {
+    pub exprs: Vec<Expr>,
+    pub pos_id: usize
+}
+
+#[derive(Debug, Clone)]
 pub enum Macro {
-    Salloc { count: i64, ty: Type }
+    Salloc { count: u32, ty: Type }
 }
 
 #[derive(Debug, Clone)]
 pub enum Expr {
     IntLit(PosStr),
+    ArrLit(ArrLit),
     Variable(PosStr),
     Call(Call),
     Macro(Macro),

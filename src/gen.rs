@@ -34,7 +34,6 @@ struct Gen<'a> {
     symbol_table: &'a mut HashMap<String, Symbol>,
     fn_symbols: Vec<Vec<(String, Symbol)>>,
     temp_table: Vec<Type>,
-    macro_list: Vec<Macro>,
     locs: HashMap<Term, i64>,
     regs: Vec<Reg>,
     sp: i64,
@@ -53,7 +52,6 @@ impl<'a> Gen<'a> {
             symbol_table: ir,
             fn_symbols: Vec::new(),
             temp_table: Vec::new(),
-            macro_list: Vec::new(),
             locs: HashMap::new(),
             // Can't use rdx because it has to be 0 to divide
             regs: vec![reg("rax"), reg("rbx"), reg("rcx"), reg("rdi"), reg("rsi")],
@@ -88,7 +86,6 @@ impl<'a> Gen<'a> {
             ty: _,
             block: _,
             symbols: _,
-            macros: _,
         }) = main
         {
         } else {
@@ -117,12 +114,11 @@ impl<'a> Gen<'a> {
             self.sp = 0;
             self.arg_ptr = 0;
             let sym = self.symbol_table.get(name);
-            if let Some(Symbol::Func { ty: _, block, symbols, macros }) = sym {
+            if let Some(Symbol::Func { ty: _, block, symbols }) = sym {
                 self.buf.push_line("");
                 self.buf.push_line(format!("{}:", name));
                 self.buf.indent();
                 self.fn_symbols = symbols.clone();
-                self.macro_list = macros.clone();
                 self.block(block.clone())?;
                 if self.buf.last_line.clone() != "ret" {
                     if self.sp > 0 {
@@ -210,20 +206,16 @@ impl<'a> Gen<'a> {
                     self.param_size = 0;
                     self.saved_regs = Vec::new();
                 }
-                ir::Op::Macro { id, res } => match self.macro_list.get(id).unwrap().clone() {
-                    Macro::Salloc { size, ty } => {
-                        self.sp += size;
-                        self.buf.push_line(format!("sub rsp, {}", size));
-                        if let Some(r) = res {
-                            let reg = self.get_free_reg()?;
-                            self.buf.push_line(format!("mov {}, rsp", reg));
-                            self.save_reg(&reg, &r);
-                            if let Term::Symbol(_) = r {
-                                self.store_term(r.clone(), reg);
-                            } else {
-                                self.lock_reg(&reg, true);
-                            }
-                        }
+                ir::Op::Salloc { size, res } => {
+                    self.sp += size as i64;
+                    self.buf.push_line(format!("sub rsp, {}", size));
+                    let reg = self.get_free_reg()?;
+                    self.buf.push_line(format!("mov {}, rsp", reg));
+                    self.save_reg(&reg, &res);
+                    if let Term::Symbol(_) = res {
+                        self.store_term(res.clone(), reg);
+                    } else {
+                        self.lock_reg(&reg, true);
                     }
                 },
                 ir::Op::Label(label) => {

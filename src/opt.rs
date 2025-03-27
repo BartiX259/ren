@@ -20,7 +20,7 @@ impl<'a> Opt<'a> {
     }
     fn all(&mut self) {
         for sym in self.symbol_table.values_mut() {
-            if let Symbol::Func { ty: _, block, symbols: _, macros: _ } = sym {
+            if let Symbol::Func { ty: _, block, symbols: _ } = sym {
                 *block = Self::block(block.clone());
             }
         }
@@ -243,6 +243,11 @@ impl<'a> Opt<'a> {
                     if unused_table.contains(&res.clone().unwrap()) {
                         r = None;
                     }
+                    if let Some(o) = &op {
+                        if r == Some(lhs.clone()) && o.contains("=") {
+                            r = None;
+                        }
+                    }
                     new_block_2.ops.push(Op::Tac { lhs, rhs, op, res: r });
                     new_block_2.locs.push(loc_iter_2.next().unwrap());
                 }
@@ -380,7 +385,7 @@ impl<'a> Opt<'a> {
             }
         }
         // Fix label and temp ordering, optional
-        Self::fix_order(&mut new_block_4);
+        //Self::fix_order(&mut new_block_4);
         new_block_4
     }
 

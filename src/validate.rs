@@ -27,11 +27,11 @@ pub enum SemanticError {
     FuncInFunc(PosStr),
     InvalidArgCount(PosStr, usize, usize),
     ArgTypeMismatch(PosStr, Type, Type),
+    EmptyArray(usize)
 }
 
 pub struct Validate {
     pub symbol_table: HashMap<String, Symbol>,
-    macro_list: Vec<Macro>,
     fn_symbols: Vec<Vec<(String, Symbol)>>,
     symbol_stack: Vec<usize>,
     cur_func: Option<String>,
@@ -46,7 +46,6 @@ impl Validate {
             symbol_table: HashMap::from([
                 ("print".to_string(), Symbol::ExternFunc { ty: Type::Void, args: vec![Type::Int] }),
             ]),
-            macro_list: Vec::new(),
             fn_symbols: Vec::new(),
             symbol_stack: Vec::new(),
             cur_func: None,
@@ -98,7 +97,6 @@ impl Validate {
                     ty,
                     block: Block::new(),
                     symbols: vec![arg_symbols],
-                    macros: Vec::new()
                 });
                 Ok(())
             }
@@ -125,6 +123,7 @@ impl Validate {
     fn expr(&mut self, expr: &node::Expr) -> Result<Type, SemanticError> {
         match expr {
             node::Expr::IntLit(_) => Ok(Type::Int),
+            node::Expr::ArrLit(arr_lit) => self.expr_list(&arr_lit.exprs, arr_lit.pos_id).map(|ty| Type::Pointer(Box::new(ty))),
             node::Expr::Variable(pos_str) => self
                 .symbol_table
                 .get(&pos_str.str)
@@ -195,16 +194,14 @@ impl Validate {
             self.symbol_table.remove(name);
         }
 
-        if let Some(Symbol::Func { symbols, macros, .. }) = self.symbol_table.get_mut(&decl.name.str) {
+        if let Some(Symbol::Func { symbols, .. }) = self.symbol_table.get_mut(&decl.name.str) {
             *symbols = self.fn_symbols.clone();
-            *macros = self.macro_list.clone();
         } else {
             unreachable!("Function symbol should exist at this point");
         }
 
         self.cur_ret = Type::Void;
         self.fn_symbols.clear();
-        self.macro_list.clear();
         self.cur_func = None;
 
         Ok(())
@@ -320,6 +317,20 @@ impl Validate {
         }
     }
 
+    fn expr_list(&mut self, exprs: &Vec<node::Expr>, pos_id: usize) -> Result<Type, SemanticError> {
+        let mut cur_type = Type::Void;
+        for expr in exprs {
+            let ty = self.expr(expr)?;
+            if cur_type == Type::Void {
+                cur_type = ty;
+            }
+        }
+        if cur_type == Type::Void {
+            return Err(SemanticError::EmptyArray(pos_id));
+        }
+        return Ok(cur_type);
+    }
+
     fn call(&mut self, call: &node::Call) -> Result<Type, SemanticError> {
         let mut arg_types = Vec::new();
         for s in call.args.iter() {
@@ -329,7 +340,7 @@ impl Validate {
         let expected_types;
         let temp: Vec<_>;
         match self.symbol_table.get(&call.name.str) {
-            Some(Symbol::Func { ty: t, block: _, symbols, macros: _ }) => {
+            Some(Symbol::Func { ty: t, block: _, symbols}) => {
                 ty = t;
                 if symbols.len() == 0 { // Recursive call
                     temp = self.fn_symbols
@@ -428,10 +439,8 @@ impl Validate {
 
     fn r#macro(&mut self, r#macro: &node::Macro) -> Result<Type, SemanticError> {
         match r#macro {
-            node::Macro::Salloc { count, ty } => {
-                let t = self.r#type(ty)?;
-                self.macro_list.push(Macro::Salloc { size: count * 8, ty: t.clone() });
-                Ok(Type::Pointer(Box::new(t)))
+            node::Macro::Salloc { count: _, ty } => {
+                Ok(Type::Pointer(Box::new(self.r#type(ty)?)))
             }
         }
     }

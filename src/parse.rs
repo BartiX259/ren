@@ -1,6 +1,7 @@
 use crate::helpers::VecIter;
 use crate::node::{self, PosStr, UnExpr};
 use crate::token::Token;
+use crate::validate::SemanticError;
 
 /// Parse tokens into the ast
 pub fn parse(token_res: Vec<Token>) -> Result<Vec<node::Stmt>, ParseError> {
@@ -158,6 +159,22 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             },
             expr: Box::new(parse_atom(tokens)?),
         })),
+        Token::OpenSquare => {
+            let pos_id = tokens.current_index();
+            let mut exprs = Vec::new();
+            loop {
+                exprs.push(parse_expr(tokens, 0)?);
+                let tok = check_none(tokens, "']'")?;
+                match tok {
+                    Token::Comma => (),
+                    Token::CloseSquare => break,
+                    _ => return Err(unexp(tok, tokens.current_index(), "']'"))
+                }
+            }
+            Ok(node::Expr::ArrLit(node::ArrLit {
+                exprs, pos_id
+            }))
+        }
         _ => Err(unexp(tok, tokens.prev_index(), "a term")),
     }
 }
@@ -395,7 +412,7 @@ fn parse_macro(tokens: &mut VecIter<Token>, name: PosStr) -> Result<node::Expr, 
             let tok = check_none(tokens, "a count")?;
             let count;
             if let Token::IntLit { value } = tok {
-                count = value.parse::<i64>().unwrap();
+                count = value.parse::<u32>().unwrap();
             } else {
                 return Err(unexp(tok, tokens.prev_index(), "an integer"));
             }
