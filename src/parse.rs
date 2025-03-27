@@ -235,10 +235,18 @@ fn parse_fn_decl(tokens: &mut VecIter<Token>) -> Result<node::Fn, ParseError> {
         return Err(unexp(tok, tokens.prev_index(), "'('"));
     };
     let type_args = parse_type_args(tokens)?;
+    let decl_type;
+    if let Some(Token::Colon) = tokens.peek() {
+        tokens.next();
+        decl_type = Some(parse_type(tokens)?);
+    } else {
+        decl_type = None;
+    }
     Ok(node::Fn {
         name: PosStr { str: name, pos_id: name_pos },
         arg_names: type_args.0,
         arg_types: type_args.1,
+        decl_type,
         scope: parse_scope(tokens)?,
     })
 }

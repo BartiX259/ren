@@ -67,6 +67,16 @@ impl<'a> Gen<'a> {
         }
     }
     fn all(&mut self) -> Result<(), GenError> {
+        // Extern functions
+        let binding = self.symbol_table.clone();
+        let names = binding.keys();
+        for name in names {
+            let sym = self.symbol_table.get(name);
+            if let Some(Symbol::ExternFunc { ty: _, args: _ }) = sym {
+                self.buf.push_line(format!("extern {}", name));
+            }
+        }
+        // _start function
         if let Some(_) = self.symbol_table.get("_start") {
             return Err(GenError::ReservedSymbol(OpLoc { start_id: 0, end_id: 0 }));
         }
@@ -87,9 +97,9 @@ impl<'a> Gen<'a> {
         self.buf.push_line("call main");
         self.buf.push_line("mov rdi, rax");
         self.buf.push_line("mov rax, 60");
-        //self.buf.push_line("mov rdi, 0");
         self.buf.push_line("syscall");
         self.buf.dedent();
+        // Other functions
         self.functions()?;
         Ok(())
     }

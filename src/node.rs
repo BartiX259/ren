@@ -28,6 +28,7 @@ pub struct Fn {
     pub name: PosStr,
     pub arg_names: Vec<PosStr>,
     pub arg_types: Vec<Type>,
+    pub decl_type: Option<Type>,
     pub scope: Vec<Stmt>,
 }
 #[derive(Debug, Clone)]

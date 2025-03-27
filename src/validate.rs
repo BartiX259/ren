@@ -39,7 +39,9 @@ pub struct Validate {
 impl Validate {
     pub fn new() -> Self {
         Self {
-            symbol_table: HashMap::new(),
+            symbol_table: HashMap::from([
+                ("print".to_string(), Symbol::ExternFunc { ty: Type::Void, args: vec![Type::Int] }),
+            ]),
             macro_list: Vec::new(),
             fn_symbols: Vec::new(),
             symbol_stack: Vec::new(),
@@ -138,10 +140,17 @@ impl Validate {
         self.fn_symbols.push(arg_symbols.clone());
         self.scope_id += 1;
 
+        let ty;
+        if let Some(t) = &decl.decl_type {
+            ty = self.r#type(t)?;
+        } else {
+            ty = Type::Void;
+        }
+
         // Create and insert a new function symbol
         // so recursion can work
         let func_symbol = Symbol::Func {
-            ty: Type::Void,
+            ty,
             block: Block::new(),
             symbols: Vec::new(),
             macros: Vec::new()
@@ -290,13 +299,23 @@ impl Validate {
         let temp: Vec<_>;
         match self.symbol_table.get(&call.name.str) {
             Some(Symbol::Func { ty: t, block: _, symbols, macros: _ }) => {
+                println!("{:?}", symbols);
                 ty = t;
-                temp = symbols
+                if symbols.len() == 0 { // Recursive call
+                    temp = self.fn_symbols
                     .get(0)
                     .unwrap()
                     .iter()
                     .filter_map(|(_, symbol)| if let Symbol::Var { ty } = symbol { Some(ty) } else { None })
                     .collect();
+                } else {
+                    temp = symbols
+                    .get(0)
+                    .unwrap()
+                    .iter()
+                    .filter_map(|(_, symbol)| if let Symbol::Var { ty } = symbol { Some(ty) } else { None })
+                    .collect();
+                }
                 expected_types = temp;
             }
             Some(Symbol::ExternFunc { ty: t, args }) => {
