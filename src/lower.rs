@@ -165,8 +165,12 @@ impl<'a> Lower<'a> {
     }
 
     fn ret(&mut self, ret: &node::Ret) {
-        self.expr(&ret.expr);
-        self.push_op(ir::Op::Return(ir::Term::Temp(self.temp_count)), ret.pos_id);
+        if let Some(expr) = &ret.expr {
+            self.expr(expr);
+            self.push_op(ir::Op::Return(ir::Term::Temp(self.temp_count)), ret.pos_id);
+        } else {
+            self.push_op(ir::Op::ReturnNone, ret.pos_id);
+        }
     }
 
     fn r#if(&mut self, r#if: &node::If) {

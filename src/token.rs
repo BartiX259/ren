@@ -199,16 +199,17 @@ fn is_operator(ch: char) -> bool {
 /// Checks if a pair of characters form a valid two-character operator.
 fn is_operator_pair(first: char, second: char) -> bool {
     match (first, second) {
-        ('+', '=') | // +=
-        ('-', '=') | // -=
-        ('*', '=') | // *=
-        ('/', '=') | // /=
-        ('=', '=') | // ==
-        ('<', '=') | // <=
-        ('>', '=') | // >=
-        ('!', '=') | // !=
-        ('&', '&') | // &&
-        ('|', '|')   // ||
+        ('+', '=') |
+        ('-', '=') |
+        ('*', '=') |
+        ('/', '=') |
+        ('=', '=') |
+        ('<', '=') |
+        ('>', '=') |
+        ('!', '=') |
+        ('&', '&') |
+        ('|', '|') |
+        ('-', '>')
         => true,
         _ => false,
     }

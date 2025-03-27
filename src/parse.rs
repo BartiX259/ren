@@ -33,7 +33,7 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
         Some(Token::Return) => {
             tokens.next();
             let pos_id = tokens.prev_index();
-            let expr = parse_expr(tokens, 0)?;
+            let expr = parse_opt_expr(tokens)?;
             check_semi(tokens)?;
             return Ok(node::Stmt::Ret(node::Ret { pos_id, expr }));
         }
@@ -69,6 +69,14 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
     let expr = parse_expr(tokens, 0)?;
     check_semi(tokens)?;
     Ok(node::Stmt::Expr(expr))
+}
+
+fn parse_opt_expr(tokens: &mut VecIter<Token>) -> Result<Option<node::Expr>, ParseError> {
+    if let Some(Token::Semi) = tokens.peek() {
+        return Ok(None);
+    } else {
+        return parse_expr(tokens, 0).map(|e| Some(e));
+    }
 }
 
 fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, ParseError> {
@@ -236,9 +244,13 @@ fn parse_fn_decl(tokens: &mut VecIter<Token>) -> Result<node::Fn, ParseError> {
     };
     let type_args = parse_type_args(tokens)?;
     let decl_type;
-    if let Some(Token::Colon) = tokens.peek() {
-        tokens.next();
-        decl_type = Some(parse_type(tokens)?);
+    if let Some(Token::Op {value}) = tokens.peek() {
+        if value == "->" {
+            tokens.next();
+            decl_type = Some(parse_type(tokens)?);
+        } else {
+            return Err(unexp(tokens.peek().unwrap().clone(), tokens.current_index(), "'->'"));
+        }
     } else {
         decl_type = None;
     }

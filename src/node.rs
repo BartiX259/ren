@@ -45,7 +45,7 @@ pub struct UnExpr {
 #[derive(Debug)]
 pub struct Ret {
     pub pos_id: usize,
-    pub expr: Expr,
+    pub expr: Option<Expr>,
 }
 
 #[derive(Debug)]

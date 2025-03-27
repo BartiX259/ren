@@ -6,6 +6,9 @@ use std::collections::HashMap;
 pub fn validate(stmts: &Vec<node::Stmt>) -> Result<HashMap<String, Symbol>, SemanticError> {
     let mut val = Validate::new();
     for stmt in stmts {
+        val.hoist(stmt)?;
+    }
+    for stmt in stmts {
         val.stmt(stmt)?;
     }
     Ok(val.symbol_table)
@@ -21,6 +24,7 @@ pub enum SemanticError {
     InvalidUnaryOperator(PosStr),
     InvalidAdressOf(PosStr),
     InvalidDereference(PosStr, Type),
+    FuncInFunc(PosStr),
     InvalidArgCount(PosStr, usize, usize),
     ArgTypeMismatch(PosStr, Type, Type),
 }
@@ -52,24 +56,56 @@ impl Validate {
         }
     }
 
+    /// Returns mutable reference to the current scope's symbols
     fn scope_symbols(&mut self) -> &mut Vec<(String, Symbol)> {
         if self.cur_func.is_some() {
             let i = self.symbol_stack.last().unwrap().clone();
             self.fn_symbols.get_mut(i).unwrap()
-            //if let Some(Symbol::Func { ty: _, block: _, symbols }) = self.symbol_table.get_mut(s) {
-            //    symbols.insert((name, self.scope_id), sym.clone());
-            //}
         } else {
             panic!("Pushed symbol outside of function!");
         }
     }
-
+    
     fn push_symbol(&mut self, name: String, sym: Symbol) {
         println!("push {}", name);
         self.symbol_table.insert(name.clone(), sym.clone());
         self.scope_symbols().push((name.clone(), sym.clone()));
     }
 
+    fn hoist(&mut self, stmt: &node::Stmt) -> Result<(), SemanticError> {
+        match stmt {
+            node::Stmt::Fn(decl) => {
+                if self.symbol_table.contains_key(&decl.name.str) {
+                    return Err(SemanticError::SymbolExists(decl.name.clone()));
+                }
+                let ty;
+                if let Some(t) = &decl.decl_type {
+                    ty = self.r#type(t)?;
+                } else {
+                    ty = Type::Void;
+                }
+                let mut arg_symbols: Vec<(String, Symbol)> = Vec::new();
+                for arg in decl.arg_names.iter().zip(decl.arg_types.iter()) {
+                    for existing in arg_symbols.iter() {
+                        if existing.0 == arg.0.str {
+                            return Err(SemanticError::SymbolExists(arg.0.clone()));
+                        }
+                    }
+                    let sym = Symbol::Var { ty: self.r#type(arg.1)? };
+                    arg_symbols.push((arg.0.str.clone(), sym.clone()));
+                }
+                self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
+                    ty,
+                    block: Block::new(),
+                    symbols: vec![arg_symbols],
+                    macros: Vec::new()
+                });
+                Ok(())
+            }
+            _ => Ok(())
+        }
+    }
+    
     fn stmt(&mut self, stmt: &node::Stmt) -> Result<(), SemanticError> {
         match stmt {
             node::Stmt::Expr(expr) => self.expr(expr).map(|_| ()),
@@ -122,65 +158,58 @@ impl Validate {
     }
 
     fn r#fn(&mut self, decl: &node::Fn) -> Result<(), SemanticError> {
-        if self.symbol_table.contains_key(&decl.name.str) {
-            return Err(SemanticError::SymbolExists(decl.name.clone()));
+        if self.cur_func.is_some() {
+            return Err(SemanticError::FuncInFunc(decl.name.clone()));
+        }
+        // Retrieve arguments
+        let arg_symbols = self
+            .symbol_table
+            .get(&decl.name.str)
+            .and_then(|sym| match sym {
+                Symbol::Func { symbols, .. } => symbols.get(0).cloned(),
+                _ => None,
+            })
+            .expect("Function symbol not found");
+
+        for (name, symbol) in &arg_symbols {
+            self.symbol_table.insert(name.clone(), symbol.clone());
         }
 
-        let mut arg_symbols = Vec::new();
-        for arg in decl.arg_names.iter().zip(decl.arg_types.iter()) {
-            if self.symbol_table.contains_key(&arg.0.str) {
-                return Err(SemanticError::SymbolExists(arg.0.clone()));
-            }
-            let sym = Symbol::Var { ty: self.r#type(arg.1)? };
-            arg_symbols.push((arg.0.str.clone(), sym.clone()));
-            self.symbol_table.insert(arg.0.str.clone(), sym);
-        }
         self.scope_id = 0;
         self.symbol_stack.push(self.scope_id);
         self.fn_symbols.push(arg_symbols.clone());
         self.scope_id += 1;
 
-        let ty;
-        if let Some(t) = &decl.decl_type {
-            ty = self.r#type(t)?;
-        } else {
-            ty = Type::Void;
-        }
-
-        // Create and insert a new function symbol
-        // so recursion can work
-        let func_symbol = Symbol::Func {
-            ty,
-            block: Block::new(),
-            symbols: Vec::new(),
-            macros: Vec::new()
-        };
-
-        self.symbol_table.insert(decl.name.str.clone(), func_symbol);
+        self.cur_ret = decl
+            .decl_type
+            .as_ref()
+            .map(|t| self.r#type(t))
+            .transpose()?
+            .unwrap_or(Type::Void);
+        
         self.cur_func = Some(decl.name.str.clone());
 
-        // Process the function scope
         self.scope(&decl.scope)?;
 
-        for a in arg_symbols {
-            self.symbol_table.remove(&a.0);
+        for (name, _) in &arg_symbols {
+            self.symbol_table.remove(name);
         }
 
-        let func = self.symbol_table.get_mut(&decl.name.str.clone());
-        if let Some(Symbol::Func { ty, block: _, symbols, macros }) = func {
-            *ty = self.cur_ret.clone();
+        if let Some(Symbol::Func { symbols, macros, .. }) = self.symbol_table.get_mut(&decl.name.str) {
             *symbols = self.fn_symbols.clone();
             *macros = self.macro_list.clone();
         } else {
-            unreachable!();
+            unreachable!("Function symbol should exist at this point");
         }
 
         self.cur_ret = Type::Void;
         self.fn_symbols.clear();
         self.macro_list.clear();
         self.cur_func = None;
+
         Ok(())
     }
+
 
     fn scope(&mut self, scope: &Vec<node::Stmt>) -> Result<(), SemanticError> {
         println!("scope {}, {:?}", self.scope_id, self.fn_symbols);
@@ -204,11 +233,13 @@ impl Validate {
         if self.cur_func.is_none() {
             return Err(SemanticError::InvalidReturn(ret.pos_id));
         }
-        let ty = self.expr(&ret.expr)?;
-        if let Type::Void = self.cur_ret {
-            self.cur_ret = ty;
-        } else if self.cur_ret != ty {
-            return Err(SemanticError::InvalidReturn(ret.pos_id));
+        if let Some(expr) = &ret.expr {
+            let ty = self.expr(expr)?;
+            if self.cur_ret != ty {
+                return Err(SemanticError::InvalidReturn(ret.pos_id));
+            }
+        } else if self.cur_ret != Type::Void {
+            return Err(SemanticError::InvalidReturn(ret.pos_id));   
         }
         Ok(())
     }
@@ -299,7 +330,6 @@ impl Validate {
         let temp: Vec<_>;
         match self.symbol_table.get(&call.name.str) {
             Some(Symbol::Func { ty: t, block: _, symbols, macros: _ }) => {
-                println!("{:?}", symbols);
                 ty = t;
                 if symbols.len() == 0 { // Recursive call
                     temp = self.fn_symbols

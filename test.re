@@ -1,4 +1,7 @@
 
 fn main() {
-    print(7801250);
+    test();
+}
+fn test() {
+    print(12);
 }

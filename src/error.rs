@@ -93,6 +93,10 @@ pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
             println!("Invalid dereference: can't dereference {:?}", ty);
             print_file_err(text, info.get(pos_str.pos_id).unwrap());
         }
+        SemanticError::FuncInFunc(pos_str) => {
+            println!("Function inside another function.");
+            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+        }
         SemanticError::InvalidArgCount(pos_str, exp, got) => {
             println!("Invalid argument count, expected {} arguments but got {}", exp, got);
             print_file_err(text, info.get(pos_str.pos_id).unwrap());

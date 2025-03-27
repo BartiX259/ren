@@ -141,7 +141,6 @@ impl<'a> Gen<'a> {
         let mut locs = block.locs.iter();
         let mut iter = block.ops.into_iter().peekable();
         while let Some(op) = iter.next() {
-            //for op in block.ops {
             self.last_loc = locs.next().unwrap().clone();
             let op_clone = op.clone();
             match op {
@@ -167,7 +166,6 @@ impl<'a> Gen<'a> {
                         if r.locked && !params.contains(&r.term.clone().unwrap()) {
                             self.saved_regs.push(r.clone());
                             self.buf.push_line(format!("push {}", r.name));
-                            //self.buf.comment(format!("save {:?}", r.term.clone().unwrap()));
                         }
                     }
                     for p in params {
@@ -175,7 +173,6 @@ impl<'a> Gen<'a> {
                         self.sp += 8;
                         self.param_size += 8;
                         self.buf.push_line(format!("push {}", r));
-                        //self.buf.comment(format!("param {:?}", p));
                         self.lock_reg(&r, false);
                     }
                 }
@@ -202,12 +199,10 @@ impl<'a> Gen<'a> {
                             *free_reg = r.clone();
                             free_reg.name = free_name.clone();
                             self.buf.push_line(format!("pop {}", free_name));
-                            //self.buf.comment(format!("restore {:?} into {}", r.term.clone().unwrap(), free_name));
                             println!("restore {:?}", self.get_reg(&free_name));
                         } else {
                             *self.get_reg(&r.name).unwrap() = r.clone();
                             self.buf.push_line(format!("pop {}", r.name));
-                            //self.buf.comment(format!("restore {:?}", r.term.clone().unwrap()));
                             println!("restore {:?}", self.regs);
                         }
                     }
@@ -229,7 +224,6 @@ impl<'a> Gen<'a> {
                                 self.lock_reg(&reg, true);
                             }
                         }
-                        //self.buf.comment(format!("{:?} = salloc {}",, size));
                     }
                 },
                 ir::Op::Label(label) => {
@@ -263,15 +257,18 @@ impl<'a> Gen<'a> {
                     self.lock_reg(&r2, false);
                 }
                 ir::Op::Return(term) => {
-                    //self.eval_term(term.clone(), true)?;
                     self.eval_term_at(&term, &"rax".to_string());
-                    //self.buf.comment("|");
                     if self.sp > 0 {
                         self.buf.push_line(format!("add rsp, {}", self.sp));
-                        //self.buf.comment("|");
                     }
                     self.buf.push_line("ret");
-                    //self.buf.comment(format!("return {:?}", term));
+                }
+                ir::Op::ReturnNone => {
+                    self.eval_term_at(&Term::IntLit("0".to_string()), &"rax".to_string());
+                    if self.sp > 0 {
+                        self.buf.push_line(format!("add rsp, {}", self.sp));
+                    }
+                    self.buf.push_line("ret");
                 }
                 ir::Op::LoadSymbols(i) => {
                     for s in self.fn_symbols.get(i).unwrap().iter() {
@@ -522,12 +519,9 @@ impl<'a> Gen<'a> {
                 let target = self.get_free_reg()?;
                 if self.sp == *loc {
                     self.buf.push_line(format!("mov {}, rsp", target));
-                    //self.buf.comment(format!("address of {:?}", term));
                 } else {
                     self.buf.push_line(format!("mov {}, rsp", target));
-                    //self.buf.comment("|");
                     self.buf.push_line(format!("add {}, {}", target, self.sp - loc));
-                    //self.buf.comment(format!("address of {:?}", term));
                 }
                 self.save_reg(&target, &res);
                 self.lock_reg(&target, true);
