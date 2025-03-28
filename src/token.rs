@@ -31,7 +31,7 @@ pub fn tokenize(input: &String) -> Result<(Vec<Token>, Vec<FilePos>), TokenizeEr
     return Ok((tokens, info));
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Word { value: String },
     IntLit { value: String },

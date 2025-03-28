@@ -10,7 +10,9 @@ mod lower;
 mod node;
 mod opt;
 mod parse;
+mod process;
 mod token;
+mod types;
 mod validate;
 
 fn main() -> Result<(), io::Error> {
@@ -38,15 +40,23 @@ fn main() -> Result<(), io::Error> {
     println!("Statements:\n{:?}\n", stmts);
 
     let mut ir;
+    let expr_types;
     match validate::validate(&stmts) {
-        Ok(res) => ir = res,
+        Ok(res) => {
+            ir = res.symbol_table;
+            expr_types = res.expr_types;
+        }
         Err(e) => {
             error::sematic_err(&content, e, token_res.1);
             return Ok(());
         }
     }
 
-    lower::lower(&stmts, &mut ir);
+    let processed_stmts = process::process(stmts, expr_types);
+
+    println!("Processed statements:\n{:?}\n", processed_stmts);
+
+    lower::lower(processed_stmts, &mut ir);
 
     println!("IR:\n{:?}\n", ir);
 

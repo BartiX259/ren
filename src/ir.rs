@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use crate::types::Type;
 
 #[derive(Debug, Clone)]
 pub enum Symbol {
@@ -7,23 +8,6 @@ pub enum Symbol {
     Var { ty: Type },
     Func { ty: Type, block: Block, symbols: Vec<Vec<(String, Symbol)>> },
     ExternFunc { ty: Type, args: Vec<Type> },
-}
-
-#[derive(Debug, Clone)]
-pub enum Macro {
-    Salloc { size: u64, ty: Type }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Type {
-    Void,
-    Int,
-    Float,
-    Bool,
-    String,
-    Pointer(Box<Type>),
-    Array(Box<Type>),
-    Type,
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]

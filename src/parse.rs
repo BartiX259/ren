@@ -1,7 +1,6 @@
 use crate::helpers::VecIter;
 use crate::node::{self, PosStr, UnExpr};
 use crate::token::Token;
-use crate::validate::SemanticError;
 
 /// Parse tokens into the ast
 pub fn parse(token_res: Vec<Token>) -> Result<Vec<node::Stmt>, ParseError> {
@@ -89,9 +88,18 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
         }
         let prec: u8;
         let opstr: String;
+        let unclosed;
         if let Token::Op { value } = &peek.unwrap() {
             opstr = value.to_string();
             prec = op_prec(value.as_str());
+            unclosed = None;
+            if prec < min_prec {
+                break;
+            }
+        } else if let Token::OpenSquare = &peek.unwrap() {
+            opstr = "[]".to_string();
+            prec = op_prec("[]");
+            unclosed = Some((Token::CloseSquare, "']'"));
             if prec < min_prec {
                 break;
             }
@@ -101,6 +109,12 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
         let op_pos = tokens.current_index();
         tokens.next();
         let rhs = parse_expr(tokens, prec + op_assoc(opstr.as_str()))?;
+        if let Some(unc) = unclosed {
+            let tok = check_none(tokens, unc.1)?;
+            if unc.0 != tok {
+                return Err(unexp(tok, tokens.current_index(), unc.1));
+            }
+        }
         let lhs = root;
         root = node::Expr::BinExpr(node::BinExpr {
             lhs: Box::new(lhs),
@@ -460,60 +474,61 @@ fn unexp(token: Token, info_id: usize, expected: &str) -> ParseError {
 
 fn op_prec(op: &str) -> u8 {
     match op {
-        "=" => 0,  // Simple assignment
-        "+=" => 0, // Assignment by sum and difference
-        "-=" => 0, // Assignment by sum and difference
-        "*=" => 0, // Assignment by product, quotient, and remainder
-        "/=" => 0, // Assignment by product, quotient, and remainder
-        "&=" => 0, // Assignment by bitwise AND
-        "|=" => 0, // Assignment by bitwise OR
-        "||" => 1, // Logical OR
-        "&&" => 2, // Logical AND
-        "|" => 3,  // Bitwise OR
-        "&" => 4,  // Bitwise AND
-        "==" => 5, // Equality
-        "!=" => 5, // Not equal
-        "<" => 6,  // Relational operators
+        "=" => 0,  // Lowest precedence (done last)
+        "+=" => 0,
+        "-=" => 0,
+        "*=" => 0,
+        "/=" => 0,
+        "&=" => 0,
+        "|=" => 0,
+        "||" => 1,
+        "&&" => 2,
+        "|" => 3,
+        "&" => 4,
+        "==" => 5,
+        "!=" => 5,
+        "<" => 6,
         "<=" => 6,
-        ">" => 6, // Relational operators
+        ">" => 6,
         ">=" => 6,
-        "<<" => 7, // Bitwise left shift
-        ">>" => 7, // Bitwise right shift
+        "<<" => 7,
+        ">>" => 7,
         "+" => 8,
         "-" => 8,
         "*" => 9,
         "/" => 9,
-        "!" => 10, // Highest precedence
+        "!" => 10,
+        "[]" => 11, // Highest precedence (done first)
         _ => 0,
     }
 }
 
 fn op_assoc(op: &str) -> u8 {
     match op {
-        "=" => 0,  // Right-associative (assignment)
-        "+=" => 0, // Right-associative (assignment)
-        "-=" => 0, // Right-associative (assignment)
-        "*=" => 0, // Right-associative (assignment)
-        "/=" => 0, // Right-associative (assignment)
-        "&=" => 0, // Right-associative (assignment)
-        "|=" => 0, // Right-associative (assignment)
-        "||" => 1, // Left-associative (logical OR)
-        "&&" => 1, // Left-associative (logical AND)
-        "|" => 1,  // Left-associative (bitwise OR)
-        "&" => 1,  // Left-associative (bitwise AND)
-        "==" => 1, // Left-associative (equality)
-        "!=" => 1, // Left-associative (not equal)
-        "<" => 1,  // Left-associative (relational)
-        "<=" => 1, // Left-associative (relational)
-        ">" => 1,  // Left-associative (relational)
-        ">=" => 1, // Left-associative (relational)
-        "<<" => 1, // Left-associative (bitwise shift)
-        ">>" => 1, // Left-associative (bitwise shift)
-        "+" => 1,  // Left-associative (addition)
-        "-" => 1,  // Left-associative (subtraction)
-        "*" => 1,  // Left-associative (multiplication)
-        "/" => 1,  // Left-associative (division)
-        "!" => 0,  // Right-associative (unary NOT)
-        _ => 0,    // Default to right-associative if unknown
+        "=" => 0,  // Right to left
+        "+=" => 0,
+        "-=" => 0,
+        "*=" => 0,
+        "/=" => 0,
+        "&=" => 0,
+        "|=" => 0,
+        "||" => 1, // Left to right
+        "&&" => 1,
+        "|" => 1,
+        "&" => 1,
+        "==" => 1,
+        "!=" => 1,
+        "<" => 1,
+        "<=" => 1,
+        ">" => 1,
+        ">=" => 1,
+        "<<" => 1,
+        ">>" => 1,
+        "+" => 1,
+        "-" => 1,
+        "*" => 1,
+        "/" => 1,
+        "[]" => 1,
+        _ => 1,
     }
 }

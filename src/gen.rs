@@ -1,5 +1,6 @@
 use crate::helpers::IndentedBuf;
-use crate::ir::{self, Block, Macro, OpLoc, Symbol, Term, Type};
+use crate::ir::{self, Block, OpLoc, Symbol, Term};
+use crate::types::Type;
 use std::collections::HashMap;
 
 /// Generate nasm code based on the IR

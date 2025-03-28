@@ -1,5 +1,6 @@
 
 fn main() {
     let x = [1, 2, 3];
-    print(*(x+16));
+    x[1] = 5;
+    print(x[2]);
 }

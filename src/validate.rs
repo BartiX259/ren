@@ -1,9 +1,15 @@
-use crate::ir::{Block, Macro, Symbol, Type};
+use crate::ir::{Block, Symbol};
+use crate::types::{self, Type};
 use crate::node::{self, PosStr};
 use std::collections::HashMap;
 
+pub struct TypeMap {
+    pub symbol_table: HashMap<String, Symbol>,
+    pub expr_types: Vec<Type>
+}
+
 /// Validate the ast, return a symbol table if successful
-pub fn validate(stmts: &Vec<node::Stmt>) -> Result<HashMap<String, Symbol>, SemanticError> {
+pub fn validate(stmts: &Vec<node::Stmt>) -> Result<TypeMap, SemanticError> {
     let mut val = Validate::new();
     for stmt in stmts {
         val.hoist(stmt)?;
@@ -11,7 +17,7 @@ pub fn validate(stmts: &Vec<node::Stmt>) -> Result<HashMap<String, Symbol>, Sema
     for stmt in stmts {
         val.stmt(stmt)?;
     }
-    Ok(val.symbol_table)
+    Ok(TypeMap { symbol_table: val.symbol_table, expr_types: val.expr_types })
 }
 
 pub enum SemanticError {
@@ -32,6 +38,7 @@ pub enum SemanticError {
 
 pub struct Validate {
     pub symbol_table: HashMap<String, Symbol>,
+    pub expr_types: Vec<Type>,
     fn_symbols: Vec<Vec<(String, Symbol)>>,
     symbol_stack: Vec<usize>,
     cur_func: Option<String>,
@@ -46,6 +53,7 @@ impl Validate {
             symbol_table: HashMap::from([
                 ("print".to_string(), Symbol::ExternFunc { ty: Type::Void, args: vec![Type::Int] }),
             ]),
+            expr_types: Vec::new(),
             fn_symbols: Vec::new(),
             symbol_stack: Vec::new(),
             cur_func: None,
@@ -121,7 +129,7 @@ impl Validate {
     }
 
     fn expr(&mut self, expr: &node::Expr) -> Result<Type, SemanticError> {
-        match expr {
+        let res = match expr {
             node::Expr::IntLit(_) => Ok(Type::Int),
             node::Expr::ArrLit(arr_lit) => self.expr_list(&arr_lit.exprs, arr_lit.pos_id).map(|ty| Type::Pointer(Box::new(ty))),
             node::Expr::Variable(pos_str) => self
@@ -136,7 +144,12 @@ impl Validate {
             node::Expr::Macro(r#macro) => self.r#macro(r#macro),
             node::Expr::BinExpr(bin_expr) => self.bin_expr(bin_expr),
             node::Expr::UnExpr(un_expr) => self.un_expr(un_expr),
+        };
+        if let Ok(ty) = &res {
+            self.expr_types.push(ty.clone());
+            println!("{}. {:?}: {:?}", self.expr_types.len(), ty, expr);
         }
+        res
     }
 
     fn r#let(&mut self, decl: &node::Let) -> Result<(), SemanticError> {
@@ -287,6 +300,17 @@ impl Validate {
                 // Assignment operators
                 if ty1 == ty2 {
                     Ok(ty1)
+                } else {
+                    Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
+                }
+            }
+            "[]" => {
+                if let Some(t) = ty1.pointer() {
+                    if ty2 == Type::Int {
+                        Ok(t)
+                    } else {
+                        Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
+                    }
                 } else {
                     Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
                 }

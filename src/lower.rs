@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 
-use crate::ir::{self, Block, Macro, Symbol};
+use crate::ir::{self, Block, Symbol};
 use crate::node;
+use crate::types::Type;
 
 /// Transform the ast into the IR
-pub fn lower(stmts: &Vec<node::Stmt>, ir: &mut HashMap<String, Symbol>) {
+pub fn lower(stmts: Vec<node::Stmt>, ir: &mut HashMap<String, Symbol>) {
     let mut l = Lower::new(ir);
-    for s in stmts.iter() {
-        l.stmt(s);
+    for s in stmts.into_iter() {
+        l.stmt(&s);
     }
 }
 
@@ -96,7 +97,7 @@ impl<'a> Lower<'a> {
                     self.expr(expr);
                     self.temp_count += 1;
                     if i != 0 {
-                        self.push_op(ir::Op::Tac { lhs: ptr.clone(), rhs: Some(ir::Term::IntLit("8".to_string())), op: Some("+".to_string()), res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
+                        self.push_op(ir::Op::Tac { lhs: ptr.clone(), rhs: Some(ir::Term::IntLit(8.to_string())), op: Some("+".to_string()), res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
                     } else {
                         self.push_op(ir::Op::Tac { lhs: ptr.clone(), rhs: None, op: None, res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
                     }
@@ -232,14 +233,6 @@ impl<'a> Lower<'a> {
     fn bin_expr(&mut self, bin: &node::BinExpr) {
         if let node::Expr::UnExpr(u) = &*bin.lhs {
             if u.op.str == "*" && ["=", "+=", "-=", "*=", "/="].contains(&bin.op.str.as_str()) {
-                //let deref_count = 1;
-                //while let node::Expr::UnExpr(der) = *u.expr {
-                //    if der.op.str == "*" {
-                //        deref_count += 1;
-                //    } else {
-                //        break;
-                //    }
-                //}
                 self.expr(&u.expr);
                 let ptr = ir::Term::Temp(self.temp_count);
                 self.expr(&bin.rhs);
@@ -260,12 +253,11 @@ impl<'a> Lower<'a> {
         self.expr(&bin.lhs);
         let lhs = ir::Term::Temp(self.temp_count);
         self.expr(&bin.rhs);
-        let rhs = Some(ir::Term::Temp(self.temp_count));
         self.temp_count += 1;
         self.push_op(
             ir::Op::Tac {
                 lhs,
-                rhs,
+                rhs: Some(ir::Term::Temp(self.temp_count - 1)),
                 op: Some(bin.op.str.clone()),
                 res: Some(ir::Term::Temp(self.temp_count)),
             },
