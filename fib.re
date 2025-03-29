@@ -1,4 +1,4 @@
-fn fib(int n) {
+fn fib(n: int) -> int {
     if n == 0 {
       return 0;
     }
@@ -8,5 +8,5 @@ fn fib(int n) {
     return fib(n-1) + fib(n-2);
 }
 fn main() {
-    fib(8);
+    print(fib(8));
 }

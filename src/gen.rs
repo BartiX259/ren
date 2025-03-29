@@ -163,6 +163,7 @@ impl<'a> Gen<'a> {
                         if r.locked && !params.contains(&r.term.clone().unwrap()) {
                             self.saved_regs.push(r.clone());
                             self.buf.push_line(format!("push {}", r.name));
+                            self.buf.comment(format!("save {:?}", r.term.clone().unwrap()));
                         }
                     }
                     for p in params {
@@ -170,6 +171,7 @@ impl<'a> Gen<'a> {
                         self.sp += 8;
                         self.param_size += 8;
                         self.buf.push_line(format!("push {}", r));
+                        self.buf.comment(format!("param {:?}", p));
                         self.lock_reg(&r, false);
                     }
                 }
@@ -179,6 +181,7 @@ impl<'a> Gen<'a> {
                         r.locked = false;
                     }
                     self.buf.push_line(format!("call {}", func));
+                    self.buf.comment(format!("{:?}", op_clone));
                     if let Term::Symbol(_) = res {
                         self.store_term(res.clone(), "rax".to_string());
                     } else {
@@ -188,6 +191,7 @@ impl<'a> Gen<'a> {
                     if self.param_size != 0 {
                         self.sp -= self.param_size;
                         self.buf.push_line(format!("add rsp, {}", self.param_size));
+                        self.buf.comment("skip params");
                     }
                     for r in self.saved_regs.clone().iter().rev() {
                         if r.name == "rax" {
@@ -196,12 +200,11 @@ impl<'a> Gen<'a> {
                             *free_reg = r.clone();
                             free_reg.name = free_name.clone();
                             self.buf.push_line(format!("pop {}", free_name));
-                            println!("restore {:?}", self.get_reg(&free_name));
                         } else {
                             *self.get_reg(&r.name).unwrap() = r.clone();
                             self.buf.push_line(format!("pop {}", r.name));
-                            println!("restore {:?}", self.regs);
                         }
+                        self.buf.comment(format!("restore {:?}", r.term.clone().unwrap()));
                     }
                     self.calling = false;
                     self.param_size = 0;
@@ -278,7 +281,7 @@ impl<'a> Gen<'a> {
                 ir::Op::LoopEnd => self.restore_regs(),
             }
             match op_clone {
-                ir::Op::LoadSymbols(_) | ir::Op::UnloadSymbols(_) | ir::Op::LoopStart | ir::Op::LoopEnd | ir::Op::Arg(_) => (),
+                ir::Op::LoadSymbols(_) | ir::Op::UnloadSymbols(_) | ir::Op::LoopStart | ir::Op::LoopEnd | ir::Op::Arg(_) | ir::Op::Param(_) | ir::Op::Call { func: _, res: _ } => (),
                 _ => self.buf.comment(format!("{:?}", op_clone)),
             }
         }
