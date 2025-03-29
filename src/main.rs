@@ -8,10 +8,10 @@ mod helpers;
 mod ir;
 mod lower;
 mod node;
-mod opt;
+mod optimize;
 mod parse;
 mod process;
-mod token;
+mod tokenize;
 mod types;
 mod validate;
 
@@ -19,7 +19,7 @@ fn main() -> Result<(), io::Error> {
     let content: String = fs::read_to_string("./test.re")?;
     println!("{}", content);
     let token_res;
-    match token::tokenize(&content) {
+    match tokenize::tokenize(&content) {
         Ok(res) => token_res = res,
         Err(e) => {
             error::token_err(&content, e);
@@ -60,7 +60,7 @@ fn main() -> Result<(), io::Error> {
 
     println!("IR:\n{:?}\n", ir);
 
-    opt::optimize(&mut ir);
+    optimize::optimize(&mut ir);
 
     println!("Optimized IR:\n{:?}\n", ir);
 

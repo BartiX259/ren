@@ -1,6 +1,6 @@
 use crate::gen::GenError;
 use crate::parse::ParseError;
-use crate::token::TokenizeError;
+use crate::tokenize::TokenizeError;
 use crate::validate::SemanticError;
 
 #[derive(Debug)]

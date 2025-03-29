@@ -1,6 +1,6 @@
 use crate::helpers::VecIter;
 use crate::node::{self, PosStr, UnExpr};
-use crate::token::Token;
+use crate::tokenize::Token;
 
 /// Parse tokens into the ast
 pub fn parse(token_res: Vec<Token>) -> Result<Vec<node::Stmt>, ParseError> {
