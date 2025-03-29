@@ -276,7 +276,7 @@ impl Validate {
                     (Type::Int, Type::Int) => Ok(Type::Int),
                     (Type::Float, Type::Float) => Ok(Type::Float),
                     (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
-                    (Type::Pointer(p), Type::Int) | (Type::Int, Type::Pointer(p)) => Ok(Type::Pointer(p)),
+                    (Type::Pointer(p), Type::Int) => Ok(Type::Pointer(p)),
                     _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2)),
                 }
             }

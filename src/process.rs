@@ -133,28 +133,46 @@ impl Process {
         }
     }
 
+    fn calc_bin_expr(&self, bin: node::BinExpr) -> node::Expr {
+        if let node::Expr::IntLit(lstr) = &*bin.lhs {
+            if let node::Expr::IntLit(rstr) = &*bin.rhs {
+                let l = lstr.str.parse::<i64>().unwrap();
+                let r = rstr.str.parse::<i64>().unwrap();
+                return node::Expr::IntLit(self.pos_str(
+                    match bin.op.str.as_str() {
+                        "+" => l + r,
+                        "-" => l - r,
+                        "*" => l * r,
+                        "/" => l / r,
+                        _ => panic!("Unexpected operation")
+                    }.to_string()
+                ));
+            }
+        }
+        node::Expr::BinExpr(bin)
+    }
     fn bin_expr(&mut self, bin: node::BinExpr) -> node::Expr {
         let lhs = self.expr(*bin.lhs);
         let ltype = self.cur_type.clone();
         let mut rhs = self.expr(*bin.rhs);
-        if let Some(p) = ltype.pointer() {
-            rhs = node::Expr::BinExpr(node::BinExpr {
+        if let Some(p) = ltype.pointer() { // Pointer arithmetic - multiply by size of inner type
+            rhs = self.calc_bin_expr(node::BinExpr {
                 lhs: Box::new(rhs),
                 rhs: Box::new(node::Expr::IntLit(self.pos_str(p.size().to_string()))),
                 op: self.pos_str("*".to_string())
             });
         }
-        if bin.op.str == "[]" {
+        if bin.op.str == "[]" { // Array access -> add and dereference
             return node::Expr::UnExpr(node::UnExpr {
                 op: self.pos_str("*".to_string()),
-                expr: Box::new(node::Expr::BinExpr(node::BinExpr {
-                        lhs: Box::new(lhs),
-                        rhs: Box::new(rhs),
-                        op: self.pos_str("+".to_string())
+                expr: Box::new(self.calc_bin_expr(node::BinExpr {
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                    op: self.pos_str("+".to_string())
                 }))
             });
         }
-        node::Expr::BinExpr(node::BinExpr {
+        self.calc_bin_expr(node::BinExpr {
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
             op: bin.op
