@@ -1,12 +1,13 @@
-use std::vec::IntoIter;
+use std::slice::Iter;
 
 use crate::node;
 use crate::types::Type;
 
 /// Modify the ast to express syntax sugar with simpler statements
-pub fn process(stmts: Vec<node::Stmt>, expr_types: Vec<Type>) -> Vec<node::Stmt> {
+pub fn process(stmts: Vec<node::Stmt>, expr_types: &Vec<Type>) -> Vec<node::Stmt> {
     let mut res = Vec::new();
-    let mut l = Process::new( expr_types.into_iter());
+    let binding = &mut expr_types.iter();
+    let mut l = Process::new( binding);
     for s in stmts.into_iter() {
         let new_stmt = l.stmt(s);
         res.push(new_stmt);
@@ -14,14 +15,14 @@ pub fn process(stmts: Vec<node::Stmt>, expr_types: Vec<Type>) -> Vec<node::Stmt>
     return res;
 }
 
-struct Process {
+struct Process<'a> {
     pub stmts: Vec<Vec<node::Stmt>>,
-    expr_types: IntoIter<Type>,
+    expr_types: &'a mut Iter<'a, Type>,
     index: usize,
     cur_type: Type,
 }
-impl Process {
-    pub fn new( expr_types: IntoIter<Type>) -> Self {
+impl<'a> Process<'a> {
+    pub fn new( expr_types: &'a mut Iter<'a, Type>) -> Self {
         Self {
             stmts: Vec::new(),
             expr_types,
@@ -104,7 +105,7 @@ impl Process {
             _ => expr
         };
         self.index += 1;
-        self.cur_type = self.expr_types.next().unwrap();
+        self.cur_type = self.expr_types.next().unwrap().clone();
         println!("{}. {:?}", self.index, self.cur_type);
         return new_expr;
     }

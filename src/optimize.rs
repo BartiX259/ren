@@ -297,27 +297,29 @@ impl<'a> Opt<'a> {
                 Op::Unary { term: ptr, op, res } => {
                     if op == "&" {
                         let mut iter_clone = iter_3.clone();
-                        if let Some(Op::Tac { lhs, rhs, op, res }) = iter_clone.next() {
-                            if let Some(Term::IntLit(offset)) = rhs {
-                                let next_op = iter_clone.next();
-                                if let Some(Op::DerefAssign { term, op, ptr: _, offset: _, res }) = next_op {
-                                    new_block_3.ops.push(Op::StackAssign { term, op, ptr, offset: offset.parse::<i64>().unwrap(), res });
-                                    new_block_3.locs.push(loc_iter_3.next().unwrap());
-                                    for _ in 0..2 {
-                                        iter_3.next();
-                                        loc_iter_3.next();
-                                    }
-                                    continue;
-                                }
-                                if let Some(Op::Unary { term, op, res }) = next_op {
-                                    if op == "*" {
-                                        new_block_3.ops.push(Op::StackRead { ptr, offset: offset.parse::<i64>().unwrap(), res });
+                        if let Some(Op::Tac { lhs, rhs, op, res: out_var }) = iter_clone.next() {
+                            if let Some(Term::Symbol(_)) = out_var {} else {    
+                                if let Some(Term::IntLit(offset)) = rhs {
+                                    let next_op = iter_clone.next();
+                                    if let Some(Op::DerefAssign { term, op, ptr: _, offset: _, res }) = next_op {
+                                        new_block_3.ops.push(Op::StackAssign { term, op, ptr, offset: offset.parse::<i64>().unwrap(), res });
                                         new_block_3.locs.push(loc_iter_3.next().unwrap());
                                         for _ in 0..2 {
                                             iter_3.next();
                                             loc_iter_3.next();
                                         }
                                         continue;
+                                    }
+                                    if let Some(Op::Unary { term, op, res }) = next_op {
+                                        if op == "*" {
+                                            new_block_3.ops.push(Op::StackRead { ptr, offset: offset.parse::<i64>().unwrap(), res });
+                                            new_block_3.locs.push(loc_iter_3.next().unwrap());
+                                            for _ in 0..2 {
+                                                iter_3.next();
+                                                loc_iter_3.next();
+                                            }
+                                            continue;
+                                        }
                                     }
                                 }
                             }

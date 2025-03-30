@@ -1,7 +1,7 @@
 use crate::ir::{Block, Symbol};
 use crate::types::Type;
 use crate::node::{self, PosStr};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct TypeMap {
     pub symbol_table: HashMap<String, Symbol>,
@@ -35,6 +35,7 @@ pub enum SemanticError {
     ArgTypeMismatch(PosStr, Type, Type),
     StructInFunc(PosStr),
     InvalidStructKey(PosStr, PosStr),
+    MissingStructKey(PosStr, String),
     StructTypeMismatch(PosStr, Type, Type),
     EmptyArray(usize),
 }
@@ -349,7 +350,11 @@ impl Validate {
             "-" => Ok(ty),
             "&" => {
                 if let node::Expr::Variable(_) = *un.expr {
-                    Ok(Type::Pointer(Box::new(ty)))
+                    if let Some(p) = ty.stack() {
+                        Ok(Type::Pointer(Box::new(p)))
+                    } else {
+                        Ok(Type::Pointer(Box::new(ty)))
+                    }
                 } else {
                     Err(SemanticError::InvalidAdressOf(un.op.clone()))
                 }
@@ -383,6 +388,12 @@ impl Validate {
                 }
             } else {
                 return Err(SemanticError::InvalidStructKey(lit.name.clone(), name.clone()));
+            }
+        }
+        let set: HashSet<String> = lit.field_names.iter().map(|pos_str| pos_str.str.clone()).collect();
+        for name in names {
+            if set.get(&name).is_none() {
+                return Err(SemanticError::MissingStructKey(lit.name.clone(), name));
             }
         }
 

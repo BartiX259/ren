@@ -113,6 +113,10 @@ pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
             println!("Struct '{}' doesn't have key '{}'.", pos_str1.str, pos_str2.str);
             print_file_err(text, info.get(pos_str2.pos_id).unwrap());
         }
+        SemanticError::MissingStructKey(pos_str, key) => {
+            println!("Missing key '{}' for struct '{}'.", key, pos_str.str);
+            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+        }
         SemanticError::StructTypeMismatch(pos_str, ty1, ty2) => {
             println!("Struct type mismatch: expected {:?} but got {:?}", ty1, ty2);
             print_file_err(text, info.get(pos_str.pos_id).unwrap());

@@ -52,11 +52,11 @@ fn main() -> Result<(), io::Error> {
         }
     }
 
-    let processed_stmts = process::process(stmts, expr_types);
+    let processed_stmts = process::process(stmts, &expr_types);
 
     println!("Processed statements:\n{:?}\n", processed_stmts);
 
-    lower::lower(processed_stmts, &mut ir);
+    lower::lower(processed_stmts, &mut ir, &expr_types);
 
     println!("IR:\n{:?}\n", ir);
 

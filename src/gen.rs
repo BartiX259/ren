@@ -575,7 +575,10 @@ impl<'a> Gen<'a> {
         if let Some(r) = res {
             self.save_reg(&t, &r);
             self.lock_reg(&t, true);
+        } else {
+            self.lock_reg(&t, false);
         }
+        self.lock_reg(&p, false);
         // Might have modified a symbol on the stack, so forget about symbols in the registers
         for r in self.regs.iter_mut() {
             if let Some(Term::Symbol(_)) = r.term {
