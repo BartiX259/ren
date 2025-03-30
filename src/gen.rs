@@ -34,9 +34,9 @@ struct Gen<'a> {
     buf: IndentedBuf,
     symbol_table: &'a mut HashMap<String, Symbol>,
     fn_symbols: Vec<Vec<(String, Symbol)>>,
-    temp_table: Vec<Type>,
     locs: HashMap<Term, i64>,
     regs: Vec<Reg>,
+    rsp_term: Option<Term>,
     sp: i64,
     arg_ptr: i64,
     last_loc: OpLoc,
@@ -49,13 +49,13 @@ struct Gen<'a> {
 impl<'a> Gen<'a> {
     pub fn new(ir: &'a mut HashMap<String, Symbol>) -> Self {
         Self {
-            buf: IndentedBuf::new(8, 16),
+            buf: IndentedBuf::new(8, 24),
             symbol_table: ir,
             fn_symbols: Vec::new(),
-            temp_table: Vec::new(),
             locs: HashMap::new(),
             // Can't use rdx because it has to be 0 to divide
             regs: vec![reg("rax"), reg("rbx"), reg("rcx"), reg("rdi"), reg("rsi")],
+            rsp_term: None,
             sp: 0,
             arg_ptr: 0,
             last_loc: OpLoc { start_id: 0, end_id: 0 },
@@ -143,7 +143,10 @@ impl<'a> Gen<'a> {
             match op {
                 ir::Op::Tac { lhs, rhs, op, res } => self.tac(lhs, rhs, op, res)?,
                 ir::Op::Unary { term, op, res } => self.unary(term, op, res)?,
-                ir::Op::DerefAssign { term, op, ptr, res } => self.deref_assign(term, op, ptr, res)?,
+                ir::Op::DerefAssign { term, op, ptr, offset, res } => self.deref_assign(term, op, ptr, offset, res, false)?,
+                ir::Op::DerefRead { ptr, offset, res } => self.deref_read(ptr, offset, res, false)?,
+                ir::Op::StackAssign { term, op, ptr, offset, res } => self.deref_assign(term, op, ptr, offset, res, true)?,
+                ir::Op::StackRead { ptr, offset, res } => self.deref_read(ptr, offset, res, true)?,
                 ir::Op::Decl(term) => {
                     self.sp += 8;
                     self.buf.push_line(format!("sub rsp, {}", 8));
@@ -213,15 +216,19 @@ impl<'a> Gen<'a> {
                 ir::Op::Salloc { size, res } => {
                     self.sp += size as i64;
                     self.buf.push_line(format!("sub rsp, {}", size));
-                    let reg = self.get_free_reg()?;
-                    self.buf.push_line(format!("mov {}, rsp", reg));
-                    self.save_reg(&reg, &res);
-                    if let Term::Symbol(_) = res {
-                        self.store_term(res.clone(), reg);
-                    } else {
-                        self.lock_reg(&reg, true);
+                    self.rsp_term = Some(res);
+                }
+                ir::Op::TakeSalloc { ptr, res } => {
+                    if Some(ptr) != self.rsp_term {
+                        panic!("Invalid take salloc pointer");
                     }
-                },
+                    let Term::Symbol(_) = res else {
+                        panic!("Invalid take salloc result");
+                    };
+                    self.rsp_term = None;
+                    self.locs.insert(res, self.sp);
+                    self.buf.push_line("");
+                }
                 ir::Op::Label(label) => {
                     self.buf.dedent();
                     self.buf.push_line("");
@@ -288,16 +295,6 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    fn get_type(&self, term: &Term) -> Option<&Type> {
-        match term {
-            Term::Symbol(str) => match self.symbol_table.get(str) {
-                _ => None,
-            },
-            Term::Temp(id) => self.temp_table.get(id - 1),
-            _ => None,
-        }
-    }
-
     fn get_reg(&mut self, name: &String) -> Option<&mut Reg> {
         for r in self.regs.iter_mut() {
             if r.name == *name {
@@ -356,6 +353,7 @@ impl<'a> Gen<'a> {
         Err(GenError::NoFreeRegisters(self.last_loc.clone()))
     }
 
+    /// Stores a term from a register to the stack
     fn store_term(&mut self, term: Term, reg: String) {
         let res_loc: i64;
         if let Some(loc) = self.locs.get(&term) {
@@ -439,6 +437,9 @@ impl<'a> Gen<'a> {
             if r.term == Some(term.clone()) {
                 return Ok(r.name.clone());
             }
+        }
+        if Some(&term) == self.rsp_term.as_ref() {
+            return Ok("rsp".to_string());
         }
         let target = self.get_free_reg()?;
         //println!("eval {:?}, {}, {:?}", term, target, self.regs);
@@ -528,9 +529,7 @@ impl<'a> Gen<'a> {
         let r = self.eval_term(term, false)?;
         match op.as_str() {
             "-" => self.buf.push_line(format!("neg {}", r)),
-            "*" => {
-                self.buf.push_line(format!("mov {}, [{}]", r, r));
-            }
+            "*" => self.buf.push_line(format!("mov {}, [{}]", r, r)),
             _ => unreachable!(),
         }
         self.save_reg(&r, &res);
@@ -538,24 +537,38 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    fn deref_assign(&mut self, term: Term, op: String, ptr: Term, res: Option<Term>) -> Result<(), GenError> {
+    fn deref_assign(&mut self, term: Term, op: String, ptr: Term, mut offset: i64, res: Option<Term>, stack: bool) -> Result<(), GenError> {
         let mut t = self.eval_term(term, res.is_none() && op != "*=" && op != "/=")?;
-        let p = self.eval_term(ptr, false)?;
+        let p;
+        if stack {
+            p = "rsp".to_string();
+            offset += self.sp - self.locs.get(&ptr).unwrap();
+        } else {
+            p = self.eval_term(ptr, false)?;
+        }
+        let o;
+        if offset == 0 {
+            o = String::new();
+        } else if offset > 0 {
+            o = format!("+{}", offset);
+        } else {
+            o = format!("-{}", -offset);
+        }
         match op.as_str() {
-            "=" => self.buf.push_line(format!("mov qword [{}], {}", p, t)),
-            "+=" => self.buf.push_line(format!("add qword [{}], {}", p, t)),
-            "-=" => self.buf.push_line(format!("sub qword [{}], {}", p, t)),
+            "=" => self.buf.push_line(format!("mov qword [{}{}], {}", p, o, t)),
+            "+=" => self.buf.push_line(format!("add qword [{}{}], {}", p, o, t)),
+            "-=" => self.buf.push_line(format!("sub qword [{}{}], {}", p, o, t)),
             "*=" => {
                 let mut free = self.get_free_reg()?;
-                self.buf.push_line(format!("mov {}, [{}]", free, p));
+                self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
                 self.bin_rax("mul", &mut free, &mut t);
-                self.buf.push_line(format!("mov qword [{}], {}", p, free));
+                self.buf.push_line(format!("mov qword [{}{}], {}", p, o, free));
             }
             "/=" => {
                 let mut free = self.get_free_reg()?;
-                self.buf.push_line(format!("mov {}, [{}]", free, p));
+                self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
                 self.bin_rax("div", &mut free, &mut t);
-                self.buf.push_line(format!("mov qword [{}], {}", p, free));
+                self.buf.push_line(format!("mov qword [{}{}], {}", p, o, free));
             }
             _ => unreachable!(),
         }
@@ -568,6 +581,37 @@ impl<'a> Gen<'a> {
             if let Some(Term::Symbol(_)) = r.term {
                 r.term = None;
             }
+        }
+        Ok(())
+    }
+
+    fn deref_read(&mut self, ptr: Term, mut offset: i64, res: Term, stack: bool) -> Result<(), GenError> {
+        let r;
+        if stack {
+            r = "rsp".to_string();
+            offset += self.sp - self.locs.get(&ptr).unwrap();
+        } else {
+            r = self.eval_term(ptr, false)?
+        }
+        let o;
+        if offset == 0 {
+            o = String::new();
+        } else if offset > 0 {
+            o = format!("+{}", offset);
+        } else {
+            o = format!("-{}", -offset);
+        }
+        if stack {
+            println!("eval {:?}", res);
+            let res_reg = self.get_free_reg()?;
+            println!("at {}",  res_reg);
+            self.buf.push_line(format!("mov {}, [{}{}]", res_reg, r, o));
+            self.save_reg(&res_reg, &res);
+            self.lock_reg(&res_reg, true);
+        } else {
+            self.buf.push_line(format!("mov {}, [{}{}]", r, r, o));
+            self.save_reg(&r, &res);
+            self.lock_reg(&r, true);
         }
         Ok(())
     }

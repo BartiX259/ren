@@ -64,6 +64,7 @@ impl<'a> Lower<'a> {
             node::Stmt::Let(decl) => self.r#let(decl),
             node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
+            node::Stmt::StructDecl(_) => (),
             node::Stmt::Ret(ret) => self.ret(ret),
             node::Stmt::If(r#if) => self.r#if(r#if),
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
@@ -92,21 +93,18 @@ impl<'a> Lower<'a> {
                 self.temp_count += 1;
                 let ptr = ir::Term::Temp(self.temp_count);
                 let mut i = 0;
-                self.push_op(ir::Op::Salloc { size: arr_lit.exprs.len() as u32 * 8, res: ptr.clone() }, 0);
+                self.push_op(ir::Op::Salloc { size: arr_lit.exprs.len() as u32 * 8, res: ptr.clone() }, arr_lit.pos_id);
                 for expr in &arr_lit.exprs {
                     self.expr(expr);
                     self.temp_count += 1;
-                    if i != 0 {
-                        self.push_op(ir::Op::Tac { lhs: ptr.clone(), rhs: Some(ir::Term::IntLit(8.to_string())), op: Some("+".to_string()), res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
-                    } else {
-                        self.push_op(ir::Op::Tac { lhs: ptr.clone(), rhs: None, op: None, res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
-                    }
+                    self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: i, res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
                     i += 8;
-                    self.temp_count += 1;
-                    self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 2), op: "=".to_string(), ptr: ir::Term::Temp(self.temp_count - 1), res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
                 }
                 self.temp_count += 1;
-                self.push_op(ir::Op::Tac { lhs: ptr, rhs: Some(ir::Term::IntLit((i-8).to_string())), op: Some("-".to_string()), res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
+                self.push_op(ir::Op::TakeSalloc { ptr, res: ir::Term::Temp(self.temp_count) }, arr_lit.pos_id);
+            }
+            node::Expr::StructLit(lit) => {
+
             }
             node::Expr::Variable(pos_str) => {
                 self.temp_count += 1;
@@ -243,6 +241,7 @@ impl<'a> Lower<'a> {
                         term,
                         op: bin.op.str.clone(),
                         ptr,
+                        offset: 0,
                         res: Some(ir::Term::Temp(self.temp_count)),
                     },
                     u.op.pos_id,

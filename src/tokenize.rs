@@ -39,6 +39,7 @@ pub enum Token {
     Let,
     Decl,
     Fn,
+    Struct,
     Return,
     If,
     Else,
@@ -57,6 +58,7 @@ pub enum Token {
     OpenSquare,
     CloseSquare,
     Comma,
+    Dot
 }
 
 impl Token {
@@ -68,6 +70,7 @@ impl Token {
             Token::Let => "let",
             Token::Decl => "decl",
             Token::Fn => "fn",
+            Token::Struct => "struct",
             Token::Return => "return",
             Token::If => "if",
             Token::Else => "else",
@@ -86,6 +89,7 @@ impl Token {
             Token::OpenSquare => "[",
             Token::CloseSquare => "]",
             Token::Comma => ",",
+            Token::Dot => "."
         }.to_string()
     }
     pub fn from_char(ch: char) -> Option<Self> {
@@ -100,6 +104,7 @@ impl Token {
             '[' => Some(Token::OpenSquare),
             ']' => Some(Token::CloseSquare),
             ',' => Some(Token::Comma),
+            '.' => Some(Token::Dot),
             _ => None,
         }
     }
@@ -108,6 +113,7 @@ impl Token {
             "let" => Some(Token::Let),
             "decl" => Some(Token::Decl),
             "fn" => Some(Token::Fn),
+            "struct" => Some(Token::Struct),
             "return" => Some(Token::Return),
             "if" => Some(Token::If),
             "else" => Some(Token::Else),

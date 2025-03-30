@@ -13,6 +13,18 @@ pub struct Decl {
     pub name: PosStr,
     pub r#type: Type,
 }
+#[derive(Debug)]
+pub struct StructDecl {
+    pub name: PosStr,
+    pub field_names: Vec<PosStr>,
+    pub field_types: Vec<Type>,
+}
+#[derive(Debug, Clone)]
+pub struct StructLit {
+    pub name: PosStr,
+    pub field_names: Vec<PosStr>,
+    pub field_exprs: Vec<Expr>,
+}
 #[derive(Debug, Clone)]
 pub struct Call {
     pub name: PosStr,
@@ -95,6 +107,7 @@ pub enum Macro {
 pub enum Expr {
     IntLit(PosStr),
     ArrLit(ArrLit),
+    StructLit(StructLit),
     Variable(PosStr),
     Call(Call),
     Macro(Macro),
@@ -107,6 +120,7 @@ pub enum Stmt {
     Let(Let),
     Decl(Decl),
     Fn(Fn),
+    StructDecl(StructDecl),
     Ret(Ret),
     If(If),
     Loop(Loop),

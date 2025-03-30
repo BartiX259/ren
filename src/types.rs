@@ -7,7 +7,7 @@ pub enum Type {
     String,
     Pointer(Box<Type>),
     Array(Box<Type>),
-    Type,
+    Struct {names: Vec<String>, types: Vec<Type>}
 }
 
 impl Type {

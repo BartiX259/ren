@@ -1,10 +1,9 @@
-use std::collections::HashMap;
 use std::fmt;
 use crate::types::Type;
 
 #[derive(Debug, Clone)]
 pub enum Symbol {
-    Struct { attrs: HashMap<String, Type> },
+    Struct { ty: Type },
     Var { ty: Type },
     Func { ty: Type, block: Block, symbols: Vec<Vec<(String, Symbol)>> },
     ExternFunc { ty: Type, args: Vec<Type> },
@@ -33,7 +32,10 @@ pub struct Block {
 pub enum Op {
     Tac { lhs: Term, rhs: Option<Term>, op: Option<String>, res: Option<Term> },
     Unary { term: Term, op: String, res: Term },
-    DerefAssign { term: Term, op: String, ptr: Term, res: Option<Term> },
+    DerefAssign { term: Term, op: String, ptr: Term, offset: i64, res: Option<Term> },
+    DerefRead { ptr: Term, offset: i64, res: Term },
+    StackAssign { term: Term, op: String, ptr: Term, offset: i64, res: Option<Term> },
+    StackRead { ptr: Term, offset: i64, res: Term },
     Decl(Term),
     Arg(Term),
     Param(Term),
@@ -45,6 +47,7 @@ pub enum Op {
     Return(Term),
     ReturnNone,
     Salloc { size: u32, res: Term },
+    TakeSalloc { ptr: Term, res: Term },
     LoadSymbols(usize),
     UnloadSymbols(usize),
     NaturalFlow,
@@ -85,13 +88,22 @@ impl fmt::Debug for Op {
                 Ok(())
             }
             Op::Unary { term, op, res } => write!(f, "{:?} = {}{:?}", res, op, term),
-            Op::DerefAssign { term, op, ptr, res } => {
+            Op::DerefAssign { term, op, ptr, offset, res } => {
                 if let Some(r) = res {
-                    write!(f, "{:?} = *{:?} {} {:?}", r, ptr, op, term)
+                    write!(f, "{:?} = *({:?}+{}) {} {:?}", r, ptr, offset, op, term)
                 } else {
-                    write!(f, "*{:?} {} {:?}", ptr, op, term)
+                    write!(f, "*({:?}+{}) {} {:?}", ptr, offset, op, term)
                 }
             }
+            Op::DerefRead { ptr, offset, res } => write!(f, "{:?} = *({:?}+{})", res, ptr, offset),
+            Op::StackAssign { term, op, ptr, offset, res } => {
+                if let Some(r) = res {
+                    write!(f, "{:?} = *(&{:?}+{}) {} {:?}", r, ptr, offset, op, term)
+                } else {
+                    write!(f, "*(&{:?}+{}) {} {:?}", ptr, offset, op, term)
+                }
+            }
+            Op::StackRead { ptr, offset, res } => write!(f, "{:?} = *(&{:?}+{})", res, ptr, offset),
             Op::Decl(term) => write!(f, "decl {:?}", term),
             Op::Arg(term) => write!(f, "arg {:?}", term),
             Op::Param(term) => write!(f, "param {:?}", term),
@@ -103,6 +115,7 @@ impl fmt::Debug for Op {
             Op::Return(value) => write!(f, "return {:?}", value),
             Op::ReturnNone => write!(f, "return"),
             Op::Salloc { size, res } => write!(f, "{:?} = salloc {}", res, size),
+            Op::TakeSalloc { ptr, res } => write!(f, "{:?} take salloc {:?}", res, ptr),
             Op::LoadSymbols(i) => write!(f, "load symbols {}", i),
             Op::UnloadSymbols(i) => write!(f, "unload symbols {}", i),
             Op::NaturalFlow => write!(f, "natural flow"),

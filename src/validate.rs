@@ -1,5 +1,5 @@
 use crate::ir::{Block, Symbol};
-use crate::types::{self, Type};
+use crate::types::Type;
 use crate::node::{self, PosStr};
 use std::collections::HashMap;
 
@@ -33,7 +33,10 @@ pub enum SemanticError {
     FuncInFunc(PosStr),
     InvalidArgCount(PosStr, usize, usize),
     ArgTypeMismatch(PosStr, Type, Type),
-    EmptyArray(usize)
+    StructInFunc(PosStr),
+    InvalidStructKey(PosStr, PosStr),
+    StructTypeMismatch(PosStr, Type, Type),
+    EmptyArray(usize),
 }
 
 pub struct Validate {
@@ -108,6 +111,19 @@ impl Validate {
                 });
                 Ok(())
             }
+            node::Stmt::StructDecl(decl) => {
+                if self.symbol_table.contains_key(&decl.name.str) {
+                    return Err(SemanticError::SymbolExists(decl.name.clone()));
+                }
+                let names: Vec<String> = decl.field_names.iter().map(|pos_str| pos_str.str.clone()).collect();
+                let mut types = Vec::new();
+                for ty in decl.field_types.iter() {
+                    types.push(self.r#type(ty)?);
+                }
+                let ty = Type::Struct { names, types };
+                self.symbol_table.insert(decl.name.str.clone(), Symbol::Struct { ty });
+                Ok(())
+            }
             _ => Ok(())
         }
     }
@@ -118,6 +134,7 @@ impl Validate {
             node::Stmt::Let(decl) => self.r#let(decl),
             node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
+            node::Stmt::StructDecl(decl) => self.struct_decl(decl),
             node::Stmt::Ret(ret) => self.ret(ret),
             node::Stmt::If(r#if) => self.r#if(r#if),
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
@@ -131,7 +148,8 @@ impl Validate {
     fn expr(&mut self, expr: &node::Expr) -> Result<Type, SemanticError> {
         let res = match expr {
             node::Expr::IntLit(_) => Ok(Type::Int),
-            node::Expr::ArrLit(arr_lit) => self.expr_list(&arr_lit.exprs, arr_lit.pos_id).map(|ty| Type::Pointer(Box::new(ty))),
+            node::Expr::ArrLit(arr_lit) => self.expr_list(&arr_lit.exprs, arr_lit.pos_id).map(|ty| Type::Array(Box::new(ty))),
+            node::Expr::StructLit(struct_lit) => self.struct_lit(struct_lit),
             node::Expr::Variable(pos_str) => self
                 .symbol_table
                 .get(&pos_str.str)
@@ -220,6 +238,12 @@ impl Validate {
         Ok(())
     }
 
+    fn struct_decl(&mut self, decl: &node::StructDecl) -> Result<(), SemanticError> {
+        if self.cur_func.is_some() {
+            return Err(SemanticError::StructInFunc(decl.name.clone()));
+        }
+        Ok(())
+    }
 
     fn scope(&mut self, scope: &Vec<node::Stmt>) -> Result<(), SemanticError> {
         println!("scope {}, {:?}", self.scope_id, self.fn_symbols);
@@ -339,6 +363,30 @@ impl Validate {
             }
             _ => Err(SemanticError::InvalidUnaryOperator(un.op.clone())),
         }
+    }
+
+    fn struct_lit(&mut self, lit: &node::StructLit) -> Result<Type, SemanticError> {
+        let decl_type = self.symbol_table.get(&lit.name.str).cloned();
+        let Some(Symbol::Struct { ty }) = decl_type else {
+            return Err(SemanticError::UndeclaredSymbol(lit.name.clone()));
+        };
+        let Type::Struct { names, types } = ty.clone() else {
+            unreachable!();
+        };
+        let map: HashMap<&String, &Type> = names.iter().zip(types.iter()).collect();
+        for (name, expr) in lit.field_names.iter().zip(lit.field_exprs.iter()) {
+            let field_ty = self.expr(expr)?;
+            let m = map.get(&name.str);
+            if let Some(t) = m {
+                if **t != field_ty {
+                    return Err(SemanticError::StructTypeMismatch(name.clone(), (*t).clone(), field_ty))
+                }
+            } else {
+                return Err(SemanticError::InvalidStructKey(lit.name.clone(), name.clone()));
+            }
+        }
+
+        Ok(ty)
     }
 
     fn expr_list(&mut self, exprs: &Vec<node::Expr>, pos_id: usize) -> Result<Type, SemanticError> {

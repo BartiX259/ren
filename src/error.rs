@@ -78,9 +78,9 @@ pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
             print_file_err(text, info.get(pos_id).unwrap());
         }
         SemanticError::NotInLoop(name, pos_id) => {
-            println!("{} statement not in a loop.", name);
-            print_file_err(text, info.get(pos_id).unwrap());
-        }
+                println!("{} statement not in a loop.", name);
+                print_file_err(text, info.get(pos_id).unwrap());
+            }
         SemanticError::InvalidUnaryOperator(pos_str) => {
             println!("Invalid unary operator '{}'.", pos_str.str);
             print_file_err(text, info.get(pos_str.pos_id).unwrap());
@@ -97,12 +97,24 @@ pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
             println!("Function inside another function.");
             print_file_err(text, info.get(pos_str.pos_id).unwrap());
         }
+        SemanticError::StructInFunc(pos_str) => {
+            println!("Struct declaration inside a function.");
+            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+        }
         SemanticError::InvalidArgCount(pos_str, exp, got) => {
             println!("Invalid argument count, expected {} arguments but got {}", exp, got);
             print_file_err(text, info.get(pos_str.pos_id).unwrap());
         }
         SemanticError::ArgTypeMismatch(pos_str, ty1, ty2) => {
             println!("Argument type mismatch: expected {:?} but got {:?}", ty1, ty2);
+            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+        }
+        SemanticError::InvalidStructKey(pos_str1, pos_str2) => {
+            println!("Struct '{}' doesn't have key '{}'.", pos_str1.str, pos_str2.str);
+            print_file_err(text, info.get(pos_str2.pos_id).unwrap());
+        }
+        SemanticError::StructTypeMismatch(pos_str, ty1, ty2) => {
+            println!("Struct type mismatch: expected {:?} but got {:?}", ty1, ty2);
             print_file_err(text, info.get(pos_str.pos_id).unwrap());
         }
         SemanticError::EmptyArray(pos_id) => {
@@ -156,7 +168,6 @@ fn print_err() {
 }
 
 fn print_file_err(text: &String, pos: &FilePos) {
-    println!("\x1b[94m  |\x1b[0m");
     let mut line: String = String::new();
     let mut cur_pos: usize = 0;
     let mut line_pos: usize = 0;
@@ -173,8 +184,11 @@ fn print_file_err(text: &String, pos: &FilePos) {
         }
         if c == '\n' {
             if cur_pos > pos.start {
+                let padding = usize::ilog10(line_nr);
+                let padstr = " ".repeat(padding as usize + 2);
+                println!("\x1b[94m{}|\x1b[0m", padstr);
                 println!("\x1b[94m{} |\x1b[0m {}", line_nr, line);
-                print!("\x1b[94m  |\x1b[0m");
+                print!("\x1b[94m{}|\x1b[0m", padstr);
                 for _ in 0..line_start {
                     print!(" ");
                 }

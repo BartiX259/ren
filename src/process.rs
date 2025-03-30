@@ -152,7 +152,7 @@ impl Process {
         node::Expr::BinExpr(bin)
     }
     fn bin_expr(&mut self, bin: node::BinExpr) -> node::Expr {
-        let lhs = self.expr(*bin.lhs);
+        let mut lhs = self.expr(*bin.lhs);
         let ltype = self.cur_type.clone();
         let mut rhs = self.expr(*bin.rhs);
         if let Some(p) = ltype.pointer() { // Pointer arithmetic - multiply by size of inner type
@@ -161,6 +161,9 @@ impl Process {
                 rhs: Box::new(node::Expr::IntLit(self.pos_str(p.size().to_string()))),
                 op: self.pos_str("*".to_string())
             });
+            if let Type::Array(t) = ltype {
+                lhs = node::Expr::UnExpr(node::UnExpr { expr: Box::new(lhs), op: self.pos_str("&".to_string()) });
+            }
         }
         if bin.op.str == "[]" { // Array access -> add and dereference
             return node::Expr::UnExpr(node::UnExpr {

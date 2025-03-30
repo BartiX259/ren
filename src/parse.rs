@@ -1,3 +1,5 @@
+use std::collections;
+
 use crate::helpers::VecIter;
 use crate::node::{self, PosStr, UnExpr};
 use crate::tokenize::Token;
@@ -9,7 +11,7 @@ pub fn parse(token_res: Vec<Token>) -> Result<Vec<node::Stmt>, ParseError> {
     while tokens.peek().is_some() {
         vec.push(parse_stmt(&mut tokens)?);
     }
-    return Ok(vec);
+    Ok(vec)
 }
 
 #[derive(Debug)]
@@ -30,6 +32,7 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
         Some(Token::Let) => return Ok(node::Stmt::Let(parse_let(tokens)?)),
         Some(Token::Decl) => return Ok(node::Stmt::Decl(parse_decl(tokens)?)),
         Some(Token::Fn) => return Ok(node::Stmt::Fn(parse_fn_decl(tokens)?)),
+        Some(Token::Struct) => return Ok(node::Stmt::StructDecl(parse_struct_decl(tokens)?)),
         Some(Token::Return) => {
             tokens.next();
             let pos_id = tokens.prev_index();
@@ -133,29 +136,28 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             pos_id: tokens.prev_index(),
         })),
         Token::Word { value } => {
+            let pos_str = PosStr {
+                str: value,
+                pos_id: tokens.prev_index(),
+            };
             if let Some(Token::OpenParen) = tokens.peek() {
                 tokens.next();
                 return Ok(node::Expr::Call(node::Call {
-                    name: PosStr {
-                        str: value,
-                        pos_id: tokens.prev_index() - 1,
-                    },
+                    name: pos_str,
                     args: parse_args(tokens)?,
                 }));
+            } else if let Some(Token::OpenCurly) = tokens.peek() {
+                tokens.next();
+                let (field_names, field_exprs) = parse_map_args(tokens, Token::CloseCurly)?;
+                return Ok(node::Expr::StructLit(node::StructLit { name: pos_str, field_names, field_exprs }))
             } else if let Some(Token::Bang) = tokens.peek() {
                 tokens.next();
                 return parse_macro(
                     tokens,
-                    PosStr {
-                        str: value,
-                        pos_id: tokens.prev_index() - 1,
-                    },
+                    pos_str
                 );
             }
-            return Ok(node::Expr::Variable(PosStr {
-                str: value,
-                pos_id: tokens.prev_index(),
-            }));
+            return Ok(node::Expr::Variable(pos_str));
         }
         Token::OpenParen => {
             let res = parse_expr(tokens, 1)?;
@@ -182,7 +184,7 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                 match tok {
                     Token::Comma => (),
                     Token::CloseSquare => break,
-                    _ => return Err(unexp(tok, tokens.current_index(), "']'"))
+                    _ => return Err(unexp(tok, tokens.prev_index(), "']'"))
                 }
             }
             Ok(node::Expr::ArrLit(node::ArrLit {
@@ -262,6 +264,108 @@ fn parse_args(tokens: &mut VecIter<Token>) -> Result<Vec<node::Expr>, ParseError
     Ok(res)
 }
 
+fn parse_scope(tokens: &mut VecIter<Token>) -> Result<Vec<node::Stmt>, ParseError> {
+    let tok = check_none(tokens, "'{'")?;
+    if let Token::OpenCurly = tok {
+    } else {
+        return Err(unexp(tok, tokens.prev_index(), "'{'"));
+    }
+    let mut res = Vec::new();
+    loop {
+        if tokens.peek().is_none() {
+            return Err(ParseError::UnexpectedEndOfInput("'}'".to_string()));
+        }
+        if let Some(Token::CloseCurly) = tokens.peek() {
+            tokens.next();
+            break;
+        }
+        res.push(parse_stmt(tokens)?);
+    }
+    Ok(res)
+}
+
+fn parse_map_args(tokens: &mut VecIter<Token>, closing: Token) -> Result<(Vec<PosStr>, Vec<node::Expr>), ParseError> {
+    let mut names = Vec::new();
+    let mut exprs = Vec::new();
+    let close_str = format!("'{}'", closing.to_string());
+    if tokens.peek().is_none() {
+        return Err(ParseError::UnexpectedEndOfInput(close_str));
+    }
+    if let Some(t) = tokens.peek() {
+        if *t == closing {
+            tokens.next();
+            return Ok((names, exprs));
+        }
+    }
+    loop {
+        let name = check_none(tokens, "an identifier")?;
+        if let Token::Word { value } = name {
+            names.push(PosStr {
+                str: value,
+                pos_id: tokens.prev_index(),
+            });
+        } else {
+            return Err(unexp(name, tokens.prev_index(), "an identifier"));
+        }
+        let tok = check_none(tokens, "':'")?;
+        if let Token::Colon = tok {
+            exprs.push(parse_expr(tokens, 0)?);
+        } else {
+            return Err(unexp(tok, tokens.prev_index(), "':'"));
+        }
+        let tok = check_none(tokens, &close_str)?;
+        if closing == tok {
+            break;
+        } else if let Token::Comma = tok {
+            continue;
+        } else {
+            return Err(unexp(tok, tokens.prev_index(), &close_str));
+        }
+    }
+    Ok((names, exprs))
+}
+
+fn parse_type_args(tokens: &mut VecIter<Token>, closing: Token) -> Result<(Vec<PosStr>, Vec<node::Type>), ParseError> {
+    let mut types = Vec::new();
+    let mut names = Vec::new();
+    let close_str = format!("'{}'", closing.to_string());
+    if tokens.peek().is_none() {
+        return Err(ParseError::UnexpectedEndOfInput(close_str));
+    }
+    if let Some(t) = tokens.peek() {
+        if *t == closing {
+            tokens.next();
+            return Ok((names, types));
+        }
+    }
+    loop {
+        let name = check_none(tokens, "an identifier")?;
+        if let Token::Word { value } = name {
+            names.push(PosStr {
+                str: value,
+                pos_id: tokens.prev_index(),
+            });
+        } else {
+            return Err(unexp(name, tokens.prev_index(), "an identifier"));
+        }
+        let tok = check_none(tokens, "':'")?;
+        if let Token::Colon = tok {
+            types.push(parse_type(tokens)?);
+        } else {
+            return Err(unexp(tok, tokens.prev_index(), "':'"));
+        }
+        let tok = check_none(tokens, &close_str)?;
+        if closing == tok {
+            break;
+        } else if let Token::Comma = tok {
+            continue;
+        } else {
+            return Err(unexp(tok, tokens.prev_index(), &close_str));
+        }
+    }
+    Ok((names, types))
+}
+
 fn parse_fn_decl(tokens: &mut VecIter<Token>) -> Result<node::Fn, ParseError> {
     tokens.next();
     let tok = check_none(tokens, "an identifier.")?;
@@ -273,7 +377,7 @@ fn parse_fn_decl(tokens: &mut VecIter<Token>) -> Result<node::Fn, ParseError> {
     let Token::OpenParen = tok else {
         return Err(unexp(tok, tokens.prev_index(), "'('"));
     };
-    let type_args = parse_type_args(tokens)?;
+    let type_args = parse_type_args(tokens, Token::CloseParen)?;
     let decl_type;
     if let Some(Token::Op {value}) = tokens.peek() {
         if value == "->" {
@@ -294,61 +398,23 @@ fn parse_fn_decl(tokens: &mut VecIter<Token>) -> Result<node::Fn, ParseError> {
     })
 }
 
-fn parse_type_args(tokens: &mut VecIter<Token>) -> Result<(Vec<PosStr>, Vec<node::Type>), ParseError> {
-    let mut types = Vec::new();
-    let mut names = Vec::new();
-    if tokens.peek().is_none() {
-        return Err(ParseError::UnexpectedEndOfInput("')'".to_string()));
-    }
-    if let Some(Token::CloseParen) = tokens.peek() {
-        tokens.next();
-        return Ok((names, types));
-    }
-    loop {
-        let name = check_none(tokens, "an identifier")?;
-        if let Token::Word { value } = name {
-            names.push(PosStr {
-                str: value,
-                pos_id: tokens.prev_index(),
-            });
-        } else {
-            return Err(unexp(name, tokens.prev_index(), "an identifier"));
-        }
-        let tok = check_none(tokens, "':'")?;
-        if let Token::Colon = tok {
-            types.push(parse_type(tokens)?);
-        } else {
-            return Err(unexp(tok, tokens.prev_index(), "':'"));
-        }
-        let tok = check_none(tokens, "')'")?;
-        if let Token::CloseParen = tok {
-            break;
-        } else if let Token::Comma = tok {
-        } else {
-            return Err(unexp(tok, tokens.prev_index(), "')'"));
-        }
-    }
-    Ok((names, types))
-}
-
-fn parse_scope(tokens: &mut VecIter<Token>) -> Result<Vec<node::Stmt>, ParseError> {
+fn parse_struct_decl(tokens: &mut VecIter<Token>) -> Result<node::StructDecl, ParseError> {
+    tokens.next();
+    let tok = check_none(tokens, "an identifier.")?;
+    let Token::Word { value: name } = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "an identifier"));
+    };
+    let name_pos = tokens.prev_index();
     let tok = check_none(tokens, "'{'")?;
-    if let Token::OpenCurly = tok {
-    } else {
+    let Token::OpenCurly = tok else {
         return Err(unexp(tok, tokens.prev_index(), "'{'"));
-    }
-    let mut res = Vec::new();
-    loop {
-        if tokens.peek().is_none() {
-            return Err(ParseError::UnexpectedEndOfInput("'}'".to_string()));
-        }
-        if let Some(Token::CloseCurly) = tokens.peek() {
-            tokens.next();
-            break;
-        }
-        res.push(parse_stmt(tokens)?);
-    }
-    return Ok(res);
+    };
+    let type_args = parse_type_args(tokens, Token::CloseCurly)?;
+    Ok(node::StructDecl {
+        name: PosStr { str: name, pos_id: name_pos },
+        field_names: type_args.0,
+        field_types: type_args.1
+    })
 }
 
 fn parse_if(tokens: &mut VecIter<Token>) -> Result<node::If, ParseError> {
