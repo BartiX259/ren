@@ -24,6 +24,7 @@ pub struct Let {
 pub struct Decl {
     pub name: PosStr,
     pub r#type: Type,
+    pub ty: types::Type
 }
 #[derive(Debug)]
 pub struct StructDecl {

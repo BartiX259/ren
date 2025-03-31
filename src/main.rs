@@ -1,4 +1,5 @@
 use std::fs;
+use std::env;
 use std::io;
 use std::process::Command;
 
@@ -16,7 +17,13 @@ mod types;
 mod validate;
 
 fn main() -> Result<(), io::Error> {
-    let content: String = fs::read_to_string("./test.re")?;
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Usage: {} <file_path>", args[0]);
+        std::process::exit(1);
+    }
+    let file_path = &args[1];
+    let content = fs::read_to_string(file_path)?;
     println!("{}", content);
     let token_res;
     match tokenize::tokenize(&content) {

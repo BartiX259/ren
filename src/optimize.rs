@@ -212,14 +212,14 @@ impl<'a> Opt<'a> {
                         label,
                     });
                 }
-                Op::Param(term) => {
+                Op::Param { term, size } => {
                     expr_start = usize::MAX;
                     unused_table.remove(&term);
                     new_block.locs.push(last_loc);
                     if let Some(new_term) = replace_table.get(&term) {
-                        new_block.ops.push(Op::Param(new_term.clone()));
+                        new_block.ops.push(Op::Param { term: new_term.clone(), size } );
                     } else {
-                        new_block.ops.push(Op::Param(term));
+                        new_block.ops.push(Op::Param { term, size});
                     }
                 }
                 Op::TakeSalloc { ptr, res } => {
@@ -540,7 +540,7 @@ impl<'a> Opt<'a> {
                         }
                     }
                 }
-                Op::Arg(term) | Op::Param(term) | Op::Return(term) | Op::Call { func: _, res: term } => {
+                Op::Arg { term, size: _ } | Op::Param { term, size: _ } | Op::Return(term) | Op::Call { func: _, res: term } => {
                     if let Term::Temp(t) = term {
                         if let Some(r) = replace_table.get(&t) {
                             *t = *r;

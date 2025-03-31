@@ -24,16 +24,16 @@ pub enum SemanticError {
     InvalidReturn(usize),
     NotInLoop(String, usize),
     InvalidUnaryOperator(PosStr),
-    InvalidAdressOf(PosStr),
+    InvalidAddressOf(PosStr),
     InvalidDereference(PosStr, Type),
     FuncInFunc(PosStr),
     InvalidArgCount(PosStr, usize, usize),
-    ArgTypeMismatch(PosStr, Type, Type),
+    ArgTypeMismatch(Span, Type, Type),
     StructInFunc(PosStr),
     InvalidStructKey(PosStr, PosStr),
     MissingStructKey(PosStr, String),
     StructTypeMismatch(PosStr, Type, Type),
-    EmptyArray(usize),
+    EmptyArray(Span),
     ArrayTypeMismatch(Span, Type, Type),
     MissingLen(PosStr),
 }
@@ -175,11 +175,12 @@ impl Validate {
         self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
         Ok(())
     }
-    fn r#decl(&mut self, decl: &node::Decl) -> Result<(), SemanticError> {
+    fn r#decl(&mut self, decl: &mut node::Decl) -> Result<(), SemanticError> {
         if self.symbol_table.contains_key(&decl.name.str) {
             return Err(SemanticError::SymbolExists(decl.name.clone()));
         }
         let ty = self.r#type(&decl.r#type)?;
+        decl.ty = ty.clone();
         self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
         Ok(())
     }
@@ -352,7 +353,7 @@ impl Validate {
                         Ok(Type::Pointer(Box::new(ty)))
                     }
                 } else {
-                    Err(SemanticError::InvalidAdressOf(un.op.clone()))
+                    Err(SemanticError::InvalidAddressOf(un.op.clone()))
                 }
             }
             "*" => {
@@ -407,15 +408,17 @@ impl Validate {
             }
         }
         if cur_type == Type::Void {
-            return Err(SemanticError::EmptyArray(pos_id));
+            return Err(SemanticError::EmptyArray(Span { start: pos_id - 1, end: pos_id}));
         }
         return Ok((cur_type, exprs.len()));
     }
 
     fn call(&mut self, call: &mut node::Call) -> Result<Type, SemanticError> {
         let mut arg_types = Vec::new();
+        let mut arg_spans = Vec::new();
         for s in call.args.iter_mut() {
             arg_types.push(self.expr(s)?);
+            arg_spans.push(s.span);
         }
         let ty;
         let expected_types;
@@ -452,9 +455,9 @@ impl Validate {
         if expected_types.len() != arg_types.len() {
             return Err(SemanticError::InvalidArgCount(call.name.clone(), expected_types.len(), arg_types.len()));
         }
-        for types in expected_types.into_iter().zip(arg_types.iter()) {
-            if types.0 != types.1 {
-                return Err(SemanticError::ArgTypeMismatch(call.name.clone(), types.0.clone(), types.1.clone()));
+        for ((ty1, ty2), span) in expected_types.into_iter().zip(arg_types.iter()).zip(arg_spans.iter()) {
+            if ty1 != ty2 {
+                return Err(SemanticError::ArgTypeMismatch(*span, ty1.clone(), ty2.clone()));
             }
         }
         Ok(ty.clone())

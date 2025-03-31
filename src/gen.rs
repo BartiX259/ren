@@ -146,19 +146,21 @@ impl<'a> Gen<'a> {
                 ir::Op::DerefRead { ptr, offset, res } => self.deref_read(ptr, offset, res, false)?,
                 ir::Op::StackAssign { term, op, ptr, offset, res } => self.deref_assign(term, op, ptr, offset, res, true)?,
                 ir::Op::StackRead { ptr, offset, res } => self.deref_read(ptr, offset, res, true)?,
-                ir::Op::Decl(term) => {
-                    self.sp += 8;
-                    self.buf.push_line(format!("sub rsp, {}", 8));
+                ir::Op::Decl { term, size } => {
+                    self.sp += size as i64;
+                    self.buf.push_line(format!("sub rsp, {}", size));
                     self.locs.insert(term, self.sp);
                 }
-                ir::Op::Arg(term) => {
-                    self.arg_ptr -= 8;
+                ir::Op::Arg { term, size } => {
+                    self.arg_ptr -= size as i64;
                     self.locs.insert(term, self.arg_ptr);
                 }
-                ir::Op::Param(term) => {
+                ir::Op::Param { term, size } => {
                     let mut params = vec![term];
-                    while let Some(ir::Op::Param(t)) = iter.peek() {
+                    let mut sizes = vec![size];
+                    while let Some(ir::Op::Param { term: t, size: s }) = iter.peek() {
                         params.push(t.clone());
+                        sizes.push(*s);
                         iter.next();
                     }
                     for r in self.regs.iter() {
@@ -168,10 +170,10 @@ impl<'a> Gen<'a> {
                             self.buf.comment(format!("save {:?}", r.term.clone().unwrap()));
                         }
                     }
-                    for p in params {
+                    for (p, s) in params.iter().zip(sizes) {
                         let r = self.eval_term(p.clone(), false)?;
-                        self.sp += 8;
-                        self.param_size += 8;
+                        self.sp += s as i64;
+                        self.param_size += s as i64;
                         self.buf.push_line(format!("push {}", r));
                         self.buf.comment(format!("param {:?}", p));
                         self.lock_reg(&r, false);
@@ -287,7 +289,7 @@ impl<'a> Gen<'a> {
                 ir::Op::LoopEnd => self.restore_regs(),
             }
             match op_clone {
-                ir::Op::LoadSymbols(_) | ir::Op::UnloadSymbols(_) | ir::Op::LoopStart | ir::Op::LoopEnd | ir::Op::Arg(_) | ir::Op::Param(_) | ir::Op::Call { func: _, res: _ } => (),
+                ir::Op::LoadSymbols(_) | ir::Op::UnloadSymbols(_) | ir::Op::LoopStart | ir::Op::LoopEnd | ir::Op::Arg { term: _, size: _ } | ir::Op::Param { term: _, size: _ } | ir::Op::Call { func: _, res: _ } => (),
                 _ => self.buf.comment(format!("{:?}", op_clone)),
             }
         }

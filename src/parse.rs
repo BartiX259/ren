@@ -184,6 +184,12 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
         Token::OpenSquare => {
             let pos_id = tokens.current_index();
             let mut exprs = Vec::new();
+            if let Some(Token::CloseSquare) = tokens.peek() {
+                tokens.next();
+                return Ok(expr(start, tokens.prev_index(), node::ExprKind::ArrLit(node::ArrLit {
+                    exprs, pos_id
+                })));
+            }
             loop {
                 exprs.push(parse_expr(tokens, 0)?);
                 let tok = check_none(tokens, "']'")?;
@@ -238,7 +244,8 @@ fn parse_decl(tokens: &mut VecIter<Token>) -> Result<node::Decl, ParseError> {
                 str: name,
                 pos_id: tokens.prev_index() - 1,
             },
-            r#type: parse_type(tokens)?
+            r#type: parse_type(tokens)?,
+            ty: crate::types::Type::Void
         });
         check_semi(tokens)?;
         return res;

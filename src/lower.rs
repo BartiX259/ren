@@ -190,7 +190,7 @@ impl<'a> Lower<'a> {
         );
     }
     fn r#decl(&mut self, decl: &node::Decl) {
-        self.push_op(ir::Op::Decl(ir::Term::Symbol(decl.name.str.clone())), decl.name.pos_id);
+        self.push_op(ir::Op::Decl { term: ir::Term::Symbol(decl.name.str.clone()), size: decl.ty.size() }, decl.name.pos_id);
     }
 
     fn r#fn(&mut self, decl: &node::Fn) {
@@ -204,9 +204,11 @@ impl<'a> Lower<'a> {
         });
         self.scope_id = 0;
         self.load_symbols(0);
-        for i in 0..decl.arg_names.len() {
-            let s = &decl.arg_names.get(i).unwrap().str;
-            self.push_op(ir::Op::Arg(ir::Term::Symbol(s.clone())), decl.name.pos_id);
+        for s in decl.arg_names.iter() {
+            let Some(Symbol::Var { ty }) = self.ir.get(&s.str) else {
+                panic!("Argument not a var.");
+            };
+            self.push_op(ir::Op::Arg{ term: ir::Term::Symbol(s.str.clone()), size: ty.size()}, s.pos_id);
         }
         self.scope_id += 1;
         self.scope(&decl.scope);
@@ -332,12 +334,14 @@ impl<'a> Lower<'a> {
 
     fn call(&mut self, call: &node::Call) {
         let mut tmps = Vec::new();
+        let mut sizes = Vec::new();
         for arg in &call.args {
             self.expr(arg);
             tmps.push(self.temp_count);
+            sizes.push(arg.ty.size());
         }
-        for tmp in tmps.into_iter().rev() {
-            self.push_op(ir::Op::Param(ir::Term::Temp(tmp)), call.name.pos_id);
+        for (tmp, size) in tmps.into_iter().zip(sizes.into_iter()).rev() {
+            self.push_op(ir::Op::Param { term: ir::Term::Temp(tmp), size}, call.name.pos_id);
         }
         self.temp_count += 1;
         self.push_op(
