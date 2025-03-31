@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Void,
@@ -7,13 +9,13 @@ pub enum Type {
     String,
     Pointer(Box<Type>),
     Array { inner: Box<Type>, length: usize },
-    Struct {names: Vec<String>, types: Vec<Type>}
+    Struct(HashMap<String, (Type, u32)>)
 }
 
 impl Type {
     pub fn size(&self) -> u32 {
         match self {
-            Type::Struct { names: _, types } => types.iter().map(|ty| ty.size()).sum(),
+            Type::Struct(map) => map.iter().map(|(_, (ty, _))| ty.size()).sum(),
             Type::Array { inner, length } => *length as u32 * inner.size(),
             _ => 8
         }
@@ -32,7 +34,7 @@ impl Type {
     }
     pub fn salloc(&self) -> bool {
         match self {
-            Type::Array { inner: _, length: _ } | Type::Struct { names: _, types: _ } => true,
+            Type::Array { inner: _, length: _ } | Type::Struct(_) => true,
             _ => false
         }
     }

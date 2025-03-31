@@ -152,6 +152,35 @@ impl Process {
         node::ExprKind::BinExpr(bin)
     }
     fn bin_expr(&mut self, bin: node::BinExpr) -> node::ExprKind {
+        if bin.op.str == "." { // Member access -> add &, apply offset and dereference
+            let Type::Struct(map) = bin.lhs.ty.clone() else {
+                panic!("Member access lhs not a struct");
+            };
+            let node::ExprKind::Variable(pos_str) = bin.rhs.kind else {
+                panic!("Member access rhs not an identifier");
+            };
+            let (ty, offset) = map.get(&pos_str.str).unwrap();
+            return node::ExprKind::UnExpr(node::UnExpr {
+                op: self.pos_str("*".to_string()),
+                expr: Box::new(node::Expr { 
+                    ty: ty.clone(),
+                    span: bin.lhs.span.add(bin.rhs.span),
+                    kind: self.calc_bin_expr(node::BinExpr {
+                        lhs: Box::new(node::Expr {
+                            ty: bin.lhs.ty.clone(),
+                            span: bin.lhs.span,
+                            kind: node::ExprKind::UnExpr(node::UnExpr { expr: bin.lhs, op: self.pos_str("&".to_string()) })
+                        }),
+                        rhs: Box::new(node::Expr {
+                            ty: Type::Int,
+                            span: bin.rhs.span,
+                            kind: node::ExprKind::IntLit(*offset as i64)
+                        }),
+                        op: self.pos_str("+".to_string())
+                    })
+                })
+            });
+        }
         let mut lhs = self.expr(*bin.lhs);
         let ltype = self.cur_type.clone();
         let mut rhs = self.expr(*bin.rhs);
@@ -170,7 +199,7 @@ impl Process {
                 op: self.pos_str("*".to_string())
             })
             };
-            if let Type::Array { inner: _, length: _} = ltype {
+            if ltype.salloc() { // Add & to stack allocations
                 lhs = node::Expr {
                     ty: lhs.ty.clone(),
                     span: lhs.span,

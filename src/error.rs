@@ -133,6 +133,10 @@ pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
             eprintln!("Struct type mismatch: expected {:?} but got {:?}", ty1, ty2);
             print_file_err(text, info.get(pos_str.pos_id).unwrap());
         }
+        SemanticError::InvalidMemberAccess(span) => {
+            eprintln!("Invalid member access.");
+            print_file_err(text, &FilePos::span(info, span));
+        }
         SemanticError::EmptyArray(span) => {
             eprintln!("Empty arrays not allowed. Use 'decl' or initialize with values.");
             print_file_err(text, &FilePos::span(info, span));

@@ -95,17 +95,25 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
         let prec: u8;
         let opstr: String;
         let unclosed;
-        if let Token::Op { value } = &peek.unwrap() {
+        let tok = peek.unwrap();
+        if let Token::Op { value } = tok {
             opstr = value.to_string();
             prec = op_prec(value.as_str());
             unclosed = None;
             if prec < min_prec {
                 break;
             }
-        } else if let Token::OpenSquare = &peek.unwrap() {
+        } else if let Token::OpenSquare = tok {
             opstr = "[]".to_string();
             prec = op_prec("[]");
             unclosed = Some((Token::CloseSquare, "']'"));
+            if prec < min_prec {
+                break;
+            }
+        } else if let Token::Dot = tok {
+            opstr = ".".to_string();
+            prec = op_prec(".");
+            unclosed = None;
             if prec < min_prec {
                 break;
             }
@@ -587,6 +595,7 @@ fn op_prec(op: &str) -> u8 {
         "*" => 9,
         "/" => 9,
         "!" => 10,
+        "." => 11,
         "[]" => 11, // Highest precedence (done first)
         _ => 0,
     }
@@ -617,6 +626,7 @@ fn op_assoc(op: &str) -> u8 {
         "-" => 1,
         "*" => 1,
         "/" => 1,
+        "." => 1,
         "[]" => 1,
         _ => 1,
     }

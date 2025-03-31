@@ -1,7 +1,6 @@
 use crate::ir::{Block, Op, Symbol, Term};
 use std::{
-    collections::{HashMap, HashSet},
-    usize,
+    collections::{HashMap, HashSet}, iter::Peekable, slice::Iter, usize
 };
 
 /// Optimize the IR
@@ -134,9 +133,9 @@ impl<'a> Opt<'a> {
                     new_block.locs.push(last_loc);
                 }
                 Op::Unary { term, op, res } => {
+                    new_block.locs.push(last_loc);
                     unused_table.remove(&term);
                     unused_table.insert(res.clone());
-                    new_block.locs.push(last_loc);
                     if let Some(new_term) = replace_table.get(&term) {
                         new_block.ops.push(Op::Unary { term: new_term.clone(), op, res });
                     } else {
@@ -251,6 +250,7 @@ impl<'a> Opt<'a> {
             }
         }
         println!("unused {:?}", unused_table);
+        println!("replace {:?}", replace_table);
 
         // Second pass - apply unused table
         let mut new_block_2 = Block::new();
@@ -292,38 +292,64 @@ impl<'a> Opt<'a> {
         let mut iter_3 = new_block_2.ops.into_iter().peekable();
         let mut loc_iter_3 = new_block_2.locs.into_iter().peekable();
 
+        let opt_address_of = |ptr, iter_clone: &mut Peekable<std::vec::IntoIter<Op>>, extra_offset| {
+            if let Some(Op::Tac { lhs, rhs, op, res: out_var }) = iter_clone.next() {
+                if let Some(Term::Symbol(_)) = out_var {} else {    
+                    if let Some(Term::IntLit(offset)) = rhs {
+                        let next_op = iter_clone.next();
+                        let mut r = None;
+                        if let Some(Op::DerefAssign { term, op, ptr: _, offset: _, res }) = next_op {
+                            r = Some((Op::StackAssign { term, op, ptr, offset: offset + extra_offset, res }, offset));
+                        }
+                        else if let Some(Op::Unary { term, op, res }) = next_op {
+                            if op == "*" {
+                                r = Some((Op::StackRead { ptr, offset: offset + extra_offset, res }, offset));
+                            }
+                        }
+                        return r;
+                    }
+                }
+            }
+            return None;
+        };
+
         while let Some(op) = iter_3.next() {
             match op {
                 Op::Unary { term: ptr, op, res } => {
+                    let mut break_switch = false;
+                    let mut ptr = ptr;
+                    let mut total_offset = 0;
                     if op == "&" {
-                        let mut iter_clone = iter_3.clone();
-                        if let Some(Op::Tac { lhs, rhs, op, res: out_var }) = iter_clone.next() {
-                            if let Some(Term::Symbol(_)) = out_var {} else {    
-                                if let Some(Term::IntLit(offset)) = rhs {
-                                    let next_op = iter_clone.next();
-                                    if let Some(Op::DerefAssign { term, op, ptr: _, offset: _, res }) = next_op {
-                                        new_block_3.ops.push(Op::StackAssign { term, op, ptr, offset, res });
-                                        new_block_3.locs.push(loc_iter_3.next().unwrap());
-                                        for _ in 0..2 {
+                        loop {
+                            let res = opt_address_of(ptr.clone(), &mut iter_3.clone(), total_offset);
+                            if let Some((op, offset)) = res {
+                                for _ in 0..2 {
+                                    iter_3.next();
+                                    //loc_iter_3.next();
+                                }
+                                if let Some(Op::Unary { term, op, res }) = iter_3.peek().cloned() {
+                                    if let Term::Temp(_) = term {
+                                        if op == "&" {
                                             iter_3.next();
                                             loc_iter_3.next();
-                                        }
-                                        continue;
-                                    }
-                                    if let Some(Op::Unary { term, op, res }) = next_op {
-                                        if op == "*" {
-                                            new_block_3.ops.push(Op::StackRead { ptr, offset, res });
-                                            new_block_3.locs.push(loc_iter_3.next().unwrap());
-                                            for _ in 0..2 {
-                                                iter_3.next();
-                                                loc_iter_3.next();
-                                            }
+                                            println!("asf {:?} = {}{:?}", res, op, term);
+                                            total_offset += offset;
+                                            //ptr = term;
                                             continue;
                                         }
                                     }
                                 }
+                                new_block_3.ops.push(op);
+                                new_block_3.locs.push(loc_iter_3.next().unwrap());
+                                break_switch = true;
+                                break;
+                            } else {
+                                break;
                             }
                         }
+                    }
+                    if break_switch {
+                        continue;
                     }
                     new_block_3.ops.push(Op::Unary { term: ptr, op, res });
                     new_block_3.locs.push(loc_iter_3.next().unwrap());

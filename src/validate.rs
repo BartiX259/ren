@@ -1,6 +1,6 @@
 use crate::ir::{Block, Symbol};
 use crate::types::Type;
-use crate::node::{self, PosStr, Span};
+use crate::node::{self, ExprKind, PosStr, Span};
 use std::collections::{HashMap, HashSet};
 
 
@@ -33,6 +33,7 @@ pub enum SemanticError {
     InvalidStructKey(PosStr, PosStr),
     MissingStructKey(PosStr, String),
     StructTypeMismatch(PosStr, Type, Type),
+    InvalidMemberAccess(Span),
     EmptyArray(Span),
     ArrayTypeMismatch(Span, Type, Type),
     MissingLen(PosStr),
@@ -114,10 +115,16 @@ impl Validate {
                 }
                 let names: Vec<String> = decl.field_names.iter().map(|pos_str| pos_str.str.clone()).collect();
                 let mut types = Vec::new();
-                for ty in decl.field_types.iter() {
-                    types.push(self.r#type(ty)?);
+                let mut offsets = Vec::new();
+                let mut i = 0;
+                for node_ty in decl.field_types.iter() {
+                    let ty = self.r#type(node_ty)?;
+                    offsets.push(i);
+                    i += ty.size();
+                    types.push(ty);
                 }
-                let ty = Type::Struct { names, types };
+                let map: HashMap<String, (Type, u32)> = names.into_iter().zip(types.into_iter().zip(offsets.into_iter())).collect();
+                let ty = Type::Struct(map);
                 self.symbol_table.insert(decl.name.str.clone(), Symbol::Struct { ty });
                 Ok(())
             }
@@ -289,6 +296,18 @@ impl Validate {
 
     fn bin_expr(&mut self, bin: &mut node::BinExpr) -> Result<Type, SemanticError> {
         let ty1 = self.expr(&mut bin.lhs)?;
+        if bin.op.str == "." {
+            let ExprKind::Variable(pos_str) = &bin.rhs.kind else {
+                return Err(SemanticError::InvalidMemberAccess(bin.rhs.span));
+            };
+            let Type::Struct(map) = ty1 else {
+                return Err(SemanticError::InvalidMemberAccess(bin.lhs.span));
+            };
+            let Some((ty, _)) = map.get(&pos_str.str) else {
+                return Err(SemanticError::InvalidMemberAccess(bin.rhs.span));
+            };
+            return Ok((*ty).clone());
+        }
         let ty2 = self.expr(&mut bin.rhs)?;
 
         match bin.op.str.as_str() {
@@ -372,25 +391,24 @@ impl Validate {
         let Some(Symbol::Struct { ty }) = decl_type else {
             return Err(SemanticError::UndeclaredSymbol(lit.name.clone()));
         };
-        let Type::Struct { names, types } = ty.clone() else {
+        let Type::Struct(map) = ty.clone() else {
             unreachable!();
         };
-        let map: HashMap<&String, &Type> = names.iter().zip(types.iter()).collect();
         for (name, expr) in lit.field_names.iter().zip(lit.field_exprs.iter_mut()) {
             let field_ty = self.expr(expr)?;
             let m = map.get(&name.str);
-            if let Some(t) = m {
-                if **t != field_ty {
-                    return Err(SemanticError::StructTypeMismatch(name.clone(), (*t).clone(), field_ty))
+            if let Some((t, _)) = m {
+                if *t != field_ty {
+                    return Err(SemanticError::StructTypeMismatch(name.clone(), t.clone(), field_ty))
                 }
             } else {
                 return Err(SemanticError::InvalidStructKey(lit.name.clone(), name.clone()));
             }
         }
         let set: HashSet<String> = lit.field_names.iter().map(|pos_str| pos_str.str.clone()).collect();
-        for name in names {
-            if set.get(&name).is_none() {
-                return Err(SemanticError::MissingStructKey(lit.name.clone(), name));
+        for name in map.keys() {
+            if set.get(name).is_none() {
+                return Err(SemanticError::MissingStructKey(lit.name.clone(), name.clone()));
             }
         }
 

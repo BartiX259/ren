@@ -1,9 +1,7 @@
 use std::collections::HashMap;
-use std::slice::Iter;
 
 use crate::ir::{self, Block, Symbol};
 use crate::node;
-use crate::types::Type;
 
 /// Transform the ast into the IR
 pub fn lower(stmts: Vec<node::Stmt>, ir: &mut HashMap<String, Symbol>) {
