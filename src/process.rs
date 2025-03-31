@@ -165,7 +165,7 @@ impl Process {
                 expr: Box::new(node::Expr { 
                     ty: ty.clone(),
                     span: bin.lhs.span.add(bin.rhs.span),
-                    kind: self.calc_bin_expr(node::BinExpr {
+                    kind: self.bin_expr(node::BinExpr {
                         lhs: Box::new(node::Expr {
                             ty: bin.lhs.ty.clone(),
                             span: bin.lhs.span,

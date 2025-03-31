@@ -1,10 +1,9 @@
 struct x {
     x: int,
-    y: arr[int, 2]
+    y: int
 }
 fn main() {
-    let z = x { x: 10, y: [3, 6] };
-    print(z.x);
-    z.y[0] = 1;
-    print(z.y[1]);
+    let z = [x {x: 1, y: 2}, x{x:3, y:4}];
+    z[0].y = 3;
+    print(z[1].x);
 }
