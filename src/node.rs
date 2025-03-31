@@ -1,7 +1,19 @@
+use crate::types;
+
 #[derive(Debug, Clone)]
 pub struct PosStr {
     pub str: String,
     pub pos_id: usize,
+}
+#[derive(Debug, Clone, Copy)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize
+}
+impl Span {
+    pub fn add(&self, other: Span) -> Span {
+        Span { start: self.start.min(other.start), end: self.end.max(other.end) }
+    }
 }
 #[derive(Debug)]
 pub struct Let {
@@ -33,7 +45,8 @@ pub struct Call {
 #[derive(Debug, Clone)]
 pub struct Type {
     pub str: PosStr,
-    pub sub: Option<Box<Type>>
+    pub sub: Option<Box<Type>>,
+    pub len: Option<usize>,
 }
 #[derive(Debug)]
 pub struct Fn {
@@ -104,8 +117,14 @@ pub enum Macro {
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr {
-    IntLit(PosStr),
+pub struct Expr {
+    pub kind: ExprKind,
+    pub ty: types::Type,
+    pub span: Span
+}
+#[derive(Debug, Clone)]
+pub enum ExprKind {
+    IntLit(i64),
     ArrLit(ArrLit),
     StructLit(StructLit),
     Variable(PosStr),

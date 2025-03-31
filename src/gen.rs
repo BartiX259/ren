@@ -1,6 +1,5 @@
 use crate::helpers::IndentedBuf;
 use crate::ir::{self, Block, OpLoc, Symbol, Term};
-use crate::types::Type;
 use std::collections::HashMap;
 
 /// Generate nasm code based on the IR
@@ -267,7 +266,7 @@ impl<'a> Gen<'a> {
                     self.buf.push_line("ret");
                 }
                 ir::Op::ReturnNone => {
-                    self.eval_term_at(&Term::IntLit("0".to_string()), &"rax".to_string());
+                    self.eval_term_at(&Term::IntLit(0), &"rax".to_string());
                     if self.sp > 0 {
                         self.buf.push_line(format!("add rsp, {}", self.sp));
                     }
@@ -430,7 +429,7 @@ impl<'a> Gen<'a> {
     fn eval_term(&mut self, term: Term, allow_literals: bool) -> Result<String, GenError> {
         if allow_literals {
             if let Term::IntLit(i) = term {
-                return Ok(i);
+                return Ok(i.to_string());
             }
         }
         for r in self.regs.iter() {

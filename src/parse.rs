@@ -1,7 +1,5 @@
-use std::collections;
-
 use crate::helpers::VecIter;
-use crate::node::{self, PosStr, UnExpr};
+use crate::node::{self, ExprKind, PosStr, Span};
 use crate::tokenize::Token;
 
 /// Parse tokens into the ast
@@ -74,6 +72,10 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
     Ok(node::Stmt::Expr(expr))
 }
 
+fn expr(start: usize, end: usize, kind: ExprKind) -> node::Expr {
+    node::Expr { kind, ty: crate::types::Type::Void, span: Span { start, end } }
+}
+
 fn parse_opt_expr(tokens: &mut VecIter<Token>) -> Result<Option<node::Expr>, ParseError> {
     if let Some(Token::Semi) = tokens.peek() {
         return Ok(None);
@@ -83,6 +85,7 @@ fn parse_opt_expr(tokens: &mut VecIter<Token>) -> Result<Option<node::Expr>, Par
 }
 
 fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, ParseError> {
+    let start = tokens.current_index();
     let mut root = parse_atom(tokens)?;
     loop {
         let peek = tokens.peek();
@@ -119,22 +122,21 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
             }
         }
         let lhs = root;
-        root = node::Expr::BinExpr(node::BinExpr {
+        root = expr(start, tokens.prev_index(), 
+        node::ExprKind::BinExpr(node::BinExpr {
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
             op: PosStr { str: opstr, pos_id: op_pos },
-        });
+        }));
     }
     return Ok(root);
 }
 
 fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
     let tok = check_none(tokens, "a term")?;
+    let start = tokens.prev_index();
     match tok {
-        Token::IntLit { value } => Ok(node::Expr::IntLit(PosStr {
-            str: value,
-            pos_id: tokens.prev_index(),
-        })),
+        Token::IntLit { value } => Ok(expr(start, start,  node::ExprKind::IntLit(value))),
         Token::Word { value } => {
             let pos_str = PosStr {
                 str: value,
@@ -142,14 +144,15 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             };
             if let Some(Token::OpenParen) = tokens.peek() {
                 tokens.next();
-                return Ok(node::Expr::Call(node::Call {
+                let kind = node::ExprKind::Call(node::Call {
                     name: pos_str,
                     args: parse_args(tokens)?,
-                }));
+                });
+                return Ok(expr(start, tokens.prev_index(), kind));
             } else if let Some(Token::OpenCurly) = tokens.peek() {
                 tokens.next();
                 let (field_names, field_exprs) = parse_map_args(tokens, Token::CloseCurly)?;
-                return Ok(node::Expr::StructLit(node::StructLit { name: pos_str, field_names, field_exprs }))
+                return Ok(expr(start, tokens.prev_index(), node::ExprKind::StructLit(node::StructLit { name: pos_str, field_names, field_exprs })));
             } else if let Some(Token::Bang) = tokens.peek() {
                 tokens.next();
                 return parse_macro(
@@ -157,7 +160,7 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                     pos_str
                 );
             }
-            return Ok(node::Expr::Variable(pos_str));
+            return Ok(expr(start, start, node::ExprKind::Variable(pos_str)));
         }
         Token::OpenParen => {
             let res = parse_expr(tokens, 1)?;
@@ -168,13 +171,16 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                 return Err(unexp(tok, tokens.prev_index(), "')'"));
             }
         }
-        Token::Op { value } => Ok(node::Expr::UnExpr(UnExpr {
-            op: PosStr {
-                str: value,
-                pos_id: tokens.prev_index(),
-            },
-            expr: Box::new(parse_atom(tokens)?),
-        })),
+        Token::Op { value } => {
+            let kind = node::ExprKind::UnExpr(node::UnExpr {
+                op: PosStr {
+                    str: value,
+                    pos_id: tokens.prev_index(),
+                },
+                expr: Box::new(parse_atom(tokens)?),
+            });
+            Ok(expr(start, tokens.prev_index(), kind))
+        }
         Token::OpenSquare => {
             let pos_id = tokens.current_index();
             let mut exprs = Vec::new();
@@ -187,9 +193,9 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                     _ => return Err(unexp(tok, tokens.prev_index(), "']'"))
                 }
             }
-            Ok(node::Expr::ArrLit(node::ArrLit {
+            Ok(expr(start, tokens.prev_index(), node::ExprKind::ArrLit(node::ArrLit {
                 exprs, pos_id
-            }))
+            })))
         }
         _ => Err(unexp(tok, tokens.prev_index(), "a term")),
     }
@@ -466,22 +472,32 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
             pos_id: tokens.prev_index(),
         };
         let mut sub = None;
+        let mut len = None;
         if let Some(Token::OpenSquare) = tokens.peek() {
             tokens.next();
             sub = Some(Box::new(parse_type(tokens)?));
-            let cl = check_none(tokens, "']'")?;
-            if let Token::CloseSquare = cl {
-            } else {
-                return Err(unexp(cl, tokens.prev_index(), "']'"));
+            let mut cl = check_none(tokens, "']'")?;
+            if let Token::Comma = cl {
+                let tok = check_none(tokens, "a length")?;
+                if let Token::IntLit { value } = tok {
+                    len = Some(value as usize);
+                } else {
+                    return Err(unexp(cl, tokens.prev_index(), "a length"));
+                }
+                cl = check_none(tokens, "']'")?;
             }
+            let Token::CloseSquare = cl else {
+                return Err(unexp(cl, tokens.prev_index(), "']'"));
+            };
         }
-        Ok(node::Type { str, sub })
+        Ok(node::Type { str, sub, len })
     } else {
         Err(unexp(tok, tokens.prev_index(), "a type"))
     }
 }
 
 fn parse_macro(tokens: &mut VecIter<Token>, name: PosStr) -> Result<node::Expr, ParseError> {
+    let start = tokens.prev_index() - 2;
     match name.str.as_str() {
         "salloc" => {
             let tok = check_none(tokens, "'('")?;
@@ -492,7 +508,7 @@ fn parse_macro(tokens: &mut VecIter<Token>, name: PosStr) -> Result<node::Expr, 
             let tok = check_none(tokens, "a count")?;
             let count;
             if let Token::IntLit { value } = tok {
-                count = value.parse::<u32>().unwrap();
+                count = value as u32;
             } else {
                 return Err(unexp(tok, tokens.prev_index(), "an integer"));
             }
@@ -507,7 +523,7 @@ fn parse_macro(tokens: &mut VecIter<Token>, name: PosStr) -> Result<node::Expr, 
             } else {
                 return Err(unexp(tok, tokens.prev_index(), "')'"));
             }
-            return Ok(node::Expr::Macro(node::Macro::Salloc { count, ty }));
+            return Ok(expr(start, tokens.prev_index(), node::ExprKind::Macro(node::Macro::Salloc { count, ty })));
         }
         _ => Err(ParseError::InvalidMacro(name)),
     }

@@ -6,9 +6,8 @@ use crate::node;
 use crate::types::Type;
 
 /// Transform the ast into the IR
-pub fn lower(stmts: Vec<node::Stmt>, ir: &mut HashMap<String, Symbol>, expr_types: &Vec<Type>) {
-    let binding = &mut expr_types.iter();
-    let mut l = Lower::new(ir, binding);
+pub fn lower(stmts: Vec<node::Stmt>, ir: &mut HashMap<String, Symbol>) {
+    let mut l = Lower::new(ir);
     for s in stmts.into_iter() {
         l.stmt(&s);
     }
@@ -16,8 +15,6 @@ pub fn lower(stmts: Vec<node::Stmt>, ir: &mut HashMap<String, Symbol>, expr_type
 
 struct Lower<'a> {
     ir: &'a mut HashMap<String, Symbol>,
-    expr_types: &'a mut Iter<'a, Type>,
-    cur_type: Type,
     cur_salloc: Option<ir::Term>,
     salloc_offset: i64,
     cur_symbols: Vec<Vec<(String, Symbol)>>,
@@ -29,10 +26,9 @@ struct Lower<'a> {
     loop_exit: Vec<u16>,
 }
 impl<'a> Lower<'a> {
-    pub fn new(ir: &'a mut HashMap<String, Symbol>, expr_types: &'a mut Iter<'a, Type>) -> Self {
+    pub fn new(ir: &'a mut HashMap<String, Symbol>) -> Self {
         Self {
-            ir, expr_types,
-            cur_type: Type::Void,
+            ir,
             cur_salloc: None,
             salloc_offset: 0,
             cur_symbols: Vec::new(),
@@ -85,47 +81,43 @@ impl<'a> Lower<'a> {
     }
 
     fn expr(&mut self, expr: &node::Expr) {
-        match expr {
-            node::Expr::IntLit(pos_str) => {
+        match &expr.kind {
+            node::ExprKind::IntLit(val) => {
                 self.temp_count += 1;
                 self.push_op(
                     ir::Op::Tac {
-                        lhs: ir::Term::IntLit(pos_str.str.clone()),
+                        lhs: ir::Term::IntLit(*val),
                         rhs: None,
                         op: None,
                         res: Some(ir::Term::Temp(self.temp_count)),
                     },
-                    pos_str.pos_id,
+                    expr.span.end,
                 );
             }
-            node::Expr::ArrLit(arr_lit) => {
+            node::ExprKind::ArrLit(arr_lit) => {
                 self.temp_count += 1;
                 let ptr;
                 let in_salloc;
+                let Some(inner) = expr.ty.pointer() else {
+                    panic!("Salloc not a pointer");
+                };
+                let size = inner.size();
+                let inner_salloc = inner.salloc();
                 if let Some(p) = &self.cur_salloc {
                     ptr = p.clone();
                     in_salloc = true;
                 } else {
                     ptr = ir::Term::Temp(self.temp_count);
                     self.cur_salloc = Some(ptr.clone());
-                    self.push_op(ir::Op::Salloc { size: arr_lit.exprs.len() as u32 * 8, res: ptr.clone() }, arr_lit.pos_id);
+                    self.push_op(ir::Op::Salloc { size: arr_lit.exprs.len() as u32 * size, res: ptr.clone() }, arr_lit.pos_id);
                     in_salloc = false;
                 }
-                let salloc_id = self.cur_block.as_ref().unwrap().ops.len() - 1;
                 for expr in &arr_lit.exprs {
                     self.expr(expr);
-                    let s = self.cur_type.size();
-                    if self.salloc_offset != 0 {
-                        if s != 8 && !in_salloc {
-                            if let Some(ir::Op::Salloc { size, res: _ }) = self.cur_block.as_mut().unwrap().ops.get_mut(salloc_id) {
-                                *size = arr_lit.exprs.len() as u32 * s;
-                            }
-                        }
-                    }
-                    if !self.cur_type.salloc() {
+                    if !inner_salloc {
                         self.temp_count += 1;
                         self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
-                        self.salloc_offset += s as i64;
+                        self.salloc_offset += size as i64;
                     }
                 }
                 self.temp_count += 1;
@@ -135,7 +127,7 @@ impl<'a> Lower<'a> {
                     self.salloc_offset = 0;
                 }
             }
-            node::Expr::StructLit(lit) => {
+            node::ExprKind::StructLit(lit) => {
                 self.temp_count += 1;
                 let ptr;
                 let in_salloc;
@@ -153,10 +145,10 @@ impl<'a> Lower<'a> {
                 }
                 for expr in &lit.field_exprs {
                     self.expr(expr);
-                    if !self.cur_type.salloc() {
+                    if !expr.ty.salloc() {
                         self.temp_count += 1;
                         self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)) }, lit.name.pos_id);
-                        self.salloc_offset += self.cur_type.size() as i64;
+                        self.salloc_offset += expr.ty.size() as i64;
                     }
                 }
                 self.temp_count += 1;
@@ -166,7 +158,7 @@ impl<'a> Lower<'a> {
                     self.salloc_offset = 0;
                 }
             }
-            node::Expr::Variable(pos_str) => {
+            node::ExprKind::Variable(pos_str) => {
                 self.temp_count += 1;
                 self.push_op(
                     ir::Op::Tac {
@@ -178,12 +170,11 @@ impl<'a> Lower<'a> {
                     pos_str.pos_id,
                 );
             }
-            node::Expr::Call(call) => self.call(call),
-            node::Expr::Macro(r#macro) => self.r#macro(r#macro),
-            node::Expr::BinExpr(bin_expr) => self.bin_expr(bin_expr),
-            node::Expr::UnExpr(un_expr) => self.un_expr(un_expr),
+            node::ExprKind::Call(call) => self.call(call),
+            node::ExprKind::Macro(r#macro) => self.r#macro(r#macro),
+            node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
+            node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr),
         }
-        self.cur_type = self.expr_types.next().unwrap().clone();
     }
 
     fn r#let(&mut self, decl: &node::Let) {
@@ -290,7 +281,7 @@ impl<'a> Lower<'a> {
     }
 
     fn bin_expr(&mut self, bin: &node::BinExpr) {
-        if let node::Expr::UnExpr(u) = &*bin.lhs {
+        if let node::ExprKind::UnExpr(u) = &bin.lhs.kind {
             if u.op.str == "*" && ["=", "+=", "-=", "*=", "/="].contains(&bin.op.str.as_str()) {
                 self.expr(&bin.rhs);
                 let term = ir::Term::Temp(self.temp_count);

@@ -29,7 +29,7 @@ fn main() -> Result<(), io::Error> {
     println!("Tokens:\n{:?}\n", token_res.0);
     println!("Locs:\n{:?}\n", token_res.1);
 
-    let stmts;
+    let mut stmts;
     match parse::parse(token_res.0) {
         Ok(res) => stmts = res,
         Err(e) => {
@@ -40,23 +40,19 @@ fn main() -> Result<(), io::Error> {
     println!("Statements:\n{:?}\n", stmts);
 
     let mut ir;
-    let expr_types;
-    match validate::validate(&stmts) {
-        Ok(res) => {
-            ir = res.symbol_table;
-            expr_types = res.expr_types;
-        }
+    match validate::validate(&mut stmts) {
+        Ok(res) => ir = res,
         Err(e) => {
             error::sematic_err(&content, e, token_res.1);
             return Ok(());
         }
     }
 
-    let processed_stmts = process::process(stmts, &expr_types);
+    let processed_stmts = process::process(stmts);
 
     println!("Processed statements:\n{:?}\n", processed_stmts);
 
-    lower::lower(processed_stmts, &mut ir, &expr_types);
+    lower::lower(processed_stmts, &mut ir);
 
     println!("IR:\n{:?}\n", ir);
 

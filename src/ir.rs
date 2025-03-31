@@ -12,7 +12,7 @@ pub enum Symbol {
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub enum Term {
     Temp(usize),
-    IntLit(String),
+    IntLit(i64),
     Symbol(String),
 }
 

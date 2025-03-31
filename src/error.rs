@@ -1,12 +1,24 @@
 use crate::gen::GenError;
+use crate::node::Span;
 use crate::parse::ParseError;
 use crate::tokenize::TokenizeError;
 use crate::validate::SemanticError;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FilePos {
     pub start: usize,
     pub end: usize,
+}
+impl FilePos {
+    pub fn pos_id(info: Vec<FilePos>, pos_id: usize) -> Self {
+        info.get(pos_id).unwrap().clone()
+    }
+    pub fn span(info: Vec<FilePos>, span: Span) -> Self {
+        Self {
+            start: info.get(span.start).unwrap().start,
+            end: info.get(span.end).unwrap().end
+        }
+    }
 }
 
 pub fn token_err(text: &String, e: TokenizeError) {
@@ -124,6 +136,14 @@ pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
         SemanticError::EmptyArray(pos_id) => {
             println!("Empty arrays not allowed. Use 'decl' or initialize with values.");
             print_file_err(text, info.get(pos_id).unwrap());
+        }
+        SemanticError::ArrayTypeMismatch(span, ty1, ty2) => {
+            println!("Array type mismatch: expected {:?} but got {:?}", ty1, ty2);
+            print_file_err(text, &FilePos::span(info, span));
+        }
+        SemanticError::MissingLen(pos_str) => {
+            println!("Missing length for '{}'. For example, '{}[int, 4]'.", pos_str.str, pos_str.str);
+            print_file_err(text, info.get(pos_str.pos_id).unwrap());
         }
     }
 }

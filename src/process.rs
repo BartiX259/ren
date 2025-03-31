@@ -4,10 +4,9 @@ use crate::node;
 use crate::types::Type;
 
 /// Modify the ast to express syntax sugar with simpler statements
-pub fn process(stmts: Vec<node::Stmt>, expr_types: &Vec<Type>) -> Vec<node::Stmt> {
+pub fn process(stmts: Vec<node::Stmt>) -> Vec<node::Stmt> {
     let mut res = Vec::new();
-    let binding = &mut expr_types.iter();
-    let mut l = Process::new( binding);
+    let mut l = Process::new();
     for s in stmts.into_iter() {
         let new_stmt = l.stmt(s);
         res.push(new_stmt);
@@ -15,17 +14,15 @@ pub fn process(stmts: Vec<node::Stmt>, expr_types: &Vec<Type>) -> Vec<node::Stmt
     return res;
 }
 
-struct Process<'a> {
+struct Process {
     pub stmts: Vec<Vec<node::Stmt>>,
-    expr_types: &'a mut Iter<'a, Type>,
     index: usize,
     cur_type: Type,
 }
-impl<'a> Process<'a> {
-    pub fn new( expr_types: &'a mut Iter<'a, Type>) -> Self {
+impl Process {
+    pub fn new() -> Self {
         Self {
             stmts: Vec::new(),
-            expr_types,
             index: 0,
             cur_type: Type::Void
         }
@@ -88,26 +85,30 @@ impl<'a> Process<'a> {
     }
 
     fn expr(&mut self, expr: node::Expr) -> node::Expr {
-        let new_expr = match expr {
-            node::Expr::ArrLit(arr_lit) => node::Expr::ArrLit(node::ArrLit {
+        let new_expr = match expr.kind {
+            node::ExprKind::ArrLit(arr_lit) => node::ExprKind::ArrLit(node::ArrLit {
                 exprs: self.expr_list(arr_lit.exprs),
                 pos_id: arr_lit.pos_id
             }),
-            node::Expr::BinExpr(bin) => self.bin_expr(bin),
-            node::Expr::Call(call) => node::Expr::Call(node::Call {
+            node::ExprKind::BinExpr(bin) => self.bin_expr(bin),
+            node::ExprKind::Call(call) => node::ExprKind::Call(node::Call {
                 name: call.name,
                 args: self.expr_list(call.args)
             }),
-            node::Expr::UnExpr(un) => node::Expr::UnExpr(node::UnExpr {
+            node::ExprKind::UnExpr(un) => node::ExprKind::UnExpr(node::UnExpr {
                 expr: Box::new(self.expr(*un.expr)),
                 op: un.op
             }),
-            _ => expr
+            _ => expr.kind
         };
         self.index += 1;
-        self.cur_type = self.expr_types.next().unwrap().clone();
+        self.cur_type = expr.ty.clone();
         println!("{}. {:?}", self.index, self.cur_type);
-        return new_expr;
+        node::Expr {
+            kind: new_expr,
+            ty: expr.ty,
+            span: expr.span
+        }
     }
 
     fn scope(&mut self, scope: Vec<node::Stmt>) -> Vec<node::Stmt> {
@@ -134,46 +135,61 @@ impl<'a> Process<'a> {
         }
     }
 
-    fn calc_bin_expr(&self, bin: node::BinExpr) -> node::Expr {
-        if let node::Expr::IntLit(lstr) = &*bin.lhs {
-            if let node::Expr::IntLit(rstr) = &*bin.rhs {
-                let l = lstr.str.parse::<i64>().unwrap();
-                let r = rstr.str.parse::<i64>().unwrap();
-                return node::Expr::IntLit(self.pos_str(
+    fn calc_bin_expr(&self, bin: node::BinExpr) -> node::ExprKind {
+        if let node::ExprKind::IntLit(l) = &bin.lhs.kind {
+            if let node::ExprKind::IntLit(r) = &bin.rhs.kind {
+                return node::ExprKind::IntLit(
                     match bin.op.str.as_str() {
                         "+" => l + r,
                         "-" => l - r,
                         "*" => l * r,
                         "/" => l / r,
                         _ => panic!("Unexpected operation")
-                    }.to_string()
-                ));
+                    }
+                );
             }
         }
-        node::Expr::BinExpr(bin)
+        node::ExprKind::BinExpr(bin)
     }
-    fn bin_expr(&mut self, bin: node::BinExpr) -> node::Expr {
+    fn bin_expr(&mut self, bin: node::BinExpr) -> node::ExprKind {
         let mut lhs = self.expr(*bin.lhs);
         let ltype = self.cur_type.clone();
         let mut rhs = self.expr(*bin.rhs);
         if let Some(p) = ltype.pointer() { // Pointer arithmetic - multiply by size of inner type
-            rhs = self.calc_bin_expr(node::BinExpr {
+            let rspan = rhs.span;
+            rhs = node::Expr { 
+                ty: rhs.ty.clone(),
+                span: rspan,
+                kind: self.calc_bin_expr(node::BinExpr {
                 lhs: Box::new(rhs),
-                rhs: Box::new(node::Expr::IntLit(self.pos_str(p.size().to_string()))),
+                rhs: Box::new(node::Expr {
+                    ty: Type::Int,
+                    span: rspan,
+                    kind: node::ExprKind::IntLit(p.size() as i64)
+                }),
                 op: self.pos_str("*".to_string())
-            });
-            if let Type::Array(t) = ltype {
-                lhs = node::Expr::UnExpr(node::UnExpr { expr: Box::new(lhs), op: self.pos_str("&".to_string()) });
+            })
+            };
+            if let Type::Array { inner: _, length: _} = ltype {
+                lhs = node::Expr {
+                    ty: lhs.ty.clone(),
+                    span: lhs.span,
+                    kind: node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(lhs), op: self.pos_str("&".to_string()) })
+                }    
             }
         }
         if bin.op.str == "[]" { // Array access -> add and dereference
-            return node::Expr::UnExpr(node::UnExpr {
+            return node::ExprKind::UnExpr(node::UnExpr {
                 op: self.pos_str("*".to_string()),
-                expr: Box::new(self.calc_bin_expr(node::BinExpr {
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(rhs),
-                    op: self.pos_str("+".to_string())
-                }))
+                expr: Box::new(node::Expr { 
+                    ty: lhs.ty.clone(),
+                    span: lhs.span.add(rhs.span),
+                    kind: self.calc_bin_expr(node::BinExpr {
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                        op: self.pos_str("+".to_string())
+                    })
+                })
             });
         }
         self.calc_bin_expr(node::BinExpr {

@@ -34,7 +34,7 @@ pub fn tokenize(input: &String) -> Result<(Vec<Token>, Vec<FilePos>), TokenizeEr
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Word { value: String },
-    IntLit { value: String },
+    IntLit { value: i64 },
     Op { value: String },
     Let,
     Decl,
@@ -64,34 +64,35 @@ pub enum Token {
 impl Token {
     pub fn to_string(&self) -> String {
         match self {
-            Token::Word { value } => value,
-            Token::IntLit { value } => value,
-            Token::Op { value } => value,
-            Token::Let => "let",
-            Token::Decl => "decl",
-            Token::Fn => "fn",
-            Token::Struct => "struct",
-            Token::Return => "return",
-            Token::If => "if",
-            Token::Else => "else",
-            Token::Loop => "loop",
-            Token::While => "while",
-            Token::For => "for",
-            Token::Break => "break",
-            Token::Continue => "continue",
-            Token::Semi => ";",
-            Token::Colon => ":",
-            Token::Bang => "!",
-            Token::OpenParen => "(",
-            Token::CloseParen => ")",
-            Token::OpenCurly => "{",
-            Token::CloseCurly => "}",
-            Token::OpenSquare => "[",
-            Token::CloseSquare => "]",
-            Token::Comma => ",",
-            Token::Dot => "."
-        }.to_string()
+            Token::Word { value } => value.clone(),
+            Token::IntLit { value } => value.to_string(),
+            Token::Op { value } => value.clone(),
+            Token::Let => "let".to_string(),
+            Token::Decl => "decl".to_string(),
+            Token::Fn => "fn".to_string(),
+            Token::Struct => "struct".to_string(),
+            Token::Return => "return".to_string(),
+            Token::If => "if".to_string(),
+            Token::Else => "else".to_string(),
+            Token::Loop => "loop".to_string(),
+            Token::While => "while".to_string(),
+            Token::For => "for".to_string(),
+            Token::Break => "break".to_string(),
+            Token::Continue => "continue".to_string(),
+            Token::Semi => ";".to_string(),
+            Token::Colon => ":".to_string(),
+            Token::Bang => "!".to_string(),
+            Token::OpenParen => "(".to_string(),
+            Token::CloseParen => ")".to_string(),
+            Token::OpenCurly => "{".to_string(),
+            Token::CloseCurly => "}".to_string(),
+            Token::OpenSquare => "[".to_string(),
+            Token::CloseSquare => "]".to_string(),
+            Token::Comma => ",".to_string(),
+            Token::Dot => ".".to_string(),
+        }
     }
+
     pub fn from_char(ch: char) -> Option<Self> {
         match ch {
             ';' => Some(Token::Semi),
@@ -178,7 +179,7 @@ fn tok_num(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError
             break;
         }
     }
-    return Ok(Token::IntLit { value: word });
+    return Ok(Token::IntLit { value: word.parse::<i64>().unwrap() });
 }
 
 /// Builds an operator token, supporting both single-character and two-character operators.

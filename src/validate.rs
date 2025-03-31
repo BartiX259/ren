@@ -1,23 +1,19 @@
 use crate::ir::{Block, Symbol};
 use crate::types::Type;
-use crate::node::{self, PosStr};
+use crate::node::{self, PosStr, Span};
 use std::collections::{HashMap, HashSet};
 
-pub struct TypeMap {
-    pub symbol_table: HashMap<String, Symbol>,
-    pub expr_types: Vec<Type>
-}
 
 /// Validate the ast, return a symbol table if successful
-pub fn validate(stmts: &Vec<node::Stmt>) -> Result<TypeMap, SemanticError> {
+pub fn validate(stmts: &mut Vec<node::Stmt>) -> Result<HashMap<String, Symbol>, SemanticError> {
     let mut val = Validate::new();
-    for stmt in stmts {
+    for stmt in stmts.iter() {
         val.hoist(stmt)?;
     }
     for stmt in stmts {
         val.stmt(stmt)?;
     }
-    Ok(TypeMap { symbol_table: val.symbol_table, expr_types: val.expr_types })
+    Ok(val.symbol_table)
 }
 
 pub enum SemanticError {
@@ -38,11 +34,12 @@ pub enum SemanticError {
     MissingStructKey(PosStr, String),
     StructTypeMismatch(PosStr, Type, Type),
     EmptyArray(usize),
+    ArrayTypeMismatch(Span, Type, Type),
+    MissingLen(PosStr),
 }
 
 pub struct Validate {
     pub symbol_table: HashMap<String, Symbol>,
-    pub expr_types: Vec<Type>,
     fn_symbols: Vec<Vec<(String, Symbol)>>,
     symbol_stack: Vec<usize>,
     cur_func: Option<String>,
@@ -57,7 +54,6 @@ impl Validate {
             symbol_table: HashMap::from([
                 ("print".to_string(), Symbol::ExternFunc { ty: Type::Void, args: vec![Type::Int] }),
             ]),
-            expr_types: Vec::new(),
             fn_symbols: Vec::new(),
             symbol_stack: Vec::new(),
             cur_func: None,
@@ -129,7 +125,7 @@ impl Validate {
         }
     }
     
-    fn stmt(&mut self, stmt: &node::Stmt) -> Result<(), SemanticError> {
+    fn stmt(&mut self, stmt: &mut node::Stmt) -> Result<(), SemanticError> {
         match stmt {
             node::Stmt::Expr(expr) => self.expr(expr).map(|_| ()),
             node::Stmt::Let(decl) => self.r#let(decl),
@@ -146,12 +142,13 @@ impl Validate {
         }
     }
 
-    fn expr(&mut self, expr: &node::Expr) -> Result<Type, SemanticError> {
-        let res = match expr {
-            node::Expr::IntLit(_) => Ok(Type::Int),
-            node::Expr::ArrLit(arr_lit) => self.expr_list(&arr_lit.exprs, arr_lit.pos_id).map(|ty| Type::Array(Box::new(ty))),
-            node::Expr::StructLit(struct_lit) => self.struct_lit(struct_lit),
-            node::Expr::Variable(pos_str) => self
+    fn expr(&mut self, expr: &mut node::Expr) -> Result<Type, SemanticError> {
+        let res = match &mut expr.kind {
+            node::ExprKind::IntLit(_) => Ok(Type::Int),
+            node::ExprKind::ArrLit(arr_lit) => self.expr_list(&mut arr_lit.exprs, arr_lit.pos_id)
+            .map(|res| Type::Array { inner: Box::new(res.0), length: res.1 }),
+            node::ExprKind::StructLit(struct_lit) => self.struct_lit(struct_lit),
+            node::ExprKind::Variable(pos_str) => self
                 .symbol_table
                 .get(&pos_str.str)
                 .and_then(|symbol| match symbol {
@@ -159,23 +156,22 @@ impl Validate {
                     _ => None,
                 })
                 .ok_or(SemanticError::UndeclaredSymbol(pos_str.clone())),
-            node::Expr::Call(call) => self.call(call),
-            node::Expr::Macro(r#macro) => self.r#macro(r#macro),
-            node::Expr::BinExpr(bin_expr) => self.bin_expr(bin_expr),
-            node::Expr::UnExpr(un_expr) => self.un_expr(un_expr),
+            node::ExprKind::Call(call) => self.call(call),
+            node::ExprKind::Macro(r#macro) => self.r#macro(r#macro),
+            node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
+            node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr),
         };
         if let Ok(ty) = &res {
-            self.expr_types.push(ty.clone());
-            println!("{}. {:?}: {:?}", self.expr_types.len(), ty, expr);
+            expr.ty = ty.clone();
         }
         res
     }
 
-    fn r#let(&mut self, decl: &node::Let) -> Result<(), SemanticError> {
+    fn r#let(&mut self, decl: &mut node::Let) -> Result<(), SemanticError> {
         if self.symbol_table.contains_key(&decl.name.str) {
             return Err(SemanticError::SymbolExists(decl.name.clone()));
         }
-        let ty = self.expr(&decl.expr)?;
+        let ty = self.expr(&mut decl.expr)?;
         self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
         Ok(())
     }
@@ -188,7 +184,7 @@ impl Validate {
         Ok(())
     }
 
-    fn r#fn(&mut self, decl: &node::Fn) -> Result<(), SemanticError> {
+    fn r#fn(&mut self, decl: &mut node::Fn) -> Result<(), SemanticError> {
         if self.cur_func.is_some() {
             return Err(SemanticError::FuncInFunc(decl.name.clone()));
         }
@@ -220,7 +216,7 @@ impl Validate {
         
         self.cur_func = Some(decl.name.str.clone());
 
-        self.scope(&decl.scope)?;
+        self.scope(&mut decl.scope)?;
 
         for (name, _) in &arg_symbols {
             self.symbol_table.remove(name);
@@ -246,12 +242,12 @@ impl Validate {
         Ok(())
     }
 
-    fn scope(&mut self, scope: &Vec<node::Stmt>) -> Result<(), SemanticError> {
+    fn scope(&mut self, scope: &mut Vec<node::Stmt>) -> Result<(), SemanticError> {
         println!("scope {}, {:?}", self.scope_id, self.fn_symbols);
         self.symbol_stack.push(self.scope_id);
         self.fn_symbols.push(Vec::new());
         self.scope_id += 1;
-        for stmt in scope.iter() {
+        for stmt in scope.iter_mut() {
             self.stmt(stmt)?;
         }
         // Remove the local symbols from the symbol table
@@ -264,11 +260,11 @@ impl Validate {
         Ok(())
     }
 
-    fn ret(&mut self, ret: &node::Ret) -> Result<(), SemanticError> {
+    fn ret(&mut self, ret: &mut node::Ret) -> Result<(), SemanticError> {
         if self.cur_func.is_none() {
             return Err(SemanticError::InvalidReturn(ret.pos_id));
         }
-        if let Some(expr) = &ret.expr {
+        if let Some(expr) = &mut ret.expr {
             let ty = self.expr(expr)?;
             if self.cur_ret != ty {
                 return Err(SemanticError::InvalidReturn(ret.pos_id));
@@ -279,20 +275,20 @@ impl Validate {
         Ok(())
     }
 
-    fn r#if(&mut self, r#if: &node::If) -> Result<(), SemanticError> {
-        if let Some(e) = &r#if.expr {
+    fn r#if(&mut self, r#if: &mut node::If) -> Result<(), SemanticError> {
+        if let Some(e) = &mut r#if.expr {
             self.expr(e)?;
         }
-        self.scope(&r#if.scope)?;
-        if let Some(i) = &r#if.els {
-            self.r#if(&*i)?;
+        self.scope(&mut r#if.scope)?;
+        if let Some(i) = &mut r#if.els {
+            self.r#if(i)?;
         }
         Ok(())
     }
 
-    fn bin_expr(&mut self, bin: &node::BinExpr) -> Result<Type, SemanticError> {
-        let ty1 = self.expr(&bin.lhs)?;
-        let ty2 = self.expr(&bin.rhs)?;
+    fn bin_expr(&mut self, bin: &mut node::BinExpr) -> Result<Type, SemanticError> {
+        let ty1 = self.expr(&mut bin.lhs)?;
+        let ty2 = self.expr(&mut bin.rhs)?;
 
         match bin.op.str.as_str() {
             "+" | "-" | "*" | "/" => {
@@ -344,12 +340,12 @@ impl Validate {
         }
     }
 
-    fn un_expr(&mut self, un: &node::UnExpr) -> Result<Type, SemanticError> {
-        let ty = self.expr(&un.expr)?;
+    fn un_expr(&mut self, un: &mut node::UnExpr) -> Result<Type, SemanticError> {
+        let ty = self.expr(&mut un.expr)?;
         match un.op.str.as_str() {
             "-" => Ok(ty),
             "&" => {
-                if let node::Expr::Variable(_) = *un.expr {
+                if let node::ExprKind::Variable(_) = un.expr.kind {
                     if let Some(p) = ty.stack() {
                         Ok(Type::Pointer(Box::new(p)))
                     } else {
@@ -370,7 +366,7 @@ impl Validate {
         }
     }
 
-    fn struct_lit(&mut self, lit: &node::StructLit) -> Result<Type, SemanticError> {
+    fn struct_lit(&mut self, lit: &mut node::StructLit) -> Result<Type, SemanticError> {
         let decl_type = self.symbol_table.get(&lit.name.str).cloned();
         let Some(Symbol::Struct { ty }) = decl_type else {
             return Err(SemanticError::UndeclaredSymbol(lit.name.clone()));
@@ -379,7 +375,7 @@ impl Validate {
             unreachable!();
         };
         let map: HashMap<&String, &Type> = names.iter().zip(types.iter()).collect();
-        for (name, expr) in lit.field_names.iter().zip(lit.field_exprs.iter()) {
+        for (name, expr) in lit.field_names.iter().zip(lit.field_exprs.iter_mut()) {
             let field_ty = self.expr(expr)?;
             let m = map.get(&name.str);
             if let Some(t) = m {
@@ -400,23 +396,25 @@ impl Validate {
         Ok(ty)
     }
 
-    fn expr_list(&mut self, exprs: &Vec<node::Expr>, pos_id: usize) -> Result<Type, SemanticError> {
+    fn expr_list(&mut self, exprs: &mut Vec<node::Expr>, pos_id: usize) -> Result<(Type, usize), SemanticError> {
         let mut cur_type = Type::Void;
-        for expr in exprs {
+        for expr in exprs.iter_mut() {
             let ty = self.expr(expr)?;
             if cur_type == Type::Void {
                 cur_type = ty;
+            } else if cur_type != ty {
+                return Err(SemanticError::ArrayTypeMismatch(expr.span, cur_type, ty));
             }
         }
         if cur_type == Type::Void {
             return Err(SemanticError::EmptyArray(pos_id));
         }
-        return Ok(cur_type);
+        return Ok((cur_type, exprs.len()));
     }
 
-    fn call(&mut self, call: &node::Call) -> Result<Type, SemanticError> {
+    fn call(&mut self, call: &mut node::Call) -> Result<Type, SemanticError> {
         let mut arg_types = Vec::new();
-        for s in call.args.iter() {
+        for s in call.args.iter_mut() {
             arg_types.push(self.expr(s)?);
         }
         let ty;
@@ -462,28 +460,28 @@ impl Validate {
         Ok(ty.clone())
     }
 
-    fn r#loop(&mut self, r#loop: &node::Loop) -> Result<(), SemanticError> {
+    fn r#loop(&mut self, r#loop: &mut node::Loop) -> Result<(), SemanticError> {
         self.loop_count += 1;
-        self.scope(&r#loop.scope)?;
+        self.scope(&mut r#loop.scope)?;
         self.loop_count -= 1;
         Ok(())
     }
-    fn r#while(&mut self, r#while: &node::While) -> Result<(), SemanticError> {
-        self.expr(&r#while.expr)?;
+    fn r#while(&mut self, r#while: &mut node::While) -> Result<(), SemanticError> {
+        self.expr(&mut r#while.expr)?;
         self.loop_count += 1;
-        self.scope(&r#while.scope)?;
+        self.scope(&mut r#while.scope)?;
         self.loop_count -= 1;
         Ok(())
     }
-    fn r#for(&mut self, r#for: &node::For) -> Result<(), SemanticError> {
-        match &r#for.init {
+    fn r#for(&mut self, r#for: &mut node::For) -> Result<(), SemanticError> {
+        match &mut r#for.init {
             node::LetOrExpr::Let(r#let) => self.r#let(r#let)?,
             node::LetOrExpr::Expr(expr) => self.expr(expr).map(|_| ())?
         }
-        self.expr(&r#for.cond)?;
-        self.expr(&r#for.incr)?;
+        self.expr(&mut r#for.cond)?;
+        self.expr(&mut r#for.incr)?;
         self.loop_count += 1;
-        self.scope(&r#for.scope)?;
+        self.scope(&mut r#for.scope)?;
         self.loop_count -= 1;
         Ok(())
     }
@@ -502,7 +500,7 @@ impl Validate {
             "float" => self.no_subtype(r#type, Type::Float),
             "bool" => self.no_subtype(r#type, Type::Bool),
             "ref" => Ok(Type::Pointer(self.get_subtype(r#type)?)),
-            "arr" => Ok(Type::Array(self.get_subtype(r#type)?)),
+            "arr" => Ok(Type::Array {inner: self.get_subtype(r#type)?, length: self.get_len(r#type)? }),
             _ => Err(SemanticError::InvalidType(r#type.str.clone())),
         }
     }
@@ -517,6 +515,13 @@ impl Validate {
             Ok(Box::new(self.r#type(s)?))
         } else {
             Err(SemanticError::InvalidType(node_type.str.clone()))
+        }
+    }
+    fn get_len(&self, node_type: &node::Type) -> Result<usize, SemanticError> {
+        if let Some(l) = &node_type.len {
+            Ok(*l)
+        } else {
+            Err(SemanticError::MissingLen(node_type.str.clone()))
         }
     }
 

@@ -302,7 +302,7 @@ impl<'a> Opt<'a> {
                                 if let Some(Term::IntLit(offset)) = rhs {
                                     let next_op = iter_clone.next();
                                     if let Some(Op::DerefAssign { term, op, ptr: _, offset: _, res }) = next_op {
-                                        new_block_3.ops.push(Op::StackAssign { term, op, ptr, offset: offset.parse::<i64>().unwrap(), res });
+                                        new_block_3.ops.push(Op::StackAssign { term, op, ptr, offset, res });
                                         new_block_3.locs.push(loc_iter_3.next().unwrap());
                                         for _ in 0..2 {
                                             iter_3.next();
@@ -312,7 +312,7 @@ impl<'a> Opt<'a> {
                                     }
                                     if let Some(Op::Unary { term, op, res }) = next_op {
                                         if op == "*" {
-                                            new_block_3.ops.push(Op::StackRead { ptr, offset: offset.parse::<i64>().unwrap(), res });
+                                            new_block_3.ops.push(Op::StackRead { ptr, offset, res });
                                             new_block_3.locs.push(loc_iter_3.next().unwrap());
                                             for _ in 0..2 {
                                                 iter_3.next();
