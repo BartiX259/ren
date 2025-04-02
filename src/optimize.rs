@@ -238,15 +238,28 @@ impl<'a> Opt<'a> {
                         label,
                     });
                 }
-                Op::Param { term, size } => {
+                Op::Param { term, size, stack_offset: _ } => {
                     expr_start = usize::MAX;
                     unused_table.remove(&term);
-                    new_block.locs.push(last_loc);
-                    if let Some(new_term) = replace_table.get(&term) {
-                        new_block.ops.push(Op::Param { term: new_term.clone(), size } );
-                    } else {
-                        new_block.ops.push(Op::Param { term, size});
+                    let mut new_term = term.clone();
+                    let mut offset = None;
+                    if let Some(n) = replace_table.get(&term) {
+                        new_term = n.clone();
                     }
+                    if let Term::Symbol(_) = new_term {
+                        if size > 8 {
+                            let mut sp = size;
+                            while sp > 0 {
+                                sp -= 8;
+                                new_block.ops.push(Op::Param { term: new_term.clone(), size: 8, stack_offset: Some(sp) });
+                                new_block.locs.push(last_loc.clone());
+                            }
+                            continue;
+                        }
+                        offset = Some(0);
+                    }
+                    new_block.locs.push(last_loc);
+                    new_block.ops.push(Op::Param { term: new_term, size, stack_offset: offset });
                 }
                 Op::TakeSalloc { ptr, res } => {
                     expr_start = usize::MAX;
@@ -398,6 +411,19 @@ impl<'a> Opt<'a> {
                                 break;
                             } else {
                                 break;
+                            }
+                        }
+                    } 
+                    else if op == "*" {
+                        println!("hgdsahukij");
+                        println!("{:?}", iter_3.peek());
+                        if let Some(Op::DerefRead { ptr, offset, res: n_res, stack }) = iter_3.peek() {
+                            if *ptr == res {
+                                new_block_3.ops.push(Op::DerefRead { ptr: ptr.clone(), offset: *offset, res: n_res.clone(), stack: *stack });
+                                new_block_3.locs.push(loc_iter_3.next().unwrap());
+                                iter_3.next();
+                                loc_iter_3.next();
+                                break_switch = true;
                             }
                         }
                     }
@@ -626,7 +652,7 @@ impl<'a> Opt<'a> {
                         }
                     }
                 }
-                Op::Arg { term, size: _ } | Op::Param { term, size: _ } | Op::Return(term) | Op::Let { term, res: _ } => {
+                Op::Arg { term, size: _ } | Op::Param { term, size: _, stack_offset: _ } | Op::Return(term) | Op::Let { term, res: _ } => {
                     if let Term::Temp(t) = term {
                         if let Some(r) = replace_table.get(&t) {
                             *t = *r;

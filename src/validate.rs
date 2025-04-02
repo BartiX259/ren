@@ -8,8 +8,12 @@ use std::collections::{HashMap, HashSet};
 pub fn validate(stmts: &mut Vec<node::Stmt>) -> Result<HashMap<String, Symbol>, SemanticError> {
     let mut val = Validate::new();
     for stmt in stmts.iter() {
-        val.hoist(stmt)?;
+        val.hoist_type(stmt)?;
     }
+    for stmt in stmts.iter() {
+        val.hoist_func(stmt)?;
+    }
+    println!("{:?}", val.symbol_table);
     for stmt in stmts {
         val.stmt(stmt)?;
     }
@@ -27,6 +31,7 @@ pub enum SemanticError {
     InvalidUnaryOperator(PosStr),
     InvalidAddressOf(PosStr),
     InvalidDereference(PosStr, Type),
+    StructDereference(Span),
     FuncInFunc(PosStr),
     InvalidArgCount(PosStr, usize, usize),
     ArgTypeMismatch(Span, Type, Type),
@@ -81,56 +86,59 @@ impl Validate {
         self.scope_symbols().push((name.clone(), sym.clone()));
     }
 
-    fn hoist(&mut self, stmt: &node::Stmt) -> Result<(), SemanticError> {
-        match stmt {
-            node::Stmt::Fn(decl) => {
-                if self.symbol_table.contains_key(&decl.name.str) {
-                    return Err(SemanticError::SymbolExists(decl.name.clone()));
-                }
-                let ty;
-                if let Some(t) = &decl.decl_type {
-                    ty = self.r#type(t)?;
-                } else {
-                    ty = Type::Void;
-                }
-                let mut arg_symbols: Vec<(String, Symbol)> = Vec::new();
-                for arg in decl.arg_names.iter().zip(decl.arg_types.iter()) {
-                    for existing in arg_symbols.iter() {
-                        if existing.0 == arg.0.str {
-                            return Err(SemanticError::SymbolExists(arg.0.clone()));
-                        }
-                    }
-                    let sym = Symbol::Var { ty: self.r#type(arg.1)? };
-                    arg_symbols.push((arg.0.str.clone(), sym.clone()));
-                }
-                self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
-                    ty,
-                    block: Block::new(),
-                    symbols: vec![arg_symbols],
-                });
-                Ok(())
+    fn hoist_type(&mut self, stmt: &node::Stmt) -> Result<(), SemanticError> {
+        if let node::Stmt::StructDecl(decl) = stmt {
+            if self.symbol_table.contains_key(&decl.name.str) {
+                return Err(SemanticError::SymbolExists(decl.name.clone()));
             }
-            node::Stmt::StructDecl(decl) => {
-                if self.symbol_table.contains_key(&decl.name.str) {
-                    return Err(SemanticError::SymbolExists(decl.name.clone()));
-                }
-                let names: Vec<String> = decl.field_names.iter().map(|pos_str| pos_str.str.clone()).collect();
-                let mut types = Vec::new();
-                let mut offsets = Vec::new();
-                let mut i = 0;
-                for node_ty in decl.field_types.iter() {
-                    let ty = self.r#type(node_ty)?;
-                    offsets.push(i);
-                    i += ty.size();
-                    types.push(ty);
-                }
-                let map: HashMap<String, (Type, u32)> = names.into_iter().zip(types.into_iter().zip(offsets.into_iter())).collect();
-                let ty = Type::Struct(map);
-                self.symbol_table.insert(decl.name.str.clone(), Symbol::Struct { ty });
-                Ok(())
+            let names: Vec<String> = decl.field_names.iter().map(|pos_str| pos_str.str.clone()).collect();
+            let mut types = Vec::new();
+            let mut offsets = Vec::new();
+            let mut i = 0;
+            for node_ty in decl.field_types.iter() {
+                let ty = self.r#type(node_ty)?;
+                offsets.push(i);
+                i += ty.size();
+                types.push(ty);
             }
-            _ => Ok(())
+            let map: HashMap<String, (Type, u32)> = names.into_iter().zip(types.into_iter().zip(offsets.into_iter())).collect();
+            let ty = Type::Struct(map);
+            self.symbol_table.insert(decl.name.str.clone(), Symbol::Struct { ty });
         }
+        Ok(())
+    }
+
+    fn hoist_func(&mut self, stmt: &node::Stmt) -> Result<(), SemanticError> {
+        if let node::Stmt::Fn(decl) = stmt {
+            if self.symbol_table.contains_key(&decl.name.str) {
+                return Err(SemanticError::SymbolExists(decl.name.clone()));
+            }
+            let ty;
+            if let Some(t) = &decl.decl_type {
+                ty = self.r#type(t)?;
+            } else {
+                ty = Type::Void;
+            }
+            let mut arg_symbols: Vec<(String, Symbol)> = Vec::new();
+            for arg in decl.arg_names.iter().zip(decl.arg_types.iter()) {
+                if self.symbol_table.contains_key(&arg.0.str) {
+                    return Err(SemanticError::SymbolExists(arg.0.clone()));
+                }
+                for existing in arg_symbols.iter() {
+                    if existing.0 == arg.0.str {
+                        return Err(SemanticError::SymbolExists(arg.0.clone()));
+                    }
+                }
+                let sym = Symbol::Var { ty: self.r#type(arg.1)? };
+                arg_symbols.push((arg.0.str.clone(), sym.clone()));
+            }
+            self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
+                ty,
+                block: Block::new(),
+                symbols: vec![arg_symbols],
+            });
+        }
+        Ok(())
     }
     
     fn stmt(&mut self, stmt: &mut node::Stmt) -> Result<(), SemanticError> {
@@ -167,7 +175,7 @@ impl Validate {
             node::ExprKind::Call(call) => self.call(call),
             node::ExprKind::Macro(r#macro) => self.r#macro(r#macro),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
-            node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr),
+            node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.span),
         };
         if let Ok(ty) = &res {
             expr.ty = ty.clone();
@@ -316,9 +324,18 @@ impl Validate {
             let ExprKind::Variable(pos_str) = &bin.rhs.kind else {
                 return Err(SemanticError::InvalidMemberAccess(bin.rhs.span));
             };
-            let Type::Struct(map) = ty1 else {
-                return Err(SemanticError::InvalidMemberAccess(bin.lhs.span));
-            };
+            let map: HashMap<String, (Type, u32)>;
+            if let Type::Pointer(p) = ty1 {
+                let Type::Struct(m) = *p else {
+                    return Err(SemanticError::InvalidMemberAccess(bin.lhs.span));
+                };
+                map = m;
+            } else {
+                let Type::Struct(m) = ty1 else {
+                    return Err(SemanticError::InvalidMemberAccess(bin.lhs.span));
+                };
+                map = m
+            }
             let Some((ty, _)) = map.get(&pos_str.str) else {
                 return Err(SemanticError::InvalidMemberAccess(bin.rhs.span));
             };
@@ -398,7 +415,7 @@ impl Validate {
         }
     }
 
-    fn un_expr(&mut self, un: &mut node::UnExpr) -> Result<Type, SemanticError> {
+    fn un_expr(&mut self, un: &mut node::UnExpr, span: Span) -> Result<Type, SemanticError> {
         let ty = self.expr(&mut un.expr)?;
         match un.op.str.as_str() {
             "-" => Ok(ty),
@@ -415,7 +432,11 @@ impl Validate {
             }
             "*" => {
                 if let Type::Pointer(t) = ty {
-                    Ok(*t)
+                    if let Type::Struct(_) = *t {
+                        Err(SemanticError::StructDereference(span))
+                    } else {
+                        Ok(*t)
+                    }
                 } else {
                     Err(SemanticError::InvalidDereference(un.op.clone(), ty))
                 }
@@ -560,7 +581,14 @@ impl Validate {
             "bool" => self.no_subtype(r#type, Type::Bool),
             "ref" => Ok(Type::Pointer(self.get_subtype(r#type)?)),
             "arr" => Ok(Type::Array {inner: self.get_subtype(r#type)?, length: self.get_len(r#type)? }),
-            _ => Err(SemanticError::InvalidType(r#type.str.clone())),
+            other => {
+                if let Some(t) = self.symbol_table.get(other) {
+                    if let Symbol::Struct { ty } = t {
+                        return Ok(ty.clone());
+                    }
+                }
+                Err(SemanticError::InvalidType(r#type.str.clone()))
+            }
         }
     }
     fn no_subtype(&self, node_type: &node::Type, res_type: Type) -> Result<Type, SemanticError> {

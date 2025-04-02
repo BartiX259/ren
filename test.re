@@ -1,8 +1,16 @@
+struct st {
+    x: int,
+    y: int,
+    z: int
+}
+
+fn t(z: st) {
+    print(z.z);
+}
 
 fn main() {
-    let x = [1, 2, 3];
-    let y = 5;
-    *(&y) += 1;
-    print(x[2]);
-    print(y);
+    let x = st {
+        x: 10, y: 20, z: 30
+    };
+    t(x);
 }

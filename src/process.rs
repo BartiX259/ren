@@ -154,9 +154,29 @@ impl Process {
     }
     fn bin_expr(&mut self, bin: node::BinExpr) -> node::ExprKind {
         if bin.op.str == "." { // Member access -> add &, apply offset and dereference
-            let Type::Struct(map) = bin.lhs.ty.clone() else {
-                panic!("Member access lhs not a struct");
-            };
+            let lhs;
+            let map;
+            if let Type::Pointer(p) = &bin.lhs.ty {
+                let Type::Struct(m) = *p.clone() else {
+                    panic!("Member access lhs not a struct 1");
+                };
+                map = m.clone();
+                lhs = Box::new(node::Expr {
+                    ty: Type::Struct(m),
+                    span: bin.lhs.span,
+                    kind: bin.lhs.kind
+                });
+            } else {
+                let Type::Struct(m) = &bin.lhs.ty else {
+                    panic!("Member access lhs not a struct 2");
+                };
+                map = m.clone();
+                lhs = Box::new(node::Expr {
+                    ty: Type::Struct(m.clone()),
+                    span: bin.lhs.span,
+                    kind: node::ExprKind::UnExpr(node::UnExpr { expr: bin.lhs.clone(), op: self.pos_str("&".to_string()) })
+                });
+            }
             let node::ExprKind::Variable(pos_str) = bin.rhs.kind else {
                 panic!("Member access rhs not an identifier");
             };
@@ -167,11 +187,7 @@ impl Process {
                     ty: ty.clone(),
                     span: bin.lhs.span.add(bin.rhs.span),
                     kind: self.bin_expr(node::BinExpr {
-                        lhs: Box::new(node::Expr {
-                            ty: bin.lhs.ty.clone(),
-                            span: bin.lhs.span,
-                            kind: node::ExprKind::UnExpr(node::UnExpr { expr: bin.lhs, op: self.pos_str("&".to_string()) })
-                        }),
+                        lhs,
                         rhs: Box::new(node::Expr {
                             ty: Type::Int,
                             span: bin.rhs.span,
@@ -187,7 +203,7 @@ impl Process {
         let mut rhs = self.expr(*bin.rhs);
         if let Some(p) = ltype.pointer() { // Pointer arithmetic - multiply by size of inner type
             let rspan = rhs.span;
-            rhs = node::Expr { 
+            rhs = node::Expr {
                 ty: rhs.ty.clone(),
                 span: rspan,
                 kind: self.calc_bin_expr(node::BinExpr {

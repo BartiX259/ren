@@ -109,6 +109,10 @@ pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
             eprintln!("Invalid dereference: can't dereference {:?}", ty);
             print_file_err(text, info.get(pos_str.pos_id).unwrap());
         }
+        SemanticError::StructDereference(span) => {
+            eprintln!("Can't dereference struct. Use '.' directly with the pointer.");
+            print_file_err(text, &FilePos::span(info, span));
+        }
         SemanticError::FuncInFunc(pos_str) => {
             eprintln!("Function inside another function.");
             print_file_err(text, info.get(pos_str.pos_id).unwrap());

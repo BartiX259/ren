@@ -51,12 +51,18 @@ impl<'a> Lower<'a> {
         if self.cur_symbols.get(id).unwrap().is_empty() {
             return;
         }
+        for s in self.cur_symbols.get(id).unwrap().iter() {
+            self.ir.insert(s.0.clone(), s.1.clone());
+        }
         self.push_op(ir::Op::LoadSymbols(id), 0);
     }
 
     fn unload_symbols(&mut self, id: usize) {
         if self.cur_symbols.get(id).unwrap().is_empty() {
             return;
+        }
+        for s in self.cur_symbols.get(id).unwrap().iter() {
+            self.ir.remove(&s.0);
         }
         self.push_op(ir::Op::UnloadSymbols(id), 0);
     }
@@ -202,7 +208,8 @@ impl<'a> Lower<'a> {
         self.load_symbols(0);
         for s in decl.arg_names.iter() {
             let Some(Symbol::Var { ty }) = self.ir.get(&s.str) else {
-                panic!("Argument not a var.");
+                println!("{:?}", self.ir.keys());
+                panic!("Argument not a var ({}).", s.str);
             };
             self.push_op(ir::Op::Arg{ term: ir::Term::Symbol(s.str.clone()), size: ty.size()}, s.pos_id);
         }
@@ -352,7 +359,7 @@ impl<'a> Lower<'a> {
             sizes.push(arg.ty.size());
         }
         for (tmp, size) in tmps.into_iter().zip(sizes.into_iter()).rev() {
-            self.push_op(ir::Op::Param { term: ir::Term::Temp(tmp), size}, call.name.pos_id);
+            self.push_op(ir::Op::Param { term: ir::Term::Temp(tmp), size, stack_offset: None }, call.name.pos_id);
         }
         self.temp_count += 1;
         self.push_op(

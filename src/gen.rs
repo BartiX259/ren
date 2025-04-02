@@ -112,7 +112,7 @@ impl<'a> Gen<'a> {
             self.reg_states = Vec::new();
             self.locs = HashMap::new();
             self.sp = 0;
-            self.arg_ptr = 0;
+            self.arg_ptr = -8;
             let sym = self.symbol_table.get(name);
             if let Some(Symbol::Func { ty: _, block, symbols }) = sym {
                 self.buf.push_line("");
@@ -154,31 +154,45 @@ impl<'a> Gen<'a> {
                     self.locs.insert(term, self.sp);
                 }
                 ir::Op::Arg { term, size } => {
-                    self.arg_ptr -= size as i64;
                     self.locs.insert(term, self.arg_ptr);
+                    self.arg_ptr -= size as i64;
                 }
-                ir::Op::Param { term, size } => {
+                ir::Op::Param { term, size, stack_offset } => {
                     let mut params = vec![term];
                     let mut sizes = vec![size];
-                    while let Some(ir::Op::Param { term: t, size: s }) = iter.peek() {
+                    let mut offsets = vec![stack_offset];
+                    while let Some(ir::Op::Param { term: t, size: s, stack_offset: o }) = iter.peek() {
                         params.push(t.clone());
                         sizes.push(*s);
+                        offsets.push(*o);
                         iter.next();
                     }
-                    for r in self.regs.iter() {
+                    for r in self.regs.iter() { // Save registers
                         if r.locked && !params.contains(&r.term.clone().unwrap()) {
                             self.saved_regs.push(r.clone());
                             self.buf.push_line(format!("push {}", r.name));
                             self.buf.comment(format!("save {:?}", r.term.clone().unwrap()));
                         }
                     }
-                    for (p, s) in params.iter().zip(sizes) {
-                        let r = self.eval_term(p.clone(), false)?;
-                        self.sp += s as i64;
-                        self.param_size += s as i64;
-                        self.buf.push_line(format!("push {}", r));
-                        self.buf.comment(format!("param {:?}", p));
-                        self.lock_reg(&r, false);
+                    for ((p, s), o) in params.iter().zip(sizes).zip(offsets) {
+                        if let Some(offset) = o {
+                            let rsp_offset = self.sp - self.locs.get(p).unwrap() + offset as i64;
+                            self.sp += s as i64;
+                            self.param_size += s as i64;
+                            if rsp_offset == 0 {
+                                self.buf.push_line("push qword [rsp]");
+                            } else {
+                                self.buf.push_line(format!("push qword [rsp+{}]", rsp_offset));
+                            }
+                            self.buf.comment(format!("param {:?}", p));
+                        } else {
+                            let r = self.eval_term(p.clone(), false)?;
+                            self.sp += s as i64;
+                            self.param_size += s as i64;
+                            self.buf.push_line(format!("push {}", r));
+                            self.buf.comment(format!("param {:?}", p));
+                            self.lock_reg(&r, false);
+                        }
                     }
                 }
                 ir::Op::Call { func, res } => {
@@ -293,7 +307,7 @@ impl<'a> Gen<'a> {
                 ir::Op::LoopEnd => self.restore_regs(),
             }
             match op_clone {
-                ir::Op::LoadSymbols(_) | ir::Op::UnloadSymbols(_) | ir::Op::LoopStart | ir::Op::LoopEnd | ir::Op::Arg { term: _, size: _ } | ir::Op::Param { term: _, size: _ } | ir::Op::Call { func: _, res: _ } => (),
+                ir::Op::LoadSymbols(_) | ir::Op::UnloadSymbols(_) | ir::Op::LoopStart | ir::Op::LoopEnd | ir::Op::Arg { term: _, size: _ } | ir::Op::Param { term: _, size: _, stack_offset: _ } | ir::Op::Call { func: _, res: _ } => (),
                 _ => self.buf.comment(format!("{:?}", op_clone)),
             }
         }
@@ -600,6 +614,7 @@ impl<'a> Gen<'a> {
         let r;
         if stack {
             r = "rsp".to_string();
+            println!("sp {} loc {} offset {}", self.sp, self.locs.get(&ptr).unwrap(), offset);
             offset += self.sp - self.locs.get(&ptr).unwrap();
         } else {
             r = self.eval_term(ptr, false)?

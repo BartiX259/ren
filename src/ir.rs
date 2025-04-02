@@ -37,7 +37,7 @@ pub enum Op {
     Let {term: Term, res: Term },
     Decl {term: Term, size: u32 },
     Arg {term: Term, size: u32 },
-    Param {term: Term, size: u32 },
+    Param {term: Term, size: u32, stack_offset: Option<u32> },
     Call { func: String, res: Option<Term> },
     Label(u16),
     Jump(u16),
@@ -97,7 +97,13 @@ impl fmt::Debug for Op {
             Op::Let { term, res } => write!(f, "let {:?} = {:?}", res, term),
             Op::Decl { term, size } => write!(f, "decl {:?} (size {})", term, size),
             Op::Arg { term, size } => write!(f, "arg {:?} (size {})", term, size),
-            Op::Param { term, size } => write!(f, "param {:?} (size {})", term, size),
+            Op::Param { term, size, stack_offset } => {
+                if let Some(offset) = stack_offset {
+                    write!(f, "stack param &{:?}+{} (size {})", term, offset, size)
+                }else {
+                    write!(f, "param {:?} (size {})", term, size)
+                }
+            }
             Op::Call { func, res } => write!(f, "{}call {}", opt_res(res), func),
             Op::Label(label) => write!(f, "L{}:", label),
             Op::Jump(label) => write!(f, "jump L{}", label),
