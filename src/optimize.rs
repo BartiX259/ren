@@ -264,6 +264,14 @@ impl<'a> Opt<'a> {
                                 loc_iter.next();
                                 continue;
                             }
+                        } else if let Some(Op::Let { term, res: real_res }) = iter.peek() {
+                            if *term == res {
+                                new_block.ops.push(Op::TakeSalloc { ptr: ptr, res: real_res.clone() });
+                                new_block.locs.push(last_loc);
+                                iter.next();
+                                loc_iter.next();
+                                continue;
+                            }
                         }
                     }
                     new_block.ops.push(Op::TakeSalloc { ptr, res });
@@ -328,22 +336,34 @@ impl<'a> Opt<'a> {
         let mut loc_iter_3 = new_block_2.locs.into_iter().peekable();
 
         let opt_address_of = |ptr, iter_clone: &mut Peekable<std::vec::IntoIter<Op>>, extra_offset| {
-            if let Some(Op::Tac { lhs, rhs, op, res: out_var }) = iter_clone.next() {
+            let next_op = iter_clone.next();
+            if let Some(Op::Tac { lhs, rhs, op, res: out_var }) = next_op {
                 if let Some(Term::Symbol(_)) = out_var {} else {    
                     if let Some(Term::IntLit(offset)) = rhs {
                         let next_op = iter_clone.next();
                         let mut r = None;
                         if let Some(Op::DerefAssign { term, op, ptr: _, offset: _, res, stack: _ }) = next_op {
-                            r = Some((Op::DerefAssign { term, op, ptr, offset: offset + extra_offset, res, stack: true }, offset));
+                            r = Some((Op::DerefAssign { term, op, ptr, offset: offset + extra_offset, res, stack: true }, offset, 2));
                         }
                         else if let Some(Op::Unary { term, op, res }) = next_op {
                             if op == "*" {
-                                r = Some((Op::DerefRead { ptr, offset: offset + extra_offset, res, stack: true }, offset));
+                                r = Some((Op::DerefRead { ptr, offset: offset + extra_offset, res, stack: true }, offset, 2));
                             }
                         }
                         return r;
                     }
                 }
+            } else {
+                let mut r = None;
+                if let Some(Op::DerefAssign { term, op, ptr: _, offset, res, stack: _ }) = next_op {
+                    r = Some((Op::DerefAssign { term, op, ptr, offset: offset + extra_offset, res, stack: true }, offset, 1));
+                }
+                else if let Some(Op::Unary { term, op, res }) = next_op {
+                    if op == "*" {
+                        r = Some((Op::DerefRead { ptr, offset: extra_offset, res, stack: true }, 0, 1));
+                    }
+                }
+                return r;
             }
             return None;
         };
@@ -352,13 +372,12 @@ impl<'a> Opt<'a> {
             match op {
                 Op::Unary { term: ptr, op, res } => {
                     let mut break_switch = false;
-                    let mut ptr = ptr;
                     let mut total_offset = 0;
                     if op == "&" {
                         loop {
                             let res = opt_address_of(ptr.clone(), &mut iter_3.clone(), total_offset);
-                            if let Some((op, offset)) = res {
-                                for _ in 0..2 {
+                            if let Some((op, offset, skip)) = res {
+                                for _ in 0..skip {
                                     iter_3.next();
                                     //loc_iter_3.next();
                                 }
@@ -369,7 +388,6 @@ impl<'a> Opt<'a> {
                                             loc_iter_3.next();
                                             println!("asf {:?} = {}{:?}", res, op, term);
                                             total_offset += offset;
-                                            //ptr = term;
                                             continue;
                                         }
                                     }

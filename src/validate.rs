@@ -295,6 +295,21 @@ impl Validate {
         Ok(())
     }
 
+    fn is_syntactic_lvalue(&self, expr: &node::Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Variable(_) => true,
+            ExprKind::BinExpr(bin) => {
+                if bin.op.str == "." || bin.op.str == "[]" {
+                    true
+                } else {
+                    false
+                }
+            }
+            ExprKind::UnExpr(un) => un.op.str == "*",
+            _ => false
+        }
+    }
+
     fn bin_expr(&mut self, bin: &mut node::BinExpr) -> Result<Type, SemanticError> {
         let ty1 = self.expr(&mut bin.lhs)?;
         if bin.op.str == "." {
@@ -312,7 +327,7 @@ impl Validate {
         let ty2 = self.expr(&mut bin.rhs)?;
 
         if bin.is_assign() {
-            let ExprKind::Variable(_) = &bin.lhs.kind else {
+            if !self.is_syntactic_lvalue(&*bin.lhs) {
                 return Err(SemanticError::InvalidAssign(bin.lhs.span.add(bin.rhs.span)));
             };
         }

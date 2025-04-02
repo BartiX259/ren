@@ -455,11 +455,8 @@ impl<'a> Gen<'a> {
 
     fn tac(&mut self, lhs: Term, rhs_opt: Option<Term>, op_opt: Option<String>, res: Option<Term>) -> Result<(), GenError> {
         //println!("tac {:?} {:?} {:?}={:?}", lhs, op_opt, rhs_opt, res);
-        let mut r1 = "".to_string();
-        // if op_opt != Some("=".to_string()) {
-        //     r1 = self.eval_term(lhs.clone(), false)?; // rhs_opt.is_none()
-        //     self.lock_reg(&r1, true);
-        // }
+        let mut r1 = self.eval_term(lhs.clone(), false)?;
+        self.lock_reg(&r1, true);
         let mut r2;
         if let Some(rhs) = rhs_opt {
             if let Some(op) = op_opt {
@@ -551,7 +548,9 @@ impl<'a> Gen<'a> {
         let p;
         if stack {
             p = "rsp".to_string();
-            offset += self.sp - self.locs.get(&ptr).unwrap();
+            if let Some(t) = &self.rsp_term {} else {
+                offset += self.sp - self.locs.get(&ptr).unwrap();
+            }
         } else {
             p = self.eval_term(ptr, false)?;
         }
@@ -621,6 +620,7 @@ impl<'a> Gen<'a> {
             self.save_reg(&res_reg, &res);
             self.lock_reg(&res_reg, true);
         } else {
+            println!("r {}", r);
             self.buf.push_line(format!("mov {}, [{}{}]", r, r, o));
             self.save_reg(&r, &res);
             self.lock_reg(&r, true);
