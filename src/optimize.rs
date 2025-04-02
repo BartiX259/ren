@@ -142,7 +142,7 @@ impl<'a> Opt<'a> {
                         new_block.ops.push(Op::Unary { term, op, res });
                     }
                 }
-                Op::DerefAssign { term, op, ptr, offset, res } => {
+                Op::DerefAssign { term, op, ptr, offset, res, stack } => {
                     unused_table.remove(&term);
                     unused_table.remove(&ptr);
                     unused_table.insert(res.clone().unwrap());
@@ -155,7 +155,34 @@ impl<'a> Opt<'a> {
                     if let Some(n) = replace_table.get(&ptr) {
                         new_ptr = n.clone();
                     }
-                    new_block.ops.push(Op::DerefAssign { term: new_term, op, ptr: new_ptr, offset, res });
+                    new_block.ops.push(Op::DerefAssign { term: new_term, op, ptr: new_ptr, offset, res, stack });
+                }
+                Op::DerefRead { ptr, offset, res, stack } => {
+                    unused_table.remove(&ptr);
+                    unused_table.insert(res.clone());
+                    new_block.locs.push(last_loc);
+                    let mut new_ptr = ptr.clone();
+                    if let Some(n) = replace_table.get(&ptr) {
+                        new_ptr = n.clone();
+                    }
+                    new_block.ops.push(Op::DerefRead { ptr: new_ptr, offset, res, stack });
+                }
+                Op::Let { term, res } => {
+                    expr_start = usize::MAX;
+                    let mut r = term.clone();
+                    if let Some(n) = replace_table.get(&term) {
+                        r = n.clone();
+                    }
+                    new_block.ops.push(Op::Let { term: r, res });
+                    new_block.locs.push(last_loc);
+                }
+                Op::Call { func, res } => {
+                    if let Some(r) = &res {
+                        unused_table.insert(r.clone());
+                    }
+                    expr_start = usize::MAX;
+                    new_block.ops.push(Op::Call { func, res });
+                    new_block.locs.push(last_loc);
                 }
                 Op::Return(term) => {
                     expr_start = usize::MAX;
@@ -272,12 +299,20 @@ impl<'a> Opt<'a> {
                     new_block_2.ops.push(Op::Tac { lhs, rhs, op, res: r });
                     new_block_2.locs.push(loc_iter_2.next().unwrap());
                 }
-                Op::DerefAssign { term, op, ptr, offset, res } => {
+                Op::DerefAssign { term, op, ptr, offset, res, stack } => {
                     let mut r = res.clone();
                     if unused_table.contains(&res.clone().unwrap()) {
                         r = None;
                     }
-                    new_block_2.ops.push(Op::DerefAssign { term, op, ptr, offset, res: r }) ;
+                    new_block_2.ops.push(Op::DerefAssign { term, op, ptr, offset, res: r, stack }) ;
+                    new_block_2.locs.push(loc_iter_2.next().unwrap());
+                }
+                Op::Call { func, res } => {
+                    let mut r = res.clone();
+                    if unused_table.contains(&res.clone().unwrap()) {
+                        r = None;
+                    }
+                    new_block_2.ops.push(Op::Call { func, res: r }) ;
                     new_block_2.locs.push(loc_iter_2.next().unwrap());
                 }
                 _ => {
@@ -298,12 +333,12 @@ impl<'a> Opt<'a> {
                     if let Some(Term::IntLit(offset)) = rhs {
                         let next_op = iter_clone.next();
                         let mut r = None;
-                        if let Some(Op::DerefAssign { term, op, ptr: _, offset: _, res }) = next_op {
-                            r = Some((Op::StackAssign { term, op, ptr, offset: offset + extra_offset, res }, offset));
+                        if let Some(Op::DerefAssign { term, op, ptr: _, offset: _, res, stack: _ }) = next_op {
+                            r = Some((Op::DerefAssign { term, op, ptr, offset: offset + extra_offset, res, stack: true }, offset));
                         }
                         else if let Some(Op::Unary { term, op, res }) = next_op {
                             if op == "*" {
-                                r = Some((Op::StackRead { ptr, offset: offset + extra_offset, res }, offset));
+                                r = Some((Op::DerefRead { ptr, offset: offset + extra_offset, res, stack: true }, offset));
                             }
                         }
                         return r;
@@ -498,7 +533,7 @@ impl<'a> Opt<'a> {
                         label_replace.insert(*i, label_count);
                     }
                 }
-                Op::Tac { lhs: _, rhs: _, op: _, res } | Op::DerefAssign { term: _, op: _, ptr: _, offset: _, res } => {
+                Op::Tac { lhs: _, rhs: _, op: _, res } | Op::DerefAssign { term: _, op: _, ptr: _, offset: _, res, stack: _ }  | Op::Call { func: _, res } => {
                     if let Some(Term::Temp(t)) = res {
                         temp_count += 1;
                         if *t != temp_count {
@@ -506,7 +541,7 @@ impl<'a> Opt<'a> {
                         }
                     }
                 }
-                Op::Unary { term: _, op: _, res } | Op::Call { func: _, res }  => {
+                Op::Unary { term: _, op: _, res } | Op::Let { term: _, res } | Op::Salloc { size: _, res } | Op::TakeSalloc { ptr: _, res }  => {
                     if let Term::Temp(t) = res {
                         temp_count += 1;
                         if *t != temp_count {
@@ -549,7 +584,7 @@ impl<'a> Opt<'a> {
                         }
                     }
                 }
-                Op::DerefAssign { term, op: _, ptr, offset: _, res } => {
+                Op::DerefAssign { term, op: _, ptr, offset: _, res, stack: _ } => {
                     if let Term::Temp(t) = term {
                         if let Some(r) = replace_table.get(&t) {
                             *t = *r;
@@ -566,7 +601,14 @@ impl<'a> Opt<'a> {
                         }
                     }
                 }
-                Op::Arg { term, size: _ } | Op::Param { term, size: _ } | Op::Return(term) | Op::Call { func: _, res: term } => {
+                Op::Call { func: _, res } => {
+                    if let Some(Term::Temp(t)) = res {
+                        if let Some(r) = replace_table.get(&t) {
+                            *t = *r;
+                        }
+                    }
+                }
+                Op::Arg { term, size: _ } | Op::Param { term, size: _ } | Op::Return(term) | Op::Let { term, res: _ } => {
                     if let Term::Temp(t) = term {
                         if let Some(r) = replace_table.get(&t) {
                             *t = *r;

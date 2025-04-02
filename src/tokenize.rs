@@ -200,7 +200,7 @@ fn tok_op(start: char, iter: &mut VecIter<char>) -> Token {
 
 /// Checks if a character is a valid single-character operator.
 fn is_operator(ch: char) -> bool {
-    ['+', '-', '*', '/', '=', '<', '>', '&', '|', '!'].contains(&ch)
+    ['+', '-', '*', '/', '=', '<', '>', '&', '|', '!', '%'].contains(&ch)
 }
 
 /// Checks if a pair of characters form a valid two-character operator.
@@ -210,6 +210,7 @@ fn is_operator_pair(first: char, second: char) -> bool {
         ('-', '=') |
         ('*', '=') |
         ('/', '=') |
+        ('%', '=') |
         ('=', '=') |
         ('<', '=') |
         ('>', '=') |

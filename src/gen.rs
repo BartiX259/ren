@@ -142,10 +142,12 @@ impl<'a> Gen<'a> {
             match op {
                 ir::Op::Tac { lhs, rhs, op, res } => self.tac(lhs, rhs, op, res)?,
                 ir::Op::Unary { term, op, res } => self.unary(term, op, res)?,
-                ir::Op::DerefAssign { term, op, ptr, offset, res } => self.deref_assign(term, op, ptr, offset, res, false)?,
-                ir::Op::DerefRead { ptr, offset, res } => self.deref_read(ptr, offset, res, false)?,
-                ir::Op::StackAssign { term, op, ptr, offset, res } => self.deref_assign(term, op, ptr, offset, res, true)?,
-                ir::Op::StackRead { ptr, offset, res } => self.deref_read(ptr, offset, res, true)?,
+                ir::Op::DerefAssign { term, op, ptr, offset, res, stack } => self.deref_assign(term, op, ptr, offset, res, stack)?,
+                ir::Op::DerefRead { ptr, offset, res, stack } => self.deref_read(ptr, offset, res, stack)?,
+                ir::Op::Let { term, res } => {
+                    let r = self.eval_term(term, true)?;
+                    self.store_term(res, r);
+                }
                 ir::Op::Decl { term, size } => {
                     self.sp += size as i64;
                     self.buf.push_line(format!("sub rsp, {}", size));
@@ -186,12 +188,14 @@ impl<'a> Gen<'a> {
                     }
                     self.buf.push_line(format!("call {}", func));
                     self.buf.comment(format!("{:?}", op_clone));
-                    if let Term::Symbol(_) = res {
-                        self.store_term(res.clone(), "rax".to_string());
-                    } else {
-                        self.lock_reg(&"rax".to_string(), true);
+                    if let Some(r) = res {
+                        if let Term::Symbol(_) = r {
+                            self.store_term(r.clone(), "rax".to_string());
+                        } else {
+                            self.lock_reg(&"rax".to_string(), true);
+                        }
+                        self.save_reg(&"rax".to_string(), &r);
                     }
-                    self.save_reg(&"rax".to_string(), &res);
                     if self.param_size != 0 {
                         self.sp -= self.param_size;
                         self.buf.push_line(format!("add rsp, {}", self.param_size));
@@ -452,19 +456,23 @@ impl<'a> Gen<'a> {
     fn tac(&mut self, lhs: Term, rhs_opt: Option<Term>, op_opt: Option<String>, res: Option<Term>) -> Result<(), GenError> {
         //println!("tac {:?} {:?} {:?}={:?}", lhs, op_opt, rhs_opt, res);
         let mut r1 = "".to_string();
-        if op_opt != Some("=".to_string()) {
-            r1 = self.eval_term(lhs.clone(), false)?; // rhs_opt.is_none()
-            self.lock_reg(&r1, true);
-        }
+        // if op_opt != Some("=".to_string()) {
+        //     r1 = self.eval_term(lhs.clone(), false)?; // rhs_opt.is_none()
+        //     self.lock_reg(&r1, true);
+        // }
         let mut r2;
         if let Some(rhs) = rhs_opt {
             if let Some(op) = op_opt {
-                r2 = self.eval_term(rhs.clone(), !(op.contains("*") || op.contains("/")))?;
+                r2 = self.eval_term(rhs.clone(), !(op.contains("*") || op.contains("/") || op.contains("%")))?;
                 match op.as_str() {
                     "+" => self.bin("add", &r1, &r2),
                     "-" => self.bin("sub", &r1, &r2),
                     "*" => self.bin_rax("mul", &mut r1, &mut r2),
                     "/" => self.bin_rax("div", &mut r1, &mut r2),
+                    "%" => {
+                        self.bin_rax("div", &mut r1, &mut r2);
+                        self.buf.push_line("xchg rax, rdx");
+                    },
                     ">" => self.cond("setg", &r1, &r2),
                     "<" => self.cond("setl", &r1, &r2),
                     ">=" => self.cond("setge", &r1, &r2),
@@ -473,21 +481,21 @@ impl<'a> Gen<'a> {
                     "!=" => self.cond("setne", &r1, &r2),
                     "||" => self.bool_op("or", &r1, &r2),
                     "&&" => self.bool_op("and", &r1, &r2),
-                    "=" => {
-                        for r in self.regs.iter_mut() {
-                            if let Some(s) = &r.term {
-                                if lhs == *s {
-                                    r.term = None;
-                                }
-                            }
-                        }
-                        r1 = r2.clone();
-                        self.store_term(lhs.clone(), r2.to_string())
-                    }
-                    "+=" => self.assign_bin("add", lhs.clone(), &r1, &r2),
-                    "-=" => self.assign_bin("sub", lhs.clone(), &r1, &r2),
-                    "*=" => self.assign_rax("mul", lhs.clone(), &mut r1, &mut r2),
-                    "/=" => self.assign_rax("div", lhs.clone(), &mut r1, &mut r2),
+                    // "=" => {
+                    //     for r in self.regs.iter_mut() {
+                    //         if let Some(s) = &r.term {
+                    //             if lhs == *s {
+                    //                 r.term = None;
+                    //             }
+                    //         }
+                    //     }
+                    //     r1 = r2.clone();
+                    //     self.store_term(lhs.clone(), r2.to_string())
+                    // }
+                    // "+=" => self.assign_bin("add", lhs.clone(), &r1, &r2),
+                    // "-=" => self.assign_bin("sub", lhs.clone(), &r1, &r2),
+                    // "*=" => self.assign_rax("mul", lhs.clone(), &mut r1, &mut r2),
+                    // "/=" => self.assign_rax("div", lhs.clone(), &mut r1, &mut r2),
                     _ => todo!(),
                 }
                 self.save_reg(&r2, &rhs);

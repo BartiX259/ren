@@ -144,6 +144,7 @@ impl Process {
                         "-" => l - r,
                         "*" => l * r,
                         "/" => l / r,
+                        "%" => l % r,
                         _ => panic!("Unexpected operation")
                     }
                 );

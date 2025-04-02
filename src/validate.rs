@@ -23,6 +23,7 @@ pub enum SemanticError {
     TypeMismatch(PosStr, Type, Type),
     InvalidReturn(usize),
     NotInLoop(String, usize),
+    InvalidAssign(Span),
     InvalidUnaryOperator(PosStr),
     InvalidAddressOf(PosStr),
     InvalidDereference(PosStr, Type),
@@ -310,14 +311,36 @@ impl Validate {
         }
         let ty2 = self.expr(&mut bin.rhs)?;
 
+        if bin.is_assign() {
+            let ExprKind::Variable(_) = &bin.lhs.kind else {
+                return Err(SemanticError::InvalidAssign(bin.lhs.span.add(bin.rhs.span)));
+            };
+        }
+
         match bin.op.str.as_str() {
-            "+" | "-" | "*" | "/" => {
-                // Arithmetic operators
+            "+" | "-" | "+=" | "-=" => {
+                // Arithmetic and pointer arithmetic
                 match (ty1.clone(), ty2.clone()) {
                     (Type::Int, Type::Int) => Ok(Type::Int),
                     (Type::Float, Type::Float) => Ok(Type::Float),
                     (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
                     (Type::Pointer(p), Type::Int) => Ok(Type::Pointer(p)),
+                    _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2)),
+                }
+            }
+            "*" | "/" | "*=" | "/=" => {
+                // Arithmetic and no pointer arithmetic
+                match (ty1.clone(), ty2.clone()) {
+                    (Type::Int, Type::Int) => Ok(Type::Int),
+                    (Type::Float, Type::Float) => Ok(Type::Float),
+                    (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
+                    _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2)),
+                }
+            }
+            "%" | "%=" => {
+                // Integer only operators
+                match (ty1.clone(), ty2.clone()) {
+                    (Type::Int, Type::Int) => Ok(Type::Int),
                     _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2)),
                 }
             }
@@ -337,7 +360,7 @@ impl Validate {
                     Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
                 }
             }
-            "=" | "+=" | "-=" | "*=" | "/=" => {
+            "=" => {
                 // Assignment operators
                 if ty1 == ty2 {
                     Ok(ty1)
@@ -356,7 +379,7 @@ impl Validate {
                     Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
                 }
             }
-            _ => unreachable!(),
+            _ => panic!("Unhandled operator {}", bin.op.str),
         }
     }
 

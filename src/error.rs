@@ -90,9 +90,13 @@ pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
             print_file_err(text, info.get(pos_id).unwrap());
         }
         SemanticError::NotInLoop(name, pos_id) => {
-                eprintln!("{} statement not in a loop.", name);
-                print_file_err(text, info.get(pos_id).unwrap());
-            }
+            eprintln!("{} statement not in a loop.", name);
+            print_file_err(text, info.get(pos_id).unwrap());
+        }
+        SemanticError::InvalidAssign(span) => {
+            eprintln!("Invalid assignment.");
+            print_file_err(text, &FilePos::span(info, span));
+        }
         SemanticError::InvalidUnaryOperator(pos_str) => {
             eprintln!("Invalid unary operator '{}'.", pos_str.str);
             print_file_err(text, info.get(pos_str.pos_id).unwrap());

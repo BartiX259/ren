@@ -114,7 +114,7 @@ impl<'a> Lower<'a> {
                     self.expr(expr);
                     if !inner_salloc {
                         self.temp_count += 1;
-                        self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)) }, arr_lit.pos_id);
+                        self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack: true }, arr_lit.pos_id);
                         self.salloc_offset += size as i64;
                     }
                 }
@@ -145,7 +145,7 @@ impl<'a> Lower<'a> {
                     self.expr(expr);
                     if !expr.ty.salloc() {
                         self.temp_count += 1;
-                        self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)) }, lit.name.pos_id);
+                        self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack: false }, lit.name.pos_id);
                         self.salloc_offset += expr.ty.size() as i64;
                     }
                 }
@@ -178,11 +178,9 @@ impl<'a> Lower<'a> {
     fn r#let(&mut self, decl: &node::Let) {
         self.expr(&decl.expr);
         self.push_op(
-            ir::Op::Tac {
-                lhs: ir::Term::Temp(self.temp_count),
-                rhs: None,
-                op: None,
-                res: Some(ir::Term::Symbol(decl.name.str.clone())),
+            ir::Op::Let {
+                term: ir::Term::Temp(self.temp_count),
+                res: ir::Term::Symbol(decl.name.str.clone()),
             },
             decl.name.pos_id,
         );
@@ -282,7 +280,7 @@ impl<'a> Lower<'a> {
 
     fn bin_expr(&mut self, bin: &node::BinExpr) {
         if let node::ExprKind::UnExpr(u) = &bin.lhs.kind {
-            if u.op.str == "*" && ["=", "+=", "-=", "*=", "/="].contains(&bin.op.str.as_str()) {
+            if u.op.str == "*" && bin.is_assign() {
                 self.expr(&bin.rhs);
                 let term = ir::Term::Temp(self.temp_count);
                 self.expr(&u.expr);
@@ -295,6 +293,7 @@ impl<'a> Lower<'a> {
                         ptr,
                         offset: 0,
                         res: Some(ir::Term::Temp(self.temp_count)),
+                        stack: false
                     },
                     u.op.pos_id,
                 );
@@ -305,15 +304,29 @@ impl<'a> Lower<'a> {
         let lhs = ir::Term::Temp(self.temp_count);
         self.expr(&bin.rhs);
         self.temp_count += 1;
-        self.push_op(
-            ir::Op::Tac {
-                lhs,
-                rhs: Some(ir::Term::Temp(self.temp_count - 1)),
-                op: Some(bin.op.str.clone()),
-                res: Some(ir::Term::Temp(self.temp_count)),
-            },
-            bin.op.pos_id,
-        );
+        if bin.is_assign() {
+            self.push_op(
+                ir::Op::DerefAssign { 
+                    term: ir::Term::Temp(self.temp_count - 1),
+                    op: bin.op.str.clone(),
+                    ptr: lhs,
+                    offset: 0,
+                    res: Some(ir::Term::Temp(self.temp_count)),
+                    stack: true
+                }, 
+                bin.op.pos_id
+            );
+        } else {
+            self.push_op(
+                ir::Op::Tac {
+                    lhs,
+                    rhs: Some(ir::Term::Temp(self.temp_count - 1)),
+                    op: Some(bin.op.str.clone()),
+                    res: Some(ir::Term::Temp(self.temp_count)),
+                },
+                bin.op.pos_id,
+            );
+        }
     }
 
     fn un_expr(&mut self, un: &node::UnExpr) {
@@ -345,7 +358,7 @@ impl<'a> Lower<'a> {
         self.push_op(
             ir::Op::Call {
                 func: call.name.str.clone(),
-                res: ir::Term::Temp(self.temp_count),
+                res: Some(ir::Term::Temp(self.temp_count)),
             },
             call.name.pos_id,
         );

@@ -576,6 +576,7 @@ fn op_prec(op: &str) -> u8 {
         "-=" => 0,
         "*=" => 0,
         "/=" => 0,
+        "%=" => 0,
         "&=" => 0,
         "|=" => 0,
         "||" => 1,
@@ -594,10 +595,11 @@ fn op_prec(op: &str) -> u8 {
         "-" => 8,
         "*" => 9,
         "/" => 9,
+        "%" => 9,
         "!" => 10,
         "." => 11,
         "[]" => 11, // Highest precedence (done first)
-        _ => 0,
+        _ => panic!("No precedence for operator {}", op),
     }
 }
 
@@ -626,8 +628,9 @@ fn op_assoc(op: &str) -> u8 {
         "-" => 1,
         "*" => 1,
         "/" => 1,
+        "%" => 1,
         "." => 1,
         "[]" => 1,
-        _ => 1,
+        _ => panic!("No associativity for operator {}", op),
     }
 }

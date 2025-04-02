@@ -32,14 +32,13 @@ pub struct Block {
 pub enum Op {
     Tac { lhs: Term, rhs: Option<Term>, op: Option<String>, res: Option<Term> },
     Unary { term: Term, op: String, res: Term },
-    DerefAssign { term: Term, op: String, ptr: Term, offset: i64, res: Option<Term> },
-    DerefRead { ptr: Term, offset: i64, res: Term },
-    StackAssign { term: Term, op: String, ptr: Term, offset: i64, res: Option<Term> },
-    StackRead { ptr: Term, offset: i64, res: Term },
+    DerefAssign { term: Term, op: String, ptr: Term, offset: i64, res: Option<Term>, stack: bool },
+    DerefRead { ptr: Term, offset: i64, res: Term, stack: bool },
+    Let {term: Term, res: Term },
     Decl {term: Term, size: u32 },
     Arg {term: Term, size: u32 },
     Param {term: Term, size: u32 },
-    Call { func: String, res: Term },
+    Call { func: String, res: Option<Term> },
     Label(u16),
     Jump(u16),
     CondJump { cond: Term, label: u16 },
@@ -70,6 +69,9 @@ impl fmt::Debug for Term {
         }
     }
 }
+fn opt_res(res: &Option<Term>) -> String {
+    res.clone().map(|r| format!("{:?} = ", r)).unwrap_or("".to_string())
+}
 
 impl fmt::Debug for Op {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -88,26 +90,15 @@ impl fmt::Debug for Op {
                 Ok(())
             }
             Op::Unary { term, op, res } => write!(f, "{:?} = {}{:?}", res, op, term),
-            Op::DerefAssign { term, op, ptr, offset, res } => {
-                if let Some(r) = res {
-                    write!(f, "{:?} = *({:?}+{}) {} {:?}", r, ptr, offset, op, term)
-                } else {
-                    write!(f, "*({:?}+{}) {} {:?}", ptr, offset, op, term)
-                }
-            }
-            Op::DerefRead { ptr, offset, res } => write!(f, "{:?} = *({:?}+{})", res, ptr, offset),
-            Op::StackAssign { term, op, ptr, offset, res } => {
-                if let Some(r) = res {
-                    write!(f, "{:?} = *(&{:?}+{}) {} {:?}", r, ptr, offset, op, term)
-                } else {
-                    write!(f, "*(&{:?}+{}) {} {:?}", ptr, offset, op, term)
-                }
-            }
-            Op::StackRead { ptr, offset, res } => write!(f, "{:?} = *(&{:?}+{})", res, ptr, offset),
+            Op::DerefAssign { term, op, ptr, offset, res, stack } =>  write!(f, "{}*({}{:?}+{}) {} {:?}",
+            opt_res(res), if *stack { "&" } else { "" }, ptr, offset, op, term),
+            Op::DerefRead { ptr, offset, res, stack } => write!(f, "{:?} = *({}{:?}+{})",
+            res , if *stack { "&" } else { "" }, ptr, offset),
+            Op::Let { term, res } => write!(f, "let {:?} = {:?}", res, term),
             Op::Decl { term, size } => write!(f, "decl {:?} (size {})", term, size),
             Op::Arg { term, size } => write!(f, "arg {:?} (size {})", term, size),
             Op::Param { term, size } => write!(f, "param {:?} (size {})", term, size),
-            Op::Call { func, res } => write!(f, "{:?} = call {}", res, func),
+            Op::Call { func, res } => write!(f, "{}call {}", opt_res(res), func),
             Op::Label(label) => write!(f, "L{}:", label),
             Op::Jump(label) => write!(f, "jump L{}", label),
             Op::CondJump { cond, label } => write!(f, "if {:?} jump L{}", cond, label),

@@ -63,6 +63,11 @@ pub struct BinExpr {
     pub rhs: Box<Expr>,
     pub op: PosStr,
 }
+impl BinExpr {
+    pub fn is_assign(&self) -> bool {
+        return ["=", "+=", "-=", "*=", "/=", "%="].contains(&self.op.str.as_str());
+    }
+}
 #[derive(Debug, Clone)]
 pub struct UnExpr {
     pub expr: Box<Expr>,
