@@ -182,7 +182,7 @@ fn tok_num(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError
     return Ok(Token::IntLit { value: word.parse::<i64>().unwrap() });
 }
 
-/// Builds an operator token, supporting both single-character and two-character operators.
+/// Builds an operator token, supporting single, two and three character operators.
 fn tok_op(start: char, iter: &mut VecIter<char>) -> Token {
     let mut op = String::new();
     op.push(start);
@@ -193,6 +193,13 @@ fn tok_op(start: char, iter: &mut VecIter<char>) -> Token {
             op.push(next_ch);
             iter.next(); // Consume the second character
         }
+        if let Some(&next_ch) = iter.peek() {
+            // Check for three-character operators like <<= and >>=
+            if is_operator_triplet(op.as_str(), next_ch) {
+                op.push(next_ch);
+                iter.next(); // Consume the third character
+            }
+        }
     }
 
     return Token::Op { value: op };
@@ -200,7 +207,7 @@ fn tok_op(start: char, iter: &mut VecIter<char>) -> Token {
 
 /// Checks if a character is a valid single-character operator.
 fn is_operator(ch: char) -> bool {
-    ['+', '-', '*', '/', '=', '<', '>', '&', '|', '!', '%'].contains(&ch)
+    ['+', '-', '*', '/', '=', '<', '>', '&', '|', '!', '%', '^'].contains(&ch)
 }
 
 /// Checks if a pair of characters form a valid two-character operator.
@@ -217,7 +224,18 @@ fn is_operator_pair(first: char, second: char) -> bool {
         ('!', '=') |
         ('&', '&') |
         ('|', '|') |
+        ('<', '<') |
+        ('>', '>') |
         ('-', '>')
+        => true,
+        _ => false,
+    }
+}
+
+fn is_operator_triplet(first_two: &str, third: char) -> bool {
+    match (first_two, third) {
+        (">>", '=') | 
+        ("<<", '=')
         => true,
         _ => false,
     }

@@ -474,7 +474,7 @@ impl<'a> Gen<'a> {
         let mut r2;
         if let Some(rhs) = rhs_opt {
             if let Some(op) = op_opt {
-                r2 = self.eval_term(rhs.clone(), !(op.contains("*") || op.contains("/") || op.contains("%")))?;
+                r2 = self.eval_term(rhs.clone(), !["*", "/", "%"].contains(&op.as_str()))?;
                 match op.as_str() {
                     "+" => self.bin("add", &r1, &r2),
                     "-" => self.bin("sub", &r1, &r2),
@@ -492,6 +492,11 @@ impl<'a> Gen<'a> {
                     "!=" => self.cond("setne", &r1, &r2),
                     "||" => self.bool_op("or", &r1, &r2),
                     "&&" => self.bool_op("and", &r1, &r2),
+                    "|" => self.bin("or", &r1, &r2),
+                    "&" => self.bin("and", &r1, &r2),
+                    "^" => self.bin("xor", &r1, &r2),
+                    ">>" => self.bin_cl("shr", &mut r1, &mut r2),
+                    "<<" => self.bin_cl("shl", &mut r1, &mut r2),
                     // "=" => {
                     //     for r in self.regs.iter_mut() {
                     //         if let Some(s) = &r.term {
@@ -558,7 +563,7 @@ impl<'a> Gen<'a> {
     }
 
     fn deref_assign(&mut self, term: Term, op: String, ptr: Term, mut offset: i64, res: Option<Term>, stack: bool) -> Result<(), GenError> {
-        let mut t = self.eval_term(term, res.is_none() && op != "*=" && op != "/=")?;
+        let mut t = self.eval_term(term, res.is_none() && op != "*=" && op != "/=" && op != "%=")?;
         let p;
         if stack {
             p = "rsp".to_string();
@@ -580,6 +585,9 @@ impl<'a> Gen<'a> {
             "=" => self.buf.push_line(format!("mov qword [{}{}], {}", p, o, t)),
             "+=" => self.buf.push_line(format!("add qword [{}{}], {}", p, o, t)),
             "-=" => self.buf.push_line(format!("sub qword [{}{}], {}", p, o, t)),
+            "|=" => self.buf.push_line(format!("or qword [{}{}], {}", p, o, t)),
+            "^=" => self.buf.push_line(format!("xor qword [{}{}], {}", p, o, t)),
+            "&=" => self.buf.push_line(format!("and qword [{}{}], {}", p, o, t)),
             "*=" => {
                 let mut free = self.get_free_reg()?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
@@ -592,6 +600,15 @@ impl<'a> Gen<'a> {
                 self.bin_rax("div", &mut free, &mut t);
                 self.buf.push_line(format!("mov qword [{}{}], {}", p, o, free));
             }
+            "%=" => {
+                let mut free = self.get_free_reg()?;
+                self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
+                self.bin_rax("div", &mut free, &mut t);
+                self.buf.push_line("xchg rax, rdx");
+                self.buf.push_line(format!("mov qword [{}{}], {}", p, o, free));
+            }
+            ">>=" => self.bin_cl("shr qword", &mut format!("[{}{}]", p, o), &mut t),
+            "<<=" => self.bin_cl("shl qword", &mut format!("[{}{}]", p, o), &mut t),
             _ => unreachable!(),
         }
         if let Some(r) = res {
@@ -659,6 +676,20 @@ impl<'a> Gen<'a> {
             self.buf.push_line("xor rdx, rdx");
         }
         self.buf.push_line(format!("{} {}", op, r2));
+    }
+    fn bin_cl(&mut self, op: &str, r1: &mut String, r2: &mut String) {
+        if r2.parse::<i64>().is_ok() {
+            self.buf.push_line(format!("{} {}, {}", op, r1, r2));
+            return;
+        }
+        self.swap_regs(r2.to_string(), "rcx".to_string());
+        if r1 == "rcx" {
+            *r1 = r2.to_string();
+        } else if r2 == r1 {
+            *r1 = "rcx".to_string();
+        }
+        *r2 = "rcx".to_string();
+        self.buf.push_line(format!("{} {}, {}", op, r1, Self::reg_8bit(r2)));
     }
 
     fn cond(&mut self, cond: &str, r1: &String, r2: &String) {

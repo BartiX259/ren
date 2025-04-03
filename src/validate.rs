@@ -369,7 +369,7 @@ impl Validate {
                     _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2)),
                 }
             }
-            "%" | "%=" => {
+            "%" | "%=" | "|" | "|=" | "^" | "^=" | "&" | "&=" | "<<" | "<<=" | ">>" | ">>=" => {
                 // Integer only operators
                 match (ty1.clone(), ty2.clone()) {
                     (Type::Int, Type::Int) => Ok(Type::Int),

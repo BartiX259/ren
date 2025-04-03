@@ -65,7 +65,7 @@ pub struct BinExpr {
 }
 impl BinExpr {
     pub fn is_assign(&self) -> bool {
-        return ["=", "+=", "-=", "*=", "/=", "%="].contains(&self.op.str.as_str());
+        return ["=", "+=", "-=", "*=", "/=", "%=", "|=", "^=", "&=", ">>=", "<<="].contains(&self.op.str.as_str());
     }
 }
 #[derive(Debug, Clone)]
