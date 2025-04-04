@@ -188,7 +188,7 @@ impl<'a> Lower<'a> {
                     );
                 } else {
                     self.string_id += 1;
-                    let new_sym = format!(".s{}", self.string_id);
+                    let new_sym = format!("s.{}", self.string_id);
                     self.string_map.insert(lit.to_string(), new_sym.clone());
                     self.ir.insert(new_sym.clone(), ir::Symbol::StringLit { str: lit.to_string() });
                     self.push_op(
@@ -391,15 +391,9 @@ impl<'a> Lower<'a> {
     }
 
     fn call(&mut self, call: &node::Call) {
-        let mut tmps = Vec::new();
-        let mut sizes = Vec::new();
-        for arg in &call.args {
+        for arg in call.args.iter().rev() {
             self.expr(arg);
-            tmps.push(self.temp_count);
-            sizes.push(arg.ty.size());
-        }
-        for (tmp, size) in tmps.into_iter().zip(sizes.into_iter()).rev() {
-            self.push_op(ir::Op::Param { term: ir::Term::Temp(tmp), size, stack_offset: None }, call.name.pos_id);
+            self.push_op(ir::Op::Param { term: ir::Term::Temp(self.temp_count), size: arg.ty.size(), stack_offset: None }, call.name.pos_id);
         }
         self.temp_count += 1;
         self.push_op(

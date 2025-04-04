@@ -176,45 +176,32 @@ impl<'a> Gen<'a> {
                     self.arg_ptr -= size as i64;
                 }
                 ir::Op::Param { term, size, stack_offset } => {
-                    let mut params = vec![term];
-                    let mut sizes = vec![size];
-                    let mut offsets = vec![stack_offset];
-                    while let Some(ir::Op::Param { term: t, size: s, stack_offset: o }) = iter.peek() {
-                        params.push(t.clone());
-                        sizes.push(*s);
-                        offsets.push(*o);
-                        iter.next();
+                    if let Some(offset) = stack_offset {
+                        let rsp_offset = self.sp - self.locs.get(&term).unwrap() + offset as i64;
+                        self.sp += size as i64;
+                        self.param_size += size as i64;
+                        if rsp_offset == 0 {
+                            self.buf.push_line("push qword [rsp]");
+                        } else {
+                            self.buf.push_line(format!("push qword [rsp+{}]", rsp_offset));
+                        }
+                        self.buf.comment(format!("param {:?}", term));
+                    } else {
+                        let r = self.eval_term(term.clone(), false)?;
+                        self.sp += size as i64;
+                        self.param_size += size as i64;
+                        self.buf.push_line(format!("push {}", r));
+                        self.buf.comment(format!("param {:?}", term));
+                        self.lock_reg(&r, false);
                     }
-                    for r in self.regs.iter() { // Save registers
-                        if r.locked && !params.contains(&r.term.clone().unwrap()) {
+                }
+                ir::Op::Call { func, res } => {
+                    for r in self.regs.iter_mut() { // Save registers
+                        if r.locked {
                             self.saved_regs.push(r.clone());
                             self.buf.push_line(format!("push {}", r.name));
                             self.buf.comment(format!("save {:?}", r.term.clone().unwrap()));
                         }
-                    }
-                    for ((p, s), o) in params.iter().zip(sizes).zip(offsets) {
-                        if let Some(offset) = o {
-                            let rsp_offset = self.sp - self.locs.get(p).unwrap() + offset as i64;
-                            self.sp += s as i64;
-                            self.param_size += s as i64;
-                            if rsp_offset == 0 {
-                                self.buf.push_line("push qword [rsp]");
-                            } else {
-                                self.buf.push_line(format!("push qword [rsp+{}]", rsp_offset));
-                            }
-                            self.buf.comment(format!("param {:?}", p));
-                        } else {
-                            let r = self.eval_term(p.clone(), false)?;
-                            self.sp += s as i64;
-                            self.param_size += s as i64;
-                            self.buf.push_line(format!("push {}", r));
-                            self.buf.comment(format!("param {:?}", p));
-                            self.lock_reg(&r, false);
-                        }
-                    }
-                }
-                ir::Op::Call { func, res } => {
-                    for r in self.regs.iter_mut() {
                         r.term = None;
                         r.locked = false;
                     }
@@ -248,7 +235,7 @@ impl<'a> Gen<'a> {
                     }
                     self.calling = false;
                     self.param_size = 0;
-                    self.saved_regs = Vec::new();
+                    self.saved_regs.clear();
                 }
                 ir::Op::Salloc { size, res } => {
                     self.sp += size as i64;

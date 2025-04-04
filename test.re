@@ -1,9 +1,10 @@
-fn print_three(a: int, b: str, c: int) {
+fn print_4(a: int, b: str, c: int, d: int) {
     print(a);
     print(b);
     print(c);
+    print(d);
 }
 
 fn main() {
-    print_three(1, "asd", 3);
+    print_4(1, "asd", 3, 4);
 }
