@@ -7,6 +7,7 @@ pub enum Symbol {
     Var { ty: Type },
     Func { ty: Type, block: Block, symbols: Vec<Vec<(String, Symbol)>> },
     ExternFunc { ty: Type, args: Vec<Type> },
+    StringLit { str: String }
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -37,7 +38,7 @@ pub enum Op {
     Let {term: Term, res: Term },
     Decl {term: Term, size: u32 },
     Arg {term: Term, size: u32 },
-    Param {term: Term, size: u32, stack_offset: Option<u32> },
+    Param { term: Term, size: u32, stack_offset: Option<u32> },
     Call { func: String, res: Option<Term> },
     Label(u16),
     Jump(u16),
@@ -47,6 +48,7 @@ pub enum Op {
     ReturnNone,
     Salloc { size: u32, res: Term },
     TakeSalloc { ptr: Term, res: Term },
+    ParamSalloc { ptr: Term, size: u32 },
     LoadSymbols(usize),
     UnloadSymbols(usize),
     NaturalFlow,
@@ -113,6 +115,7 @@ impl fmt::Debug for Op {
             Op::ReturnNone => write!(f, "return"),
             Op::Salloc { size, res } => write!(f, "{:?} = salloc {}", res, size),
             Op::TakeSalloc { ptr, res } => write!(f, "{:?} take salloc {:?}", res, ptr),
+            Op::ParamSalloc { ptr, size } => write!(f, "param take salloc {:?} (size {})", ptr, size),
             Op::LoadSymbols(i) => write!(f, "load symbols {}", i),
             Op::UnloadSymbols(i) => write!(f, "unload symbols {}", i),
             Op::NaturalFlow => write!(f, "natural flow"),

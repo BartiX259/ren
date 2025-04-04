@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ir::{self, Block, Symbol};
-use crate::node;
+use crate::{node, types};
 
 /// Transform the ast into the IR
 pub fn lower(stmts: Vec<node::Stmt>, ir: &mut HashMap<String, Symbol>) {
@@ -22,6 +22,8 @@ struct Lower<'a> {
     scope_id: usize,
     loop_start: Vec<u16>,
     loop_exit: Vec<u16>,
+    string_map: HashMap<String, String>,
+    string_id: usize
 }
 impl<'a> Lower<'a> {
     pub fn new(ir: &'a mut HashMap<String, Symbol>) -> Self {
@@ -36,6 +38,8 @@ impl<'a> Lower<'a> {
             scope_id: 0,
             loop_start: Vec::new(),
             loop_exit: Vec::new(),
+            string_map: HashMap::new(),
+            string_id: 0
         }
     }
     fn push_op(&mut self, op: ir::Op, pos_id: usize) {
@@ -158,6 +162,42 @@ impl<'a> Lower<'a> {
                 self.temp_count += 1;
                 if !in_salloc {
                     self.push_op(ir::Op::TakeSalloc { ptr, res: ir::Term::Temp(self.temp_count) }, lit.name.pos_id);
+                    self.cur_salloc = None;
+                    self.salloc_offset = 0;
+                }
+            }
+            node::ExprKind::StringLit(lit) => {
+                self.temp_count += 1;
+                let ptr;
+                let in_salloc;
+                if let Some(p) = &self.cur_salloc {
+                    ptr = p.clone();
+                    in_salloc = true;
+                } else {
+                    ptr = ir::Term::Temp(self.temp_count);
+                    self.cur_salloc = Some(ptr.clone());
+                    self.push_op(ir::Op::Salloc { size: types::Type::String.size(), res: ptr.clone() }, expr.span.end);
+                    in_salloc = false;
+                }
+                self.temp_count += 1;
+                self.push_op(ir::Op::DerefAssign { term: ir::Term::IntLit(lit.chars().count() as i64), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack: true }, expr.span.end);
+                self.salloc_offset += 8;
+                if let Some(sym) = self.string_map.get(lit) {
+                    self.push_op(
+                        ir::Op::DerefAssign { term: ir::Term::Symbol(sym.clone()), op: "=".to_string(), ptr: ir::Term::Temp(self.temp_count - 1), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack: true }, expr.span.end
+                    );
+                } else {
+                    self.string_id += 1;
+                    let new_sym = format!(".s{}", self.string_id);
+                    self.string_map.insert(lit.to_string(), new_sym.clone());
+                    self.ir.insert(new_sym.clone(), ir::Symbol::StringLit { str: lit.to_string() });
+                    self.push_op(
+                        ir::Op::DerefAssign { term: ir::Term::Symbol(new_sym), op: "=".to_string(), ptr: ir::Term::Temp(self.temp_count - 1), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack: true }, expr.span.end
+                    );
+                }
+                self.temp_count += 1;
+                if !in_salloc {
+                    self.push_op(ir::Op::TakeSalloc { ptr, res: ir::Term::Temp(self.temp_count) }, expr.span.end);
                     self.cur_salloc = None;
                     self.salloc_offset = 0;
                 }

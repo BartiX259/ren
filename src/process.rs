@@ -1,5 +1,3 @@
-use std::slice::Iter;
-
 use crate::node;
 use crate::types::Type;
 

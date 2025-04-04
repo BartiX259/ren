@@ -32,6 +32,10 @@ pub fn token_err(text: &String, e: TokenizeError) {
             eprintln!("Invalid character '{}' in number", c.ch);
             print_file_err(text, &c.pos);
         }
+        TokenizeError::UnclosedCharacter(c) => {
+            eprintln!("Unclosed character '{}'", c.ch);
+            print_file_err(text, &c.pos);
+        }
     }
 }
 

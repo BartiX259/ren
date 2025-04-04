@@ -1,18 +1,9 @@
-struct st {
-    x: int,
-    y: int,
-    z: int
-}
-
-fn t(z: st) {
-    print(z.x);
+fn print_three(a: int, b: str, c: int) {
+    print(a);
+    print(b);
+    print(c);
 }
 
 fn main() {
-    let x = st {
-        x: 10, y: 20, z: 30
-    };
-    let y = 2;
-    x.x <<= y;
-    t(x);
+    print_three(1, "asd", 3);
 }

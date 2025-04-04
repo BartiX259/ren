@@ -145,7 +145,7 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
     let start = tokens.prev_index();
     match tok {
         Token::IntLit { value } => Ok(expr(start, start,  node::ExprKind::IntLit(value))),
-        Token::Word { value } => {
+        Token::Word { value } => { // Term
             let pos_str = PosStr {
                 str: value,
                 pos_id: tokens.prev_index(),
@@ -170,7 +170,7 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             }
             return Ok(expr(start, start, node::ExprKind::Variable(pos_str)));
         }
-        Token::OpenParen => {
+        Token::OpenParen => { // Brackets
             let res = parse_expr(tokens, 1)?;
             let tok = check_none(tokens, "')'")?;
             if let Token::CloseParen = tok {
@@ -179,7 +179,7 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                 return Err(unexp(tok, tokens.prev_index(), "')'"));
             }
         }
-        Token::Op { value } => {
+        Token::Op { value } => { // Unary expression
             let kind = node::ExprKind::UnExpr(node::UnExpr {
                 op: PosStr {
                     str: value,
@@ -189,7 +189,7 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             });
             Ok(expr(start, tokens.prev_index(), kind))
         }
-        Token::OpenSquare => {
+        Token::OpenSquare => { // Array literal
             let pos_id = tokens.current_index();
             let mut exprs = Vec::new();
             if let Some(Token::CloseSquare) = tokens.peek() {
@@ -211,6 +211,10 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                 exprs, pos_id
             })))
         }
+        Token::StringLit { value } => Ok(expr(start, tokens.prev_index(), node::ExprKind::StringLit(value))),
+        // Token::DoubleQuote => { // String literal
+        //     let pos_id = tokens.current_index();
+        // }
         _ => Err(unexp(tok, tokens.prev_index(), "a term")),
     }
 }

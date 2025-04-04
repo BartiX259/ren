@@ -59,7 +59,7 @@ impl Validate {
     pub fn new() -> Self {
         Self {
             symbol_table: HashMap::from([
-                ("print".to_string(), Symbol::ExternFunc { ty: Type::Void, args: vec![Type::Int] }),
+                ("print".to_string(), Symbol::ExternFunc { ty: Type::Void, args: vec![Type::Any] }),
             ]),
             fn_symbols: Vec::new(),
             symbol_stack: Vec::new(),
@@ -164,6 +164,7 @@ impl Validate {
             node::ExprKind::ArrLit(arr_lit) => self.expr_list(&mut arr_lit.exprs, arr_lit.pos_id)
             .map(|res| Type::Array { inner: Box::new(res.0), length: res.1 }),
             node::ExprKind::StructLit(struct_lit) => self.struct_lit(struct_lit),
+            node::ExprKind::StringLit(_) => Ok(Type::String),
             node::ExprKind::Variable(pos_str) => self
                 .symbol_table
                 .get(&pos_str.str)
@@ -528,16 +529,30 @@ impl Validate {
             None => return Err(SemanticError::UndeclaredSymbol(call.name.clone())),
             _ => return Err(SemanticError::UndeclaredSymbol(call.name.clone())),
         }
-
+        let mut insert = None;
         if expected_types.len() != arg_types.len() {
             return Err(SemanticError::InvalidArgCount(call.name.clone(), expected_types.len(), arg_types.len()));
         }
         for ((ty1, ty2), span) in expected_types.into_iter().zip(arg_types.iter()).zip(arg_spans.iter()) {
-            if ty1 != ty2 {
+            if *ty1 == Type::Any {
+                let str = match ty2 {
+                    Type::Int => "int",
+                    Type::String => "str",
+                    _ => panic!("Bad print type (todo)")
+                };
+                insert = Some(format!("{}.{}", call.name.str, str));
+            }
+            else if ty1 != ty2 {
                 return Err(SemanticError::ArgTypeMismatch(*span, ty1.clone(), ty2.clone()));
             }
         }
-        Ok(ty.clone())
+        let res = ty.clone();
+        if let Some(name) = insert {
+            let sym = self.symbol_table.get(&call.name.str).unwrap().clone();
+            call.name.str = name.clone();
+            self.symbol_table.insert(name, sym);
+        }
+        Ok(res)
     }
 
     fn r#loop(&mut self, r#loop: &mut node::Loop) -> Result<(), SemanticError> {
@@ -579,6 +594,7 @@ impl Validate {
             "int" => self.no_subtype(r#type, Type::Int),
             "float" => self.no_subtype(r#type, Type::Float),
             "bool" => self.no_subtype(r#type, Type::Bool),
+            "str" => self.no_subtype(r#type, Type::String),
             "ref" => Ok(Type::Pointer(self.get_subtype(r#type)?)),
             "arr" => Ok(Type::Array {inner: self.get_subtype(r#type)?, length: self.get_len(r#type)? }),
             other => {

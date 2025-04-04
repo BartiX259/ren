@@ -285,6 +285,14 @@ impl<'a> Opt<'a> {
                                 loc_iter.next();
                                 continue;
                             }
+                        } else if let Some(Op::Param { term, size, stack_offset }) = iter.peek() {
+                            if *term == res {
+                                new_block.ops.push(Op::ParamSalloc { ptr, size: *size });
+                                new_block.locs.push(last_loc);
+                                iter.next();
+                                loc_iter.next();
+                                continue;
+                            }
                         }
                     }
                     new_block.ops.push(Op::TakeSalloc { ptr, res });

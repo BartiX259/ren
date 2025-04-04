@@ -65,12 +65,18 @@ impl<'a> Gen<'a> {
         }
     }
     fn all(&mut self) -> Result<(), GenError> {
+        // Data section
+        self.buf.push_line("section .data");
+        self.buf.indent();
+        self.data();
+        self.buf.dedent();
+        self.buf.push_line("");
+        // Text section
+        self.buf.push_line("section .text");
+        self.buf.indent();
         // Extern functions
-        let binding = self.symbol_table.clone();
-        let names = binding.keys();
-        for name in names {
-            let sym = self.symbol_table.get(name);
-            if let Some(Symbol::ExternFunc { ty: _, args: _ }) = sym {
+        for (name, sym) in self.symbol_table.iter() {
+            if let Symbol::ExternFunc { .. } = sym {
                 self.buf.push_line(format!("extern {}", name));
             }
         }
@@ -79,6 +85,8 @@ impl<'a> Gen<'a> {
             return Err(GenError::ReservedSymbol(OpLoc { start_id: 0, end_id: 0 }));
         }
         self.buf.push_line("global _start");
+        self.buf.dedent();
+        self.buf.push_line("");
         self.buf.push_line("_start:");
         self.buf.indent();
         let main = self.symbol_table.get("main");
@@ -101,10 +109,20 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    fn data(&mut self) {
+        for (name, sym) in self.symbol_table.iter() {
+            match sym {
+                Symbol::StringLit { str } => {
+                    self.buf.push_line(format!("{} db \"{}\"", name, str));
+                }
+                _ => ()
+            }
+        }
+    }
+
     fn functions(&mut self) -> Result<(), GenError> {
-        let binding = self.symbol_table.clone();
-        let names = binding.keys();
-        for name in names {
+        let binding: Vec<String> = self.symbol_table.keys().cloned().collect();
+        for name in binding {
             for r in self.regs.iter_mut() {
                 r.term = None;
                 r.locked = false;
@@ -113,7 +131,7 @@ impl<'a> Gen<'a> {
             self.locs = HashMap::new();
             self.sp = 0;
             self.arg_ptr = -8;
-            let sym = self.symbol_table.get(name);
+            let sym = self.symbol_table.get(&name);
             if let Some(Symbol::Func { ty: _, block, symbols }) = sym {
                 self.buf.push_line("");
                 self.buf.push_line(format!("{}:", name));
@@ -246,6 +264,14 @@ impl<'a> Gen<'a> {
                     };
                     self.rsp_term = None;
                     self.locs.insert(res, self.sp);
+                    self.buf.push_line("");
+                }
+                ir::Op::ParamSalloc { ptr, size } => {
+                    if Some(ptr) != self.rsp_term {
+                        panic!("Salloc param pointer mismatch");
+                    }
+                    self.param_size += size as i64;
+                    self.rsp_term = None;
                     self.buf.push_line("");
                 }
                 ir::Op::Label(label) => {
@@ -433,17 +459,16 @@ impl<'a> Gen<'a> {
                 self.buf.push((self.sp - loc).to_string());
             }
             self.buf.push_line("]");
-        } else {
-            match &term {
-                Term::IntLit(val) => {
-                    self.buf.push_line(format!("mov {}, {}", target, val));
-                }
-                _ => {
-                    println!("Couldn't find {:?}", term);
-                    unreachable!()
-                }
+            return;
+        }
+        if let Term::Symbol(s) = term {
+            if let Some(Symbol::StringLit { str: _ }) = self.symbol_table.get(s) {
+                self.buf.push_line(format!("mov {}, {}", target, s));
+                return;
             }
         }
+
+        panic!("Couldn't find {:?}", term);
     }
 
     fn eval_term(&mut self, term: Term, allow_literals: bool) -> Result<String, GenError> {

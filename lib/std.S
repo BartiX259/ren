@@ -1,5 +1,5 @@
 section .text
-    global int2str, print
+    global int2str, print.int, print.str
 
 int2str_rec:
         mov rax, [rsp + 8]
@@ -51,7 +51,7 @@ int2str:
     add rsp, 16
     ret
 
-print:
+print.int:
         sub rsp, 21
         mov rax, rsp    ; t21 = macro 0
         push rax        ; buf = t21
@@ -69,5 +69,14 @@ print:
         sub rdx, rsi ; third arg, length = buf_after - buf
         syscall
         add rsp, 29
+        mov rax, 0
+        ret
+
+print.str:
+        mov rax, 1 ; write syscall
+        mov rdi, 1 ; first arg, stdout
+        mov rsi, [rsp+16] ; second arg, buffer
+        mov rdx, [rsp+8] ; third arg, length
+        syscall
         mov rax, 0
         ret

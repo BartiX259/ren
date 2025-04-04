@@ -18,6 +18,8 @@ pub fn tokenize(input: &String) -> Result<(Vec<Token>, Vec<FilePos>), TokenizeEr
             tokens.push(tok_num(ch, &mut iter)?);
         } else if is_operator(ch) {
             tokens.push(tok_op(ch, &mut iter));
+        } else if ch == '"' {
+            tokens.push(tok_str(ch, &mut iter)?);
         } else if ch.is_whitespace() {
             continue;
         } else {
@@ -31,10 +33,24 @@ pub fn tokenize(input: &String) -> Result<(Vec<Token>, Vec<FilePos>), TokenizeEr
     return Ok((tokens, info));
 }
 
+#[derive(Debug)]
+pub struct InvalidCharacter {
+    pub ch: char,
+    pub pos: FilePos,
+}
+
+#[derive(Debug)]
+pub enum TokenizeError {
+    InvalidCharacter(InvalidCharacter),
+    InvalidNumberCharacter(InvalidCharacter),
+    UnclosedCharacter(InvalidCharacter)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Word { value: String },
     IntLit { value: i64 },
+    StringLit { value: String },
     Op { value: String },
     Let,
     Decl,
@@ -58,7 +74,7 @@ pub enum Token {
     OpenSquare,
     CloseSquare,
     Comma,
-    Dot
+    Dot,
 }
 
 impl Token {
@@ -66,6 +82,7 @@ impl Token {
         match self {
             Token::Word { value } => value.clone(),
             Token::IntLit { value } => value.to_string(),
+            Token::StringLit { value } => format!("\"{}\"", value),
             Token::Op { value } => value.clone(),
             Token::Let => "let".to_string(),
             Token::Decl => "decl".to_string(),
@@ -128,18 +145,6 @@ impl Token {
     }
 }
 
-#[derive(Debug)]
-pub struct InvalidCharacter {
-    pub ch: char,
-    pub pos: FilePos,
-}
-
-#[derive(Debug)]
-pub enum TokenizeError {
-    InvalidCharacter(InvalidCharacter),
-    InvalidNumberCharacter(InvalidCharacter),
-}
-
 /// Builds a word token starting with the given character.
 /// Ensures all characters in the word are alphanumeric.
 fn tok_word(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError> {
@@ -157,7 +162,7 @@ fn tok_word(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeErro
     if let Some(str_tok) = Token::from_string(&word) {
         return Ok(str_tok);
     }
-    return Ok(Token::Word { value: word });
+    Ok(Token::Word { value: word })
 }
 /// Builds a number literal token starting with the given character.
 /// Ensures all characters in the word are digits.
@@ -179,7 +184,7 @@ fn tok_num(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError
             break;
         }
     }
-    return Ok(Token::IntLit { value: word.parse::<i64>().unwrap() });
+    Ok(Token::IntLit { value: word.parse::<i64>().unwrap() })
 }
 
 /// Builds an operator token, supporting single, two and three character operators.
@@ -202,7 +207,29 @@ fn tok_op(start: char, iter: &mut VecIter<char>) -> Token {
         }
     }
 
-    return Token::Op { value: op };
+    Token::Op { value: op }
+}
+
+/// Builds a string literal until `start` appears
+fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError> {
+    let mut str = String::new();
+    let start_pos = iter.prev_index();
+    let mut closed = false;
+    while let Some(next_ch) = iter.next() {
+        if next_ch == start {
+            closed = true;
+            break;
+        }
+        str.push(next_ch);
+    }
+    if !closed {
+        Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
+            ch: start,
+            pos: FilePos { start: start_pos, end: start_pos }
+        }))
+    } else {
+        Ok(Token::StringLit { value: str })
+    }
 }
 
 /// Checks if a character is a valid single-character operator.
