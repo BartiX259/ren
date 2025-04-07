@@ -115,7 +115,7 @@ impl fmt::Debug for Op {
             Op::ReturnNone => write!(f, "return"),
             Op::Salloc { size, res } => write!(f, "{:?} = salloc {}", res, size),
             Op::TakeSalloc { ptr, res } => write!(f, "{:?} take salloc {:?}", res, ptr),
-            Op::ParamSalloc { ptr, size } => write!(f, "param take salloc {:?} (size {})", ptr, size),
+            Op::ParamSalloc { ptr, size } => write!(f, "param salloc {:?} (size {})", ptr, size),
             Op::LoadSymbols(i) => write!(f, "load symbols {}", i),
             Op::UnloadSymbols(i) => write!(f, "unload symbols {}", i),
             Op::NaturalFlow => write!(f, "natural flow"),

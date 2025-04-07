@@ -1,10 +1,9 @@
-fn print_4(a: int, b: str, c: int, d: int) {
-    print(a);
-    print(b);
-    print(c);
-    print(d);
+fn get_big() -> str {
+    let x = "sad";
+    return x;
 }
 
 fn main() {
-    print_4(1, "asd", 3, 4);
+    let x = get_big();
+    print(x);
 }

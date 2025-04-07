@@ -13,7 +13,8 @@ pub fn lower(stmts: Vec<node::Stmt>, ir: &mut HashMap<String, Symbol>) {
 
 struct Lower<'a> {
     ir: &'a mut HashMap<String, Symbol>,
-    cur_salloc: Option<ir::Term>,
+    cur_salloc: Option<(ir::Term, bool)>,
+    ret_salloc: Option<ir::Term>,
     salloc_offset: i64,
     cur_symbols: Vec<Vec<(String, Symbol)>>,
     cur_block: Option<Block>,
@@ -23,13 +24,14 @@ struct Lower<'a> {
     loop_start: Vec<u16>,
     loop_exit: Vec<u16>,
     string_map: HashMap<String, String>,
-    string_id: usize
+    string_id: usize,
 }
 impl<'a> Lower<'a> {
     pub fn new(ir: &'a mut HashMap<String, Symbol>) -> Self {
         Self {
             ir,
             cur_salloc: None,
+            ret_salloc: None,
             salloc_offset: 0,
             cur_symbols: Vec::new(),
             cur_block: None,
@@ -103,28 +105,31 @@ impl<'a> Lower<'a> {
                 );
             }
             node::ExprKind::ArrLit(arr_lit) => {
-                self.temp_count += 1;
                 let ptr;
                 let in_salloc;
+                let stack;
                 let Some(inner) = expr.ty.pointer() else {
                     panic!("Salloc not a pointer");
                 };
                 let size = inner.size();
                 let inner_salloc = inner.salloc();
-                if let Some(p) = &self.cur_salloc {
+                if let Some((p, s)) = &self.cur_salloc {
                     ptr = p.clone();
                     in_salloc = true;
+                    stack = s.clone();
                 } else {
+                    self.temp_count += 1;
                     ptr = ir::Term::Temp(self.temp_count);
-                    self.cur_salloc = Some(ptr.clone());
+                    self.cur_salloc = Some((ptr.clone(), true));
                     self.push_op(ir::Op::Salloc { size: arr_lit.exprs.len() as u32 * size, res: ptr.clone() }, arr_lit.pos_id);
                     in_salloc = false;
+                    stack = true;
                 }
                 for expr in &arr_lit.exprs {
                     self.expr(expr);
                     if !inner_salloc {
                         self.temp_count += 1;
-                        self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack: true }, arr_lit.pos_id);
+                        self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack }, arr_lit.pos_id);
                         self.salloc_offset += size as i64;
                     }
                 }
@@ -136,26 +141,29 @@ impl<'a> Lower<'a> {
                 }
             }
             node::ExprKind::StructLit(lit) => {
-                self.temp_count += 1;
                 let ptr;
                 let in_salloc;
+                let stack;
                 let Some(Symbol::Struct { ty }) = self.ir.get(&lit.name.str) else {
                     panic!("Missing struct symbol");
                 };
-                if let Some(p) = &self.cur_salloc {
+                if let Some((p, s)) = &self.cur_salloc {
                     ptr = p.clone();
                     in_salloc = true;
+                    stack = s.clone();
                 } else {
+                    self.temp_count += 1;
                     ptr = ir::Term::Temp(self.temp_count);
-                    self.cur_salloc = Some(ptr.clone());
+                    self.cur_salloc = Some((ptr.clone(), false));
                     self.push_op(ir::Op::Salloc { size: ty.size(), res: ptr.clone() }, lit.name.pos_id);
                     in_salloc = false;
+                    stack = false;
                 }
                 for expr in &lit.field_exprs {
                     self.expr(expr);
                     if !expr.ty.salloc() {
                         self.temp_count += 1;
-                        self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack: false }, lit.name.pos_id);
+                        self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack }, lit.name.pos_id);
                         self.salloc_offset += expr.ty.size() as i64;
                     }
                 }
@@ -167,24 +175,27 @@ impl<'a> Lower<'a> {
                 }
             }
             node::ExprKind::StringLit(lit) => {
-                self.temp_count += 1;
                 let ptr;
                 let in_salloc;
-                if let Some(p) = &self.cur_salloc {
+                let stack;
+                if let Some((p, s)) = &self.cur_salloc {
                     ptr = p.clone();
                     in_salloc = true;
+                    stack = s.clone();
                 } else {
+                    self.temp_count += 1;
                     ptr = ir::Term::Temp(self.temp_count);
-                    self.cur_salloc = Some(ptr.clone());
+                    self.cur_salloc = Some((ptr.clone(), true));
                     self.push_op(ir::Op::Salloc { size: types::Type::String.size(), res: ptr.clone() }, expr.span.end);
                     in_salloc = false;
+                    stack = true;
                 }
                 self.temp_count += 1;
-                self.push_op(ir::Op::DerefAssign { term: ir::Term::IntLit(lit.chars().count() as i64), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack: true }, expr.span.end);
+                self.push_op(ir::Op::DerefAssign { term: ir::Term::IntLit(lit.chars().count() as i64), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack }, expr.span.end);
                 self.salloc_offset += 8;
                 if let Some(sym) = self.string_map.get(lit) {
                     self.push_op(
-                        ir::Op::DerefAssign { term: ir::Term::Symbol(sym.clone()), op: "=".to_string(), ptr: ir::Term::Temp(self.temp_count - 1), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack: true }, expr.span.end
+                        ir::Op::DerefAssign { term: ir::Term::Symbol(sym.clone()), op: "=".to_string(), ptr: ir::Term::Temp(self.temp_count - 1), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack }, expr.span.end
                     );
                 } else {
                     self.string_id += 1;
@@ -192,7 +203,7 @@ impl<'a> Lower<'a> {
                     self.string_map.insert(lit.to_string(), new_sym.clone());
                     self.ir.insert(new_sym.clone(), ir::Symbol::StringLit { str: lit.to_string() });
                     self.push_op(
-                        ir::Op::DerefAssign { term: ir::Term::Symbol(new_sym), op: "=".to_string(), ptr: ir::Term::Temp(self.temp_count - 1), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack: true }, expr.span.end
+                        ir::Op::DerefAssign { term: ir::Term::Symbol(new_sym), op: "=".to_string(), ptr: ir::Term::Temp(self.temp_count - 1), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack }, expr.span.end
                     );
                 }
                 self.temp_count += 1;
@@ -237,13 +248,16 @@ impl<'a> Lower<'a> {
 
     fn r#fn(&mut self, decl: &node::Fn) {
         self.cur_block = Some(Block::new());
-        self.ir.get(&decl.name.str).and_then(|sym| match sym {
-            Symbol::Func { ty: _, block: _, symbols } => {
+        if let Some(sym) = self.ir.get(&decl.name.str).cloned() {
+            if let Symbol::Func { ty, block: _, symbols } = sym  {
+                if ty.salloc() {
+                    self.temp_count += 1;
+                    self.ret_salloc = Some(ir::Term::Temp(self.temp_count));
+                    self.push_op(ir::Op::Arg{ term: ir::Term::Temp(self.temp_count), size: 8}, decl.name.pos_id);
+                }
                 symbols.clone_into(&mut self.cur_symbols);
-                Some(())
             }
-            _ => None,
-        });
+        }
         self.scope_id = 0;
         self.load_symbols(0);
         for s in decl.arg_names.iter() {
@@ -256,6 +270,7 @@ impl<'a> Lower<'a> {
         self.scope_id += 1;
         self.scope(&decl.scope);
         self.unload_symbols(0);
+        self.ret_salloc = None;
 
         if let Some(Symbol::Func { ty: _, block, symbols: _, }) = self.ir.get_mut(&decl.name.str) {
             *block = self.cur_block.clone().unwrap();
@@ -276,8 +291,15 @@ impl<'a> Lower<'a> {
 
     fn ret(&mut self, ret: &node::Ret) {
         if let Some(expr) = &ret.expr {
-            self.expr(expr);
-            self.push_op(ir::Op::Return(ir::Term::Temp(self.temp_count)), ret.pos_id);
+            if let Some(r) = self.ret_salloc.clone() {
+                self.cur_salloc = Some((r.clone(), false));
+                self.expr(expr);
+                self.push_op(ir::Op::ReturnNone, ret.pos_id);
+                self.cur_salloc = None;
+            } else {
+                self.expr(expr);
+                self.push_op(ir::Op::Return(ir::Term::Temp(self.temp_count)), ret.pos_id);
+            }
         } else {
             self.push_op(ir::Op::ReturnNone, ret.pos_id);
         }
@@ -391,18 +413,44 @@ impl<'a> Lower<'a> {
     }
 
     fn call(&mut self, call: &node::Call) {
+        let mut res = None;
+        if let Some(Symbol::Func { ty, block: _, symbols: _ }) = self.ir.get(&call.name.str) {
+            if ty.salloc() { // Pass pointer as first argument
+                self.temp_count += 1;
+                let r = ir::Term::Symbol(format!(".s{}", self.temp_count));
+                self.push_op(ir::Op::Salloc { size: ty.size(), res: ir::Term::Temp(self.temp_count) }, call.name.pos_id);
+                self.push_op(ir::Op::TakeSalloc { ptr: ir::Term::Temp(self.temp_count), res: r.clone() }, call.name.pos_id);
+                self.temp_count += 1;
+                self.push_op(ir::Op::Unary { term: r.clone(), op: "&".to_string(), res: ir::Term::Temp(self.temp_count) }, call.name.pos_id);
+                self.push_op(ir::Op::Param { term: ir::Term::Temp(self.temp_count), size: 8, stack_offset: None }, call.name.pos_id);
+                res = Some(r);
+            }
+        }
         for arg in call.args.iter().rev() {
             self.expr(arg);
             self.push_op(ir::Op::Param { term: ir::Term::Temp(self.temp_count), size: arg.ty.size(), stack_offset: None }, call.name.pos_id);
         }
-        self.temp_count += 1;
-        self.push_op(
-            ir::Op::Call {
-                func: call.name.str.clone(),
-                res: Some(ir::Term::Temp(self.temp_count)),
-            },
-            call.name.pos_id,
-        );
+        if let Some(r) = res {
+            self.temp_count += 1;
+            self.push_op(
+                ir::Op::Call {
+                    func: call.name.str.clone(),
+                    res: Some(ir::Term::Temp(self.temp_count)),
+                },
+                call.name.pos_id,
+            );
+            self.temp_count += 1;
+            self.push_op(ir::Op::Tac { lhs: r, rhs: None, op: None, res: Some(ir::Term::Temp(self.temp_count)) }, call.name.pos_id);
+        } else {
+            self.temp_count += 1;
+            self.push_op(
+                ir::Op::Call {
+                    func: call.name.str.clone(),
+                    res: Some(ir::Term::Temp(self.temp_count)),
+                },
+                call.name.pos_id,
+            );
+        }
     }
 
     fn r#macro(&mut self, r#macro: &node::Macro) {

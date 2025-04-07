@@ -145,7 +145,9 @@ impl<'a> Opt<'a> {
                 Op::DerefAssign { term, op, ptr, offset, res, stack } => {
                     unused_table.remove(&term);
                     unused_table.remove(&ptr);
-                    unused_table.insert(res.clone().unwrap());
+                    if let Some(r) = &res {
+                        unused_table.insert(r.clone());
+                    }
                     new_block.locs.push(last_loc);
                     let mut new_term = term.clone();
                     let mut new_ptr = ptr.clone();
@@ -317,7 +319,7 @@ impl<'a> Opt<'a> {
             match op {
                 Op::Tac { lhs, rhs, op, res } => {
                     let mut r = res.clone();
-                    if unused_table.contains(&res.clone().unwrap()) {
+                    if res != None && unused_table.contains(&res.clone().unwrap()) {
                         r = None;
                     }
                     if let Some(o) = &op {
@@ -330,7 +332,7 @@ impl<'a> Opt<'a> {
                 }
                 Op::DerefAssign { term, op, ptr, offset, res, stack } => {
                     let mut r = res.clone();
-                    if unused_table.contains(&res.clone().unwrap()) {
+                    if res != None && unused_table.contains(&res.clone().unwrap()) {
                         r = None;
                     }
                     new_block_2.ops.push(Op::DerefAssign { term, op, ptr, offset, res: r, stack }) ;
@@ -338,7 +340,7 @@ impl<'a> Opt<'a> {
                 }
                 Op::Call { func, res } => {
                     let mut r = res.clone();
-                    if unused_table.contains(&res.clone().unwrap()) {
+                    if res != None && unused_table.contains(&res.clone().unwrap()) {
                         r = None;
                     }
                     new_block_2.ops.push(Op::Call { func, res: r }) ;
