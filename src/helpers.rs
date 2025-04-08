@@ -106,4 +106,7 @@ impl IndentedBuf {
     pub fn get_output(self) -> String {
         self.buf
     }
+    pub fn get_output_ref(&self) -> &String {
+        &self.buf
+    }
 }

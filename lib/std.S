@@ -56,8 +56,7 @@ print.int:
         mov rax, rsp    ; t21 = macro 0
         push rax        ; buf = t21
         push rax        ; param buf
-        mov rbx, [rsp + 45]
-        push rbx        ; param x
+        push rdi        ; param x
         call int2str
         add rsp, 16     ; t1 = call int2str
         ; buf pointer at [rsp]

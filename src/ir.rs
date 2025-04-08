@@ -13,8 +13,10 @@ pub enum Symbol {
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub enum Term {
     Temp(usize),
+    Stack(usize),
+    Pointer(usize),
+    Data(String),
     IntLit(i64),
-    Symbol(String),
 }
 
 #[derive(Debug, Clone)]
@@ -31,29 +33,26 @@ pub struct Block {
 
 #[derive(Clone)]
 pub enum Op {
-    Tac { lhs: Term, rhs: Option<Term>, op: Option<String>, res: Option<Term> },
-    Unary { term: Term, op: String, res: Term },
-    DerefAssign { term: Term, op: String, ptr: Term, offset: i64, res: Option<Term>, stack: bool },
-    DerefRead { ptr: Term, offset: i64, res: Term, stack: bool },
-    Let {term: Term, res: Term },
-    Decl {term: Term, size: u32 },
-    Arg {term: Term, size: u32 },
-    Param { term: Term, size: u32, stack_offset: Option<u32> },
-    Call { func: String, res: Option<Term> },
-    Label(u16),
-    Jump(u16),
-    CondJump { cond: Term, label: u16 },
-    BinJump { lhs: Term, rhs: Term, op: String, label: u16 },
-    Return(Term),
-    ReturnNone,
-    Salloc { size: u32, res: Term },
-    TakeSalloc { ptr: Term, res: Term },
-    ParamSalloc { ptr: Term, size: u32 },
-    LoadSymbols(usize),
-    UnloadSymbols(usize),
+    BinOp { res: Option<Term>, lhs: Term, op: String, rhs: Term },
+    UnOp { res: Term, op: String, term: Term },
+    Store { res: Option<Term>, ptr: Term, offset: i64, op: String, term: Term },
+    Read { res: Term, ptr: Term, offset: i64 },
+    Copy { from: Term, to: Term, size: u32 },
+    Let { res: Term, term: Term },
+    Decl { term: Term, size: u32 },
+    Arg { term: Term },
+    Param { term: Term },
+    Call { res: Option<Term>, func: String },
+    BeginCall,
+    EndCall,
+    Label { label: u16 },
+    Jump { label: u16 },
+    CondJump { label: u16, cond: Term },
+    BinJump { label: u16, lhs: Term, op: String, rhs: Term },
+    Return { term: Option<Term> },
     NaturalFlow,
-    LoopStart,
-    LoopEnd,
+    Save,
+    Restore,
 }
 
 impl Block {
@@ -66,64 +65,60 @@ impl fmt::Debug for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Term::Temp(id) => write!(f, "t{}", id),
+            Term::Stack(id) => write!(f, "s{}", id),
+            Term::Pointer(id) => write!(f, "p{}", id),
+            Term::Data(s) => write!(f, "{}", s),
             Term::IntLit(value) => write!(f, "{}", value),
-            Term::Symbol(name) => write!(f, "{}", name),
         }
     }
 }
-fn opt_res(res: &Option<Term>) -> String {
+impl Term {
+    pub fn is_stack(&self) -> bool {
+        match self {
+            Term::Pointer(_) | Term::Stack(_) => true,
+            _ => false
+        }
+    }
+}
+
+fn fmt_opt(res: &Option<Term>) -> String {
     res.clone().map(|r| format!("{:?} = ", r)).unwrap_or("".to_string())
+}
+fn fmt_ptr(ptr: &Term, offset: &i64) -> String {
+    let o = if *offset == 0 { String::new() }
+    else if *offset > 0 { format!(" + {}", offset) }
+    else { format!(" - {}", -offset)};
+    let s = if let Term::Stack(_) = ptr { "&" } else { "" };
+    format!("{}{:?}{}", s, ptr, o)
 }
 
 impl fmt::Debug for Op {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Op::Tac { lhs, rhs, op, res } => {
-                if let Some(r) = res {
-                    write!(f, "{:?} = ", r)?;
-                }
-                write!(f, "{:?}", lhs)?;
-                if let Some(o) = op {
-                    write!(f, " {} ", o)?;
-                }
-                if let Some(r) = rhs {
-                    write!(f, "{:?}", r)?;
-                }
-                Ok(())
-            }
-            Op::Unary { term, op, res } => write!(f, "{:?} = {}{:?}", res, op, term),
-            Op::DerefAssign { term, op, ptr, offset, res, stack } =>  write!(f, "{}*({}{:?}+{}) {} {:?}",
-            opt_res(res), if *stack { "&" } else { "" }, ptr, offset, op, term),
-            Op::DerefRead { ptr, offset, res, stack } => write!(f, "{:?} = *({}{:?}+{})",
-            res , if *stack { "&" } else { "" }, ptr, offset),
-            Op::Let { term, res } => write!(f, "let {:?} = {:?}", res, term),
+            Op::BinOp { res, lhs, op, rhs } => write!(f, "{}{:?} {} {:?}", fmt_opt(res), lhs, op, rhs),
+            Op::UnOp { res, op, term } => write!(f, "{:?} = {}{:?}", res, op, term),
+            Op::Store { res, ptr, offset, op: _, term } => write!(f, "{}*({}) = {:?}", fmt_opt(res), fmt_ptr(ptr, offset), term),
+            Op::Read { res, ptr, offset } => write!(f, "{:?} = *({})", res, fmt_ptr(ptr, offset)),
+            Op::Copy { from, to, size } => write!(f, "copy {:?} into {:?} (size {})", from, to, size),
+            Op::Let { res, term } => write!(f, "let {:?} = {:?}", res, term),
             Op::Decl { term, size } => write!(f, "decl {:?} (size {})", term, size),
-            Op::Arg { term, size } => write!(f, "arg {:?} (size {})", term, size),
-            Op::Param { term, size, stack_offset } => {
-                if let Some(offset) = stack_offset {
-                    write!(f, "stack param &{:?}+{} (size {})", term, offset, size)
-                }else {
-                    write!(f, "param {:?} (size {})", term, size)
-                }
-            }
-            Op::Call { func, res } => write!(f, "{}call {}", opt_res(res), func),
-            Op::Label(label) => write!(f, "L{}:", label),
-            Op::Jump(label) => write!(f, "jump L{}", label),
-            Op::CondJump { cond, label } => write!(f, "if {:?} jump L{}", cond, label),
-            Op::BinJump { lhs, rhs, op, label } => write!(f, "if {:?} {} {:?} jump L{}", lhs, op, rhs, label),
-            Op::Return(value) => write!(f, "return {:?}", value),
-            Op::ReturnNone => write!(f, "return"),
-            Op::Salloc { size, res } => write!(f, "{:?} = salloc {}", res, size),
-            Op::TakeSalloc { ptr, res } => write!(f, "{:?} take salloc {:?}", res, ptr),
-            Op::ParamSalloc { ptr, size } => write!(f, "param salloc {:?} (size {})", ptr, size),
-            Op::LoadSymbols(i) => write!(f, "load symbols {}", i),
-            Op::UnloadSymbols(i) => write!(f, "unload symbols {}", i),
-            Op::NaturalFlow => write!(f, "natural flow"),
-            Op::LoopStart => write!(f, "loop start"),
-            Op::LoopEnd => write!(f, "loop end"),
+            Op::Arg { term } => write!(f, "arg {:?}", term),
+            Op::Param { term } => write!(f, "param {:?}", term),
+            Op::BeginCall => write!(f, "begin call"),
+            Op::EndCall => write!(f, "end call"),
+            Op::Call { res, func } => write!(f, "{}call {:?}", fmt_opt(res), func),
+            Op::Label { label } => write!(f, "L{}", label),
+            Op::Jump { label } => write!(f, "jump L{}", label),
+            Op::CondJump { label, cond } => write!(f, "if {:?} jump L{}", cond, label),
+            Op::BinJump { label, lhs, op, rhs } => write!(f, "if {:?} {} {:?} jump L{}", lhs, op, rhs, label),
+            Op::Return { term } => write!(f, "return {}", fmt_opt(term)),
+            Op::NaturalFlow => write!(f, "→"),
+            Op::Save => write!(f, "save"),
+            Op::Restore => write!(f, "restore"),
         }
     }
 }
+
 
 impl fmt::Debug for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

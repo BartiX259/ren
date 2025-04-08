@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ir::{self, Block, Symbol};
+use crate::ir::{Block, Symbol, Term, Op, OpLoc};
 use crate::{node, types};
 
 /// Transform the ast into the IR
@@ -13,12 +13,16 @@ pub fn lower(stmts: Vec<node::Stmt>, ir: &mut HashMap<String, Symbol>) {
 
 struct Lower<'a> {
     ir: &'a mut HashMap<String, Symbol>,
-    cur_salloc: Option<(ir::Term, bool)>,
-    ret_salloc: Option<ir::Term>,
+    cur_salloc: Option<(Term, bool)>,
+    ret_salloc: Option<Term>,
     salloc_offset: i64,
     cur_symbols: Vec<Vec<(String, Symbol)>>,
     cur_block: Option<Block>,
+    var_map: HashMap<String, Term>,
     temp_count: usize,
+    stack_count: usize,
+    pointer_count: usize,
+    stack_return: Option<Term>,
     label_count: u16,
     scope_id: usize,
     loop_start: Vec<u16>,
@@ -35,19 +39,23 @@ impl<'a> Lower<'a> {
             salloc_offset: 0,
             cur_symbols: Vec::new(),
             cur_block: None,
+            var_map: HashMap::new(),
             temp_count: 0,
+            stack_count: 0,
+            pointer_count: 0,
+            stack_return: None,
             label_count: 0,
             scope_id: 0,
             loop_start: Vec::new(),
             loop_exit: Vec::new(),
             string_map: HashMap::new(),
-            string_id: 0
+            string_id: 0,
         }
     }
-    fn push_op(&mut self, op: ir::Op, pos_id: usize) {
+    fn push_op(&mut self, op: Op, pos_id: usize) {
         if let Some(ref mut block) = self.cur_block {
             block.ops.push(op);
-            block.locs.push(ir::OpLoc { start_id: pos_id, end_id: pos_id });
+            block.locs.push(OpLoc { start_id: pos_id, end_id: pos_id });
         } else {
             panic!("No cur_block!");
         }
@@ -60,7 +68,6 @@ impl<'a> Lower<'a> {
         for s in self.cur_symbols.get(id).unwrap().iter() {
             self.ir.insert(s.0.clone(), s.1.clone());
         }
-        self.push_op(ir::Op::LoadSymbols(id), 0);
     }
 
     fn unload_symbols(&mut self, id: usize) {
@@ -70,12 +77,11 @@ impl<'a> Lower<'a> {
         for s in self.cur_symbols.get(id).unwrap().iter() {
             self.ir.remove(&s.0);
         }
-        self.push_op(ir::Op::UnloadSymbols(id), 0);
     }
 
     fn stmt(&mut self, stmt: &node::Stmt) {
         match stmt {
-            node::Stmt::Expr(expr) => self.expr(expr),
+            node::Stmt::Expr(expr) => { self.expr(expr); }
             node::Stmt::Let(decl) => self.r#let(decl),
             node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
@@ -85,29 +91,18 @@ impl<'a> Lower<'a> {
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
             node::Stmt::While(r#while) => self.r#while(r#while),
             node::Stmt::For(r#for) => self.r#for(r#for),
-            node::Stmt::Break(pos_id) => self.push_op(ir::Op::Jump(*self.loop_exit.last().unwrap()), *pos_id),
-            node::Stmt::Continue(pos_id) => self.push_op(ir::Op::Jump(*self.loop_start.last().unwrap()), *pos_id),
+            node::Stmt::Break(pos_id) => self.push_op(Op::Jump { label: *self.loop_exit.last().unwrap() }, *pos_id),
+            node::Stmt::Continue(pos_id) => self.push_op(Op::Jump { label: *self.loop_start.last().unwrap() }, *pos_id),
         }
     }
 
-    fn expr(&mut self, expr: &node::Expr) {
+    fn expr(&mut self, expr: &node::Expr) -> Term {
         match &expr.kind {
             node::ExprKind::IntLit(val) => {
-                self.temp_count += 1;
-                self.push_op(
-                    ir::Op::Tac {
-                        lhs: ir::Term::IntLit(*val),
-                        rhs: None,
-                        op: None,
-                        res: Some(ir::Term::Temp(self.temp_count)),
-                    },
-                    expr.span.end,
-                );
+                Term::IntLit(*val)
             }
             node::ExprKind::ArrLit(arr_lit) => {
                 let ptr;
-                let in_salloc;
-                let stack;
                 let Some(inner) = expr.ty.pointer() else {
                     panic!("Salloc not a pointer");
                 };
@@ -115,145 +110,121 @@ impl<'a> Lower<'a> {
                 let inner_salloc = inner.salloc();
                 if let Some((p, s)) = &self.cur_salloc {
                     ptr = p.clone();
-                    in_salloc = true;
-                    stack = s.clone();
                 } else {
-                    self.temp_count += 1;
-                    ptr = ir::Term::Temp(self.temp_count);
+                    self.stack_count += 1;
+                    ptr = Term::Stack(self.stack_count);
                     self.cur_salloc = Some((ptr.clone(), true));
-                    self.push_op(ir::Op::Salloc { size: arr_lit.exprs.len() as u32 * size, res: ptr.clone() }, arr_lit.pos_id);
-                    in_salloc = false;
-                    stack = true;
+                    self.push_op(Op::Decl { term: ptr.clone(), size: arr_lit.exprs.len() as u32 * size }, arr_lit.pos_id);
                 }
                 for expr in &arr_lit.exprs {
-                    self.expr(expr);
+                    let r = self.expr(expr);
                     if !inner_salloc {
                         self.temp_count += 1;
-                        self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack }, arr_lit.pos_id);
+                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r }, arr_lit.pos_id);
                         self.salloc_offset += size as i64;
                     }
                 }
-                self.temp_count += 1;
-                if !in_salloc {
-                    self.push_op(ir::Op::TakeSalloc { ptr, res: ir::Term::Temp(self.temp_count) }, arr_lit.pos_id);
-                    self.cur_salloc = None;
-                    self.salloc_offset = 0;
-                }
+                ptr
             }
             node::ExprKind::StructLit(lit) => {
                 let ptr;
-                let in_salloc;
-                let stack;
                 let Some(Symbol::Struct { ty }) = self.ir.get(&lit.name.str) else {
                     panic!("Missing struct symbol");
                 };
                 if let Some((p, s)) = &self.cur_salloc {
                     ptr = p.clone();
-                    in_salloc = true;
-                    stack = s.clone();
                 } else {
-                    self.temp_count += 1;
-                    ptr = ir::Term::Temp(self.temp_count);
-                    self.cur_salloc = Some((ptr.clone(), false));
-                    self.push_op(ir::Op::Salloc { size: ty.size(), res: ptr.clone() }, lit.name.pos_id);
-                    in_salloc = false;
-                    stack = false;
+                    self.stack_count += 1;
+                    ptr = Term::Stack(self.stack_count);
+                    self.cur_salloc = Some((ptr.clone(), true));
+                    self.push_op(Op::Decl { term: ptr.clone(), size: ty.size() }, lit.name.pos_id);
                 }
                 for expr in &lit.field_exprs {
-                    self.expr(expr);
+                    let r = self.expr(expr);
                     if !expr.ty.salloc() {
                         self.temp_count += 1;
-                        self.push_op(ir::Op::DerefAssign { term: ir::Term::Temp(self.temp_count - 1), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack }, lit.name.pos_id);
+                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r }, lit.name.pos_id);
                         self.salloc_offset += expr.ty.size() as i64;
                     }
                 }
-                self.temp_count += 1;
-                if !in_salloc {
-                    self.push_op(ir::Op::TakeSalloc { ptr, res: ir::Term::Temp(self.temp_count) }, lit.name.pos_id);
-                    self.cur_salloc = None;
-                    self.salloc_offset = 0;
-                }
+                ptr
             }
             node::ExprKind::StringLit(lit) => {
                 let ptr;
-                let in_salloc;
-                let stack;
                 if let Some((p, s)) = &self.cur_salloc {
                     ptr = p.clone();
-                    in_salloc = true;
-                    stack = s.clone();
                 } else {
-                    self.temp_count += 1;
-                    ptr = ir::Term::Temp(self.temp_count);
+                    self.stack_count += 1;
+                    ptr = Term::Stack(self.stack_count);
                     self.cur_salloc = Some((ptr.clone(), true));
-                    self.push_op(ir::Op::Salloc { size: types::Type::String.size(), res: ptr.clone() }, expr.span.end);
-                    in_salloc = false;
-                    stack = true;
+                    self.push_op(Op::Decl { term: ptr.clone(), size: types::Type::String.size()}, expr.span.end);
                 }
                 self.temp_count += 1;
-                self.push_op(ir::Op::DerefAssign { term: ir::Term::IntLit(lit.chars().count() as i64), op: "=".to_string(), ptr: ptr.clone(), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack }, expr.span.end);
+                self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::IntLit(lit.chars().count() as i64) }, expr.span.end);
                 self.salloc_offset += 8;
                 if let Some(sym) = self.string_map.get(lit) {
                     self.push_op(
-                        ir::Op::DerefAssign { term: ir::Term::Symbol(sym.clone()), op: "=".to_string(), ptr: ir::Term::Temp(self.temp_count - 1), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack }, expr.span.end
+                        Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(sym.clone()) }, expr.span.end
                     );
                 } else {
                     self.string_id += 1;
                     let new_sym = format!("s.{}", self.string_id);
                     self.string_map.insert(lit.to_string(), new_sym.clone());
-                    self.ir.insert(new_sym.clone(), ir::Symbol::StringLit { str: lit.to_string() });
+                    self.ir.insert(new_sym.clone(), Symbol::StringLit { str: lit.to_string() });
                     self.push_op(
-                        ir::Op::DerefAssign { term: ir::Term::Symbol(new_sym), op: "=".to_string(), ptr: ir::Term::Temp(self.temp_count - 1), offset: self.salloc_offset, res: Some(ir::Term::Temp(self.temp_count)), stack }, expr.span.end
+                        Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(new_sym) }, expr.span.end
                     );
                 }
-                self.temp_count += 1;
-                if !in_salloc {
-                    self.push_op(ir::Op::TakeSalloc { ptr, res: ir::Term::Temp(self.temp_count) }, expr.span.end);
-                    self.cur_salloc = None;
-                    self.salloc_offset = 0;
-                }
+                ptr
             }
             node::ExprKind::Variable(pos_str) => {
-                self.temp_count += 1;
-                self.push_op(
-                    ir::Op::Tac {
-                        lhs: ir::Term::Symbol(pos_str.str.clone()),
-                        rhs: None,
-                        op: None,
-                        res: Some(ir::Term::Temp(self.temp_count)),
-                    },
-                    pos_str.pos_id,
-                );
+                self.var_map.get(&pos_str.str).unwrap().clone()
             }
             node::ExprKind::Call(call) => self.call(call),
-            node::ExprKind::Macro(r#macro) => self.r#macro(r#macro),
+            node::ExprKind::Macro(r#macro) => panic!("no macros for now"),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr),
         }
     }
 
     fn r#let(&mut self, decl: &node::Let) {
-        self.expr(&decl.expr);
-        self.push_op(
-            ir::Op::Let {
-                term: ir::Term::Temp(self.temp_count),
-                res: ir::Term::Symbol(decl.name.str.clone()),
-            },
-            decl.name.pos_id,
-        );
+        let mut r = self.expr(&decl.expr);
+        if let Some(ret) = &self.stack_return {
+            r = ret.clone();
+        }
+        if r.is_stack() {
+            self.var_map.insert(decl.name.str.clone(), r);
+        } else {
+            self.stack_count += 1;
+            let id = self.stack_count;
+            self.var_map.insert(decl.name.str.clone(), Term::Stack(id));
+            self.push_op(
+                Op::Let {
+                    term: r,
+                    res: Term::Stack(id),
+                },
+                decl.name.pos_id,
+            );
+        }
     }
     fn r#decl(&mut self, decl: &node::Decl) {
-        self.push_op(ir::Op::Decl { term: ir::Term::Symbol(decl.name.str.clone()), size: decl.ty.size() }, decl.name.pos_id);
+        self.stack_count += 1;
+        let id = self.stack_count;
+        self.var_map.insert(decl.name.str.clone(), Term::Stack(id));
+        self.push_op(Op::Decl { term: Term::Stack(id), size: decl.ty.size() }, decl.name.pos_id);
     }
 
     fn r#fn(&mut self, decl: &node::Fn) {
         self.cur_block = Some(Block::new());
+        // self.temp_count = 0;
+        // self.stack_count = 0;
+        self.var_map.clear();
         if let Some(sym) = self.ir.get(&decl.name.str).cloned() {
             if let Symbol::Func { ty, block: _, symbols } = sym  {
                 if ty.salloc() {
-                    self.temp_count += 1;
-                    self.ret_salloc = Some(ir::Term::Temp(self.temp_count));
-                    self.push_op(ir::Op::Arg{ term: ir::Term::Temp(self.temp_count), size: 8}, decl.name.pos_id);
+                    self.pointer_count += 1;
+                    self.ret_salloc = Some(Term::Pointer(self.pointer_count));
+                    self.push_op(Op::Arg { term: Term::Pointer(self.pointer_count) }, decl.name.pos_id);
                 }
                 symbols.clone_into(&mut self.cur_symbols);
             }
@@ -265,13 +236,24 @@ impl<'a> Lower<'a> {
                 println!("{:?}", self.ir.keys());
                 panic!("Argument not a var ({}).", s.str);
             };
-            self.push_op(ir::Op::Arg{ term: ir::Term::Symbol(s.str.clone()), size: ty.size()}, s.pos_id);
+            if ty.salloc() {
+                self.pointer_count += 1;
+                let id = self.pointer_count;
+                self.var_map.insert(s.str.clone(), Term::Pointer(id));
+                self.push_op(Op::Arg { term: Term::Pointer(id) }, s.pos_id);
+            } else {
+                self.stack_count += 1;
+                let id = self.stack_count;
+                self.var_map.insert(s.str.clone(), Term::Stack(id));
+                self.push_op(Op::Arg { term: Term::Stack(id) }, s.pos_id);
+            }
         }
         self.scope_id += 1;
         self.scope(&decl.scope);
         self.unload_symbols(0);
         self.ret_salloc = None;
-
+        println!("VAR MAP {}", decl.name.str);
+        println!("{:?}", self.var_map);
         if let Some(Symbol::Func { ty: _, block, symbols: _, }) = self.ir.get_mut(&decl.name.str) {
             *block = self.cur_block.clone().unwrap();
         } else {
@@ -293,15 +275,23 @@ impl<'a> Lower<'a> {
         if let Some(expr) = &ret.expr {
             if let Some(r) = self.ret_salloc.clone() {
                 self.cur_salloc = Some((r.clone(), false));
-                self.expr(expr);
-                self.push_op(ir::Op::ReturnNone, ret.pos_id);
+                let mut from = self.expr(expr);
+                if let Some(ret) = &self.stack_return {
+                    from = ret.clone();
+                }
+                if from.is_stack() {
+                    if from != r {
+                        self.push_op(Op::Copy { from, to: r.clone(), size: ret.expr.as_ref().unwrap().ty.size() }, ret.pos_id);
+                    }
+                }
+                self.push_op(Op::Return { term: Some(r) }, ret.pos_id);
                 self.cur_salloc = None;
             } else {
-                self.expr(expr);
-                self.push_op(ir::Op::Return(ir::Term::Temp(self.temp_count)), ret.pos_id);
+                let r = self.expr(expr);
+                self.push_op(Op::Return { term: Some(r) }, ret.pos_id);
             }
         } else {
-            self.push_op(ir::Op::ReturnNone, ret.pos_id);
+            self.push_op(Op::Return { term: None }, ret.pos_id);
         }
     }
 
@@ -317,150 +307,205 @@ impl<'a> Lower<'a> {
         let mut has_else = false;
         for i in if_chain.iter() {
             if let Some(e) = &i.expr {
-                self.expr(e);
+                let r = self.expr(e);
                 self.push_op(
-                    ir::Op::CondJump {
-                        cond: ir::Term::Temp(self.temp_count),
+                    Op::CondJump {
+                        cond: r,
                         label: self.label_count,
                     },
                     i.pos_id,
                 );
             } else {
-                self.push_op(ir::Op::Jump(self.label_count), i.pos_id);
+                self.push_op(Op::Jump { label: self.label_count }, i.pos_id);
                 has_else = true;
             }
             self.label_count += 1;
         }
         let end_label = self.label_count;
         if !has_else {
-            self.push_op(ir::Op::Jump(end_label), r#if.pos_id);
+            self.push_op(Op::Jump { label: end_label }, r#if.pos_id);
         }
         let mut cur_label = start_label;
         for i in if_chain.iter() {
-            self.push_op(ir::Op::Label(cur_label), i.pos_id);
+            self.push_op(Op::Label { label: cur_label }, i.pos_id);
             self.scope(&i.scope);
             cur_label += 1;
             if cur_label != end_label - 1 {
-                self.push_op(ir::Op::Jump(end_label), i.pos_id);
+                self.push_op(Op::Jump { label: end_label }, i.pos_id);
             }
         }
-        self.push_op(ir::Op::Label(end_label), r#if.pos_id);
+        self.push_op(Op::Label { label: end_label }, r#if.pos_id);
     }
 
-    fn bin_expr(&mut self, bin: &node::BinExpr) {
+    fn bin_expr(&mut self, bin: &node::BinExpr) -> Term {
         if let node::ExprKind::UnExpr(u) = &bin.lhs.kind {
             if u.op.str == "*" && bin.is_assign() {
-                self.expr(&bin.rhs);
-                let term = ir::Term::Temp(self.temp_count);
-                self.expr(&u.expr);
-                let ptr = ir::Term::Temp(self.temp_count);
+                let term = self.expr(&bin.rhs);
+                let ptr = self.expr(&u.expr);
                 self.temp_count += 1;
                 self.push_op(
-                    ir::Op::DerefAssign {
-                        term,
-                        op: bin.op.str.clone(),
+                    Op::Store {
+                        res: Some(Term::Temp(self.temp_count)),
                         ptr,
                         offset: 0,
-                        res: Some(ir::Term::Temp(self.temp_count)),
-                        stack: false
+                        op: bin.op.str.clone(),
+                        term
                     },
                     u.op.pos_id,
                 );
-                return;
+                return Term::Temp(self.temp_count);
             }
         }
-        self.expr(&bin.lhs);
-        let lhs = ir::Term::Temp(self.temp_count);
-        self.expr(&bin.rhs);
+        let lhs = self.expr(&bin.lhs);
+        let rhs = self.expr(&bin.rhs);
         self.temp_count += 1;
         if bin.is_assign() {
-            self.push_op(
-                ir::Op::DerefAssign { 
-                    term: ir::Term::Temp(self.temp_count - 1),
-                    op: bin.op.str.clone(),
-                    ptr: lhs,
-                    offset: 0,
-                    res: Some(ir::Term::Temp(self.temp_count)),
-                    stack: true
-                }, 
-                bin.op.pos_id
-            );
+            let is_stack = if let Term::Stack(_) = lhs { true } else { false };
+            if bin.lhs.ty.salloc() && is_stack {
+                if lhs != rhs {
+                    self.push_op(
+                        Op::Copy { 
+                            from: rhs,
+                            to: lhs,
+                            size: bin.lhs.ty.size()
+                        },
+                        bin.op.pos_id
+                    );
+                }
+            } else {
+                self.push_op(
+                    Op::Store { 
+                        res: Some(Term::Temp(self.temp_count)),
+                        ptr: lhs,
+                        offset: 0,
+                        op: bin.op.str.clone(),
+                        term: Term::Temp(self.temp_count - 1)
+                    },
+                    bin.op.pos_id
+                );
+            }
         } else {
-            self.push_op(
-                ir::Op::Tac {
-                    lhs,
-                    rhs: Some(ir::Term::Temp(self.temp_count - 1)),
-                    op: Some(bin.op.str.clone()),
-                    res: Some(ir::Term::Temp(self.temp_count)),
-                },
-                bin.op.pos_id,
-            );
+            let is_stack = if let Term::Stack(_) = lhs { true } else { false };
+            if bin.lhs.ty.salloc() && is_stack {
+                self.temp_count += 1;
+                self.push_op(
+                    Op::UnOp {
+                        res: Term::Temp(self.temp_count - 1),
+                        op: "&".to_string(),
+                        term: lhs,
+                    },
+                    bin.op.pos_id
+                );
+                self.push_op(
+                    Op::BinOp {
+                        res: Some(Term::Temp(self.temp_count)),
+                        lhs: Term::Temp(self.temp_count - 1),
+                        op: bin.op.str.clone(),
+                        rhs
+                    },
+                    bin.op.pos_id,
+                );
+            } else {
+                self.push_op(
+                    Op::BinOp {
+                        res: Some(Term::Temp(self.temp_count)),
+                        lhs,
+                        op: bin.op.str.clone(),
+                        rhs
+                    },
+                    bin.op.pos_id,
+                );
+            }
         }
+        Term::Temp(self.temp_count)
     }
 
-    fn un_expr(&mut self, un: &node::UnExpr) {
-        self.expr(&un.expr);
-        let term = ir::Term::Temp(self.temp_count);
+    fn un_expr(&mut self, un: &node::UnExpr) -> Term {
+        let term = self.expr(&un.expr);
         self.temp_count += 1;
         self.push_op(
-            ir::Op::Unary {
-                term,
+            Op::UnOp {
+                res: Term::Temp(self.temp_count),
                 op: un.op.str.clone(),
-                res: ir::Term::Temp(self.temp_count),
+                term,
             },
             un.op.pos_id,
         );
+        Term::Temp(self.temp_count)
     }
 
-    fn call(&mut self, call: &node::Call) {
+    fn call(&mut self, call: &node::Call) -> Term {
         let mut res = None;
+        let mut params = Vec::new();
         if let Some(Symbol::Func { ty, block: _, symbols: _ }) = self.ir.get(&call.name.str) {
             if ty.salloc() { // Pass pointer as first argument
-                self.temp_count += 1;
-                let r = ir::Term::Symbol(format!(".s{}", self.temp_count));
-                self.push_op(ir::Op::Salloc { size: ty.size(), res: ir::Term::Temp(self.temp_count) }, call.name.pos_id);
-                self.push_op(ir::Op::TakeSalloc { ptr: ir::Term::Temp(self.temp_count), res: r.clone() }, call.name.pos_id);
-                self.temp_count += 1;
-                self.push_op(ir::Op::Unary { term: r.clone(), op: "&".to_string(), res: ir::Term::Temp(self.temp_count) }, call.name.pos_id);
-                self.push_op(ir::Op::Param { term: ir::Term::Temp(self.temp_count), size: 8, stack_offset: None }, call.name.pos_id);
+                self.stack_count += 1;
+                let r = Term::Stack(self.stack_count);
+                self.push_op(Op::Decl { term: r.clone(), size: ty.size() }, call.name.pos_id);
                 res = Some(r);
             }
         }
-        for arg in call.args.iter().rev() {
-            self.expr(arg);
-            self.push_op(ir::Op::Param { term: ir::Term::Temp(self.temp_count), size: arg.ty.size(), stack_offset: None }, call.name.pos_id);
+        self.push_op(Op::BeginCall, call.name.pos_id);
+        if let Some(r) = &res {
+            self.temp_count += 1;
+            self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone() }, call.name.pos_id);
+            params.push(Term::Temp(self.temp_count));
         }
-        if let Some(r) = res {
+        for arg in call.args.iter() {
+            let r = self.expr(arg);
+            if let Term::Stack(_) = r {
+                if self.var_map.values().any(|v| *v == r) {
+                    self.stack_count += 1;
+                    self.temp_count += 1;
+                    self.push_op(Op::Decl { term: Term::Stack(self.stack_count), size: arg.ty.size() }, call.name.pos_id);
+                    self.push_op(Op::Copy { from: r.clone(), to: Term::Stack(self.stack_count), size: arg.ty.size() }, call.name.pos_id);
+                    self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: Term::Stack(self.stack_count) }, call.name.pos_id);
+                } else {
+                    self.temp_count += 1;
+                    self.push_op(Op::UnOp {res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone() }, call.name.pos_id);
+                }
+                params.push(Term::Temp(self.temp_count));
+            } else {
+                params.push(r);
+            }
+        }
+        for p in params {
+            self.push_op(Op::Param { term: p }, call.name.pos_id);
+        }
+        if let Some(r) = res.clone() {
             self.temp_count += 1;
             self.push_op(
-                ir::Op::Call {
+                Op::Call {
                     func: call.name.str.clone(),
-                    res: Some(ir::Term::Temp(self.temp_count)),
+                    res: Some(Term::Temp(self.temp_count))
                 },
                 call.name.pos_id,
             );
-            self.temp_count += 1;
-            self.push_op(ir::Op::Tac { lhs: r, rhs: None, op: None, res: Some(ir::Term::Temp(self.temp_count)) }, call.name.pos_id);
+            res = Some(Term::Temp(self.temp_count));
+            self.stack_return = Some(r);
         } else {
             self.temp_count += 1;
             self.push_op(
-                ir::Op::Call {
+                Op::Call {
                     func: call.name.str.clone(),
-                    res: Some(ir::Term::Temp(self.temp_count)),
+                    res: Some(Term::Temp(self.temp_count)),
                 },
                 call.name.pos_id,
             );
+            res = Some(Term::Temp(self.temp_count));
         }
+        self.push_op(Op::EndCall, call.name.pos_id);
+        res.unwrap()
     }
 
-    fn r#macro(&mut self, r#macro: &node::Macro) {
-        self.temp_count += 1;
-        match r#macro {
-            node::Macro::Salloc { count, ty } => {
-                self.push_op(ir::Op::Salloc { size: *count, res: ir::Term::Temp(self.temp_count) }, 0);
-            }
-        }
-    }
+    // fn r#macro(&mut self, r#macro: &node::Macro) {
+    //     self.temp_count += 1;
+    //     match r#macro {
+    //         node::Macro::Salloc { count, ty } => {
+    //             self.push_op(Op::Salloc { size: *count, res: Term::Temp(self.temp_count) }, 0);
+    //         }
+    //     }
+    // }
 
     fn r#loop(&mut self, r#loop: &node::Loop) {
         self.label_count += 2;
@@ -468,12 +513,12 @@ impl<'a> Lower<'a> {
         self.loop_start.push(s);
         let e = self.label_count;
         self.loop_exit.push(e);
-        self.push_op(ir::Op::Label(s), r#loop.pos_id);
-        self.push_op(ir::Op::LoopStart, 0);
+        self.push_op(Op::Label {label: s }, r#loop.pos_id);
+        self.push_op(Op::Save, 0);
         self.scope(&r#loop.scope);
-        self.push_op(ir::Op::LoopEnd, 0);
-        self.push_op(ir::Op::Jump(s), r#loop.pos_id);
-        self.push_op(ir::Op::Label(e), r#loop.pos_id);
+        self.push_op(Op::Restore, 0);
+        self.push_op(Op::Jump { label: s }, r#loop.pos_id);
+        self.push_op(Op::Label { label: e }, r#loop.pos_id);
         self.loop_start.pop();
         self.loop_exit.pop();
     }
@@ -484,29 +529,29 @@ impl<'a> Lower<'a> {
         let e = self.label_count;
         self.loop_start.push(s);
         self.loop_exit.push(e);
-        self.push_op(ir::Op::Jump(c), r#while.pos_id);
-        self.push_op(ir::Op::Label(s), r#while.pos_id);
-        self.push_op(ir::Op::LoopStart, 0);
+        self.push_op(Op::Jump { label: c }, r#while.pos_id);
+        self.push_op(Op::Label { label: s }, r#while.pos_id);
+        self.push_op(Op::Save, 0);
         self.scope(&r#while.scope);
-        self.push_op(ir::Op::LoopEnd, 0);
-        self.push_op(ir::Op::Label(c), r#while.pos_id);
-        self.expr(&r#while.expr);
+        self.push_op(Op::Restore, 0);
+        self.push_op(Op::Label { label: c }, r#while.pos_id);
+        let cond = self.expr(&r#while.expr);
         self.push_op(
-            ir::Op::CondJump {
-                cond: ir::Term::Temp(self.temp_count),
+            Op::CondJump {
+                cond,
                 label: s,
             },
             r#while.pos_id,
         );
-        self.push_op(ir::Op::Label(e), r#while.pos_id);
-        self.push_op(ir::Op::NaturalFlow, r#while.pos_id);
+        self.push_op(Op::Label { label: e }, r#while.pos_id);
+        self.push_op(Op::NaturalFlow, r#while.pos_id);
         self.loop_start.pop();
         self.loop_exit.pop();
     }
     fn r#for(&mut self, r#for: &node::For) {
         match &r#for.init {
             node::LetOrExpr::Let(r#let) => self.r#let(r#let),
-            node::LetOrExpr::Expr(expr) => self.expr(expr)
+            node::LetOrExpr::Expr(expr) => { self.expr(expr); }
         }
         self.label_count += 3;
         let s = self.label_count - 2;
@@ -514,23 +559,23 @@ impl<'a> Lower<'a> {
         let e = self.label_count;
         self.loop_start.push(c);
         self.loop_exit.push(e);
-        self.push_op(ir::Op::Label(s), r#for.pos_id);
-        self.push_op(ir::Op::LoopStart, 0);
+        self.push_op(Op::Label { label: s }, r#for.pos_id);
+        self.push_op(Op::Save, 0);
         self.scope(&r#for.scope);
-        self.push_op(ir::Op::LoopEnd, 0);
-        self.push_op(ir::Op::Label(c), r#for.pos_id);
-        self.push_op(ir::Op::NaturalFlow, r#for.pos_id);
+        self.push_op(Op::Restore, 0);
+        self.push_op(Op::Label { label: c }, r#for.pos_id);
+        self.push_op(Op::NaturalFlow, r#for.pos_id);
         self.expr(&r#for.incr);
-        self.expr(&r#for.cond);
+        let cond = self.expr(&r#for.cond);
         self.push_op(
-            ir::Op::CondJump {
-                cond: ir::Term::Temp(self.temp_count),
+            Op::CondJump {
+                cond,
                 label: s,
             },
             r#for.pos_id,
         );
-        self.push_op(ir::Op::Label(e), r#for.pos_id);
-        self.push_op(ir::Op::NaturalFlow, r#for.pos_id);
+        self.push_op(Op::Label { label: e }, r#for.pos_id);
+        self.push_op(Op::NaturalFlow, r#for.pos_id);
         self.loop_start.pop();
         self.loop_exit.pop();
     }

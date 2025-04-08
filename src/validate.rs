@@ -17,6 +17,7 @@ pub fn validate(stmts: &mut Vec<node::Stmt>) -> Result<HashMap<String, Symbol>, 
     for stmt in stmts {
         val.stmt(stmt)?;
     }
+    val.symbol_table.remove("print");
     Ok(val.symbol_table)
 }
 

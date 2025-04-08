@@ -9,7 +9,7 @@ mod helpers;
 mod ir;
 mod lower;
 mod node;
-mod optimize;
+// mod optimize;
 mod parse;
 mod process;
 mod tokenize;
@@ -63,9 +63,9 @@ fn main() -> Result<(), io::Error> {
 
     println!("IR:\n{:?}\n", ir);
 
-    optimize::optimize(&mut ir);
+    // optimize::optimize(&mut ir);
 
-    println!("Optimized IR:\n{:?}\n", ir);
+    // println!("Optimized IR:\n{:?}\n", ir);
 
     let result;
     match gen::gen(&mut ir) {

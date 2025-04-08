@@ -1,3 +1,4 @@
+use crate::ir::OpLoc;
 use crate::gen::GenError;
 use crate::node::Span;
 use crate::parse::ParseError;
@@ -182,6 +183,16 @@ pub fn gen_err(text: &String, e: GenError, info: Vec<FilePos>) {
         }
         GenError::NoFreeRegisters(loc) => {
             eprintln!("Ran out of registers. Consider splitting up this expression.");
+            print_file_err(
+                text,
+                &FilePos {
+                    start: info.get(loc.start_id).unwrap().start,
+                    end: info.get(loc.end_id).unwrap().end,
+                },
+            );
+        }
+        GenError::TooManyArguments(loc) => {
+            eprintln!("Too many arguments. Consider making and passing a struct instead.");
             print_file_err(
                 text,
                 &FilePos {

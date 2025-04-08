@@ -172,7 +172,7 @@ impl Process {
                 lhs = Box::new(node::Expr {
                     ty: Type::Struct(m.clone()),
                     span: bin.lhs.span,
-                    kind: node::ExprKind::UnExpr(node::UnExpr { expr: bin.lhs.clone(), op: self.pos_str("&".to_string()) })
+                    kind: bin.lhs.kind
                 });
             }
             let node::ExprKind::Variable(pos_str) = bin.rhs.kind else {
