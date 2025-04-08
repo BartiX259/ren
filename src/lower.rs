@@ -13,7 +13,7 @@ pub fn lower(stmts: Vec<node::Stmt>, ir: &mut HashMap<String, Symbol>) {
 
 struct Lower<'a> {
     ir: &'a mut HashMap<String, Symbol>,
-    cur_salloc: Option<(Term, bool)>,
+    cur_salloc: Option<Term>,
     ret_salloc: Option<Term>,
     salloc_offset: i64,
     cur_symbols: Vec<Vec<(String, Symbol)>>,
@@ -108,12 +108,12 @@ impl<'a> Lower<'a> {
                 };
                 let size = inner.size();
                 let inner_salloc = inner.salloc();
-                if let Some((p, s)) = &self.cur_salloc {
+                if let Some(p) = &self.cur_salloc {
                     ptr = p.clone();
                 } else {
                     self.stack_count += 1;
                     ptr = Term::Stack(self.stack_count);
-                    self.cur_salloc = Some((ptr.clone(), true));
+                    self.cur_salloc = Some(ptr.clone());
                     self.push_op(Op::Decl { term: ptr.clone(), size: arr_lit.exprs.len() as u32 * size }, arr_lit.pos_id);
                 }
                 for expr in &arr_lit.exprs {
@@ -124,6 +124,10 @@ impl<'a> Lower<'a> {
                         self.salloc_offset += size as i64;
                     }
                 }
+                if Some(ptr.clone()) == self.cur_salloc {
+                    self.cur_salloc = None;
+                    self.salloc_offset = 0;
+                }
                 ptr
             }
             node::ExprKind::StructLit(lit) => {
@@ -131,12 +135,12 @@ impl<'a> Lower<'a> {
                 let Some(Symbol::Struct { ty }) = self.ir.get(&lit.name.str) else {
                     panic!("Missing struct symbol");
                 };
-                if let Some((p, s)) = &self.cur_salloc {
+                if let Some(p) = &self.cur_salloc {
                     ptr = p.clone();
                 } else {
                     self.stack_count += 1;
                     ptr = Term::Stack(self.stack_count);
-                    self.cur_salloc = Some((ptr.clone(), true));
+                    self.cur_salloc = Some(ptr.clone());
                     self.push_op(Op::Decl { term: ptr.clone(), size: ty.size() }, lit.name.pos_id);
                 }
                 for expr in &lit.field_exprs {
@@ -147,16 +151,20 @@ impl<'a> Lower<'a> {
                         self.salloc_offset += expr.ty.size() as i64;
                     }
                 }
+                if Some(ptr.clone()) == self.cur_salloc {
+                    self.cur_salloc = None;
+                    self.salloc_offset = 0;
+                }
                 ptr
             }
             node::ExprKind::StringLit(lit) => {
                 let ptr;
-                if let Some((p, s)) = &self.cur_salloc {
+                if let Some(p) = &self.cur_salloc {
                     ptr = p.clone();
                 } else {
                     self.stack_count += 1;
                     ptr = Term::Stack(self.stack_count);
-                    self.cur_salloc = Some((ptr.clone(), true));
+                    self.cur_salloc = Some(ptr.clone());
                     self.push_op(Op::Decl { term: ptr.clone(), size: types::Type::String.size()}, expr.span.end);
                 }
                 self.temp_count += 1;
@@ -174,6 +182,10 @@ impl<'a> Lower<'a> {
                     self.push_op(
                         Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(new_sym) }, expr.span.end
                     );
+                }
+                if Some(ptr.clone()) == self.cur_salloc {
+                    self.cur_salloc = None;
+                    self.salloc_offset = 0;
                 }
                 ptr
             }
@@ -274,7 +286,7 @@ impl<'a> Lower<'a> {
     fn ret(&mut self, ret: &node::Ret) {
         if let Some(expr) = &ret.expr {
             if let Some(r) = self.ret_salloc.clone() {
-                self.cur_salloc = Some((r.clone(), false));
+                self.cur_salloc = Some(r.clone());
                 let mut from = self.expr(expr);
                 if let Some(ret) = &self.stack_return {
                     from = ret.clone();
@@ -286,6 +298,7 @@ impl<'a> Lower<'a> {
                 }
                 self.push_op(Op::Return { term: Some(r) }, ret.pos_id);
                 self.cur_salloc = None;
+                self.salloc_offset = 0;
             } else {
                 let r = self.expr(expr);
                 self.push_op(Op::Return { term: Some(r) }, ret.pos_id);
