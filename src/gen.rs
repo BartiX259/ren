@@ -119,7 +119,7 @@ impl<'a> Gen<'a> {
         for (name, sym) in self.symbol_table.iter() {
             match sym {
                 Symbol::StringLit { str } => {
-                    self.buf.push_line(format!("{} db \"{}\"", name, str));
+                    self.buf.push_line(format!("{} db {}", name, str));
                 }
                 _ => ()
             }

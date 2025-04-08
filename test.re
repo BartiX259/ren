@@ -14,8 +14,5 @@ fn set(s: big) {
 }
 
 fn main() {
-    set(get_big(1));
-    set(get_big(0));
-    let x = get_big(0);
-    set(x);
+    print("a\n");
 }

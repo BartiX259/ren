@@ -1,5 +1,5 @@
 use crate::error::FilePos;
-use crate::helpers::VecIter;
+use crate::helpers::{VecIter, StringLit, StringFragment};
 use std::vec::Vec;
 
 /// Tokenize the input file
@@ -50,7 +50,7 @@ pub enum TokenizeError {
 pub enum Token {
     Word { value: String },
     IntLit { value: i64 },
-    StringLit { value: String },
+    StringLit { value: StringLit },
     Op { value: String },
     Let,
     Decl,
@@ -212,6 +212,7 @@ fn tok_op(start: char, iter: &mut VecIter<char>) -> Token {
 
 /// Builds a string literal until `start` appears
 fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError> {
+    let mut res = Vec::new();
     let mut str = String::new();
     let start_pos = iter.prev_index();
     let mut closed = false;
@@ -219,8 +220,26 @@ fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError
         if next_ch == start {
             closed = true;
             break;
+        } else if next_ch == '\\' {
+            res.push(StringFragment::String(str));
+            str = String::new();
+            let Some(esc) = iter.next() else {
+                return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
+                    ch: next_ch,
+                    pos: FilePos { start: iter.prev_index(), end: iter.prev_index() }
+                }))
+            };
+            match esc {
+                'n' => res.push(StringFragment::Char('\n' as u32)),
+                '\\' => res.push(StringFragment::Char('\\' as u32)),
+                _ => return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
+                    ch: next_ch,
+                    pos: FilePos { start: iter.prev_index(), end: iter.prev_index() }
+                }))
+            }
+        } else {
+            str.push(next_ch);
         }
-        str.push(next_ch);
     }
     if !closed {
         Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
@@ -228,7 +247,7 @@ fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError
             pos: FilePos { start: start_pos, end: start_pos }
         }))
     } else {
-        Ok(Token::StringLit { value: str })
+        Ok(Token::StringLit { value: StringLit { frags: res } })
     }
 }
 
@@ -245,6 +264,9 @@ fn is_operator_pair(first: char, second: char) -> bool {
         ('*', '=') |
         ('/', '=') |
         ('%', '=') |
+        ('|', '=') |
+        ('^', '=') |
+        ('&', '=') |
         ('=', '=') |
         ('<', '=') |
         ('>', '=') |

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::ir::{Block, Symbol, Term, Op, OpLoc};
 use crate::{node, types};
+use crate::helpers::StringLit;
 
 /// Transform the ast into the IR
 pub fn lower(stmts: Vec<node::Stmt>, ir: &mut HashMap<String, Symbol>) {
@@ -27,7 +28,7 @@ struct Lower<'a> {
     scope_id: usize,
     loop_start: Vec<u16>,
     loop_exit: Vec<u16>,
-    string_map: HashMap<String, String>,
+    string_map: HashMap<StringLit, String>,
     string_id: usize,
 }
 impl<'a> Lower<'a> {
@@ -168,7 +169,7 @@ impl<'a> Lower<'a> {
                     self.push_op(Op::Decl { term: ptr.clone(), size: types::Type::String.size()}, expr.span.end);
                 }
                 self.temp_count += 1;
-                self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::IntLit(lit.chars().count() as i64) }, expr.span.end);
+                self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::IntLit(lit.len() as i64) }, expr.span.end);
                 self.salloc_offset += 8;
                 if let Some(sym) = self.string_map.get(lit) {
                     self.push_op(
@@ -177,7 +178,7 @@ impl<'a> Lower<'a> {
                 } else {
                     self.string_id += 1;
                     let new_sym = format!("s.{}", self.string_id);
-                    self.string_map.insert(lit.to_string(), new_sym.clone());
+                    self.string_map.insert(lit.clone(), new_sym.clone());
                     self.ir.insert(new_sym.clone(), Symbol::StringLit { str: lit.to_string() });
                     self.push_op(
                         Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(new_sym) }, expr.span.end

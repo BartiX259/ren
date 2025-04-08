@@ -1,5 +1,6 @@
 use std::iter::Peekable;
 use std::vec::IntoIter;
+use std::fmt;
 
 /// A peekable iterator over I that stores its current index
 pub struct VecIter<I> {
@@ -109,4 +110,67 @@ impl IndentedBuf {
     pub fn get_output_ref(&self) -> &String {
         &self.buf
     }
+}
+
+/// String literal
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StringFragment {
+    String(String),
+    Char(u32)
+}
+
+// impl StringFragment {
+//     pub fn char_to_string(i: u32) -> String {
+//         match i {
+//             10 => "\\n",
+//             _ => panic!("Unknown character")
+//         }.to_string()
+//     }
+// }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StringLit {
+    pub frags: Vec<StringFragment>
+}
+
+impl fmt::Display for StringLit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut start = true;
+        for frag in self.frags.iter() {
+            if !start {
+                write!(f, ", ")?;
+            } else {
+                start = false;
+            }
+            match frag {
+                StringFragment::String(s) => write!(f, "\"{}\"", s),
+                StringFragment::Char(i) => write!(f, "{}", i),
+            }?
+        }
+        Ok(())
+    }
+}
+
+impl StringLit {
+    pub fn len(&self) -> usize {
+        let mut res = 0;
+        for frag in self.frags.iter() {
+            match frag {
+                StringFragment::String(s) => res += s.chars().count(),
+                StringFragment::Char(i) => res += 1,
+            }
+        }
+        res
+    }
+    // pub fn to_string(self) -> String {
+    //     let mut res = String::new();
+    //     for frag in self.frags.iter() {
+    //         match frag {
+    //             StringFragment::String(s) => res += s,
+    //             StringFragment::Char(i) => res += StringFragment::char_to_string(*i).as_str(),
+    //         }
+    //     }
+    //     res
+    // }
 }

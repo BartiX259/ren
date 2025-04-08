@@ -133,7 +133,7 @@ pub enum ExprKind {
     IntLit(i64),
     ArrLit(ArrLit),
     StructLit(StructLit),
-    StringLit(String),
+    StringLit(crate::helpers::StringLit),
     Variable(PosStr),
     Call(Call),
     Macro(Macro),
