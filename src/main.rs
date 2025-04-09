@@ -77,8 +77,8 @@ fn main() -> Result<(), io::Error> {
     }
     fs::write("out.S", result).expect("Unable to write file");
 
-    println!("nasm: {:?}", Command::new("nasm").args(["-felf64", "-g", "out.S", "-o", "out.o"]).output());
-    println!("nasm std: {:?}", Command::new("nasm").args(["-felf64", "-g", "lib/std.S", "-o", "std.o"]).output());
+    println!("nasm: {:?}", Command::new("nasm").args(["-felf64", "out.S", "-o", "out.o"]).output());
+    println!("nasm std: {:?}", Command::new("nasm").args(["-felf64", "lib/std.S", "-o", "std.o"]).output());
     println!(
         "ld:   {:?}",
         Command::new("ld")

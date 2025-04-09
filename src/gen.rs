@@ -61,8 +61,8 @@ impl<'a> Gen<'a> {
             fn_symbols: Vec::new(),
             locs: HashMap::new(),
             doubles: HashMap::new(),
-            regs: vec![reg("rax"), reg("rbx"), reg("rcx"), reg("rdx"), reg("rdi"), reg("rsi")],
-            call_order: vec!["rdi", "rsi", "rdx"],
+            regs: vec![reg("rax"), reg("rbx"), reg("rcx"), reg("rdx"), reg("rdi"), reg("rsi"), reg("r8"), reg("r9")],
+            call_order: vec!["rdi", "rsi", "rdx", "rcx", "r8", "r9"],
             sp: 0,
             last_loc: OpLoc { start_id: 0, end_id: 0 },
             reg_states: Vec::new(),
@@ -359,7 +359,7 @@ impl<'a> Gen<'a> {
                 ir::Op::Restore => self.restore_regs(),
             }
             match op_clone {
-                ir::Op::Save | ir::Op::Restore | ir::Op::Arg { .. } | ir::Op::Param { .. } | ir::Op::Call { .. } | ir::Op::BeginCall => (),
+                ir::Op::Save | ir::Op::Restore | ir::Op::Arg { .. } | ir::Op::Param { .. } | ir::Op::Call { .. } | ir::Op::BeginCall | ir::Op::EndCall => (),
                 _ => self.buf.comment(format!("{:?}", op_clone)),
             }
         }

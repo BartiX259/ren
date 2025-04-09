@@ -10,14 +10,13 @@ pub fn validate(stmts: &mut Vec<node::Stmt>) -> Result<HashMap<String, Symbol>, 
     for stmt in stmts.iter() {
         val.hoist_type(stmt)?;
     }
-    for stmt in stmts.iter() {
+    for stmt in stmts.iter_mut() {
         val.hoist_func(stmt)?;
     }
     println!("{:?}", val.symbol_table);
     for stmt in stmts {
         val.stmt(stmt)?;
     }
-    val.symbol_table.remove("print");
     Ok(val.symbol_table)
 }
 
@@ -48,6 +47,7 @@ pub enum SemanticError {
 
 pub struct Validate {
     pub symbol_table: HashMap<String, Symbol>,
+    fn_map: HashMap<String, Vec<Vec<Type>>>,
     fn_symbols: Vec<Vec<(String, Symbol)>>,
     symbol_stack: Vec<usize>,
     cur_func: Option<String>,
@@ -59,9 +59,8 @@ pub struct Validate {
 impl Validate {
     pub fn new() -> Self {
         Self {
-            symbol_table: HashMap::from([
-                ("print".to_string(), Symbol::ExternFunc { ty: Type::Void, args: vec![Type::Any] }),
-            ]),
+            symbol_table: HashMap::new(),
+            fn_map: HashMap::new(),
             fn_symbols: Vec::new(),
             symbol_stack: Vec::new(),
             cur_func: None,
@@ -109,11 +108,8 @@ impl Validate {
         Ok(())
     }
 
-    fn hoist_func(&mut self, stmt: &node::Stmt) -> Result<(), SemanticError> {
+    fn hoist_func(&mut self, stmt: &mut node::Stmt) -> Result<(), SemanticError> {
         if let node::Stmt::Fn(decl) = stmt {
-            if self.symbol_table.contains_key(&decl.name.str) {
-                return Err(SemanticError::SymbolExists(decl.name.clone()));
-            }
             let ty;
             if let Some(t) = &decl.decl_type {
                 ty = self.r#type(t)?;
@@ -121,6 +117,7 @@ impl Validate {
                 ty = Type::Void;
             }
             let mut arg_symbols: Vec<(String, Symbol)> = Vec::new();
+            let mut types = Vec::new();
             for arg in decl.arg_names.iter().zip(decl.arg_types.iter()) {
                 if self.symbol_table.contains_key(&arg.0.str) {
                     return Err(SemanticError::SymbolExists(arg.0.clone()));
@@ -130,14 +127,40 @@ impl Validate {
                         return Err(SemanticError::SymbolExists(arg.0.clone()));
                     }
                 }
-                let sym = Symbol::Var { ty: self.r#type(arg.1)? };
+                let ty = self.r#type(arg.1)?;
+                types.push(ty.clone());
+                let sym = Symbol::Var { ty };
                 arg_symbols.push((arg.0.str.clone(), sym.clone()));
             }
-            self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
-                ty,
-                block: Block::new(),
-                symbols: vec![arg_symbols],
-            });
+            if decl.name.str == "main" {
+                if self.symbol_table.contains_key("main") {
+                    return Err(SemanticError::SymbolExists(decl.name.clone()));
+                }
+                self.symbol_table.insert("main".to_string(), Symbol::Func { 
+                    ty,
+                    block: Block::new(),
+                    symbols: vec![arg_symbols],
+                });
+            } else {
+                let len;
+                if let Some(sigs) = self.fn_map.get_mut(&decl.name.str) {
+                    if sigs.contains(&types) {
+                        return Err(SemanticError::SymbolExists(decl.name.clone()));
+                    }
+                    sigs.push(types);
+                    len = sigs.len();
+                } else {
+                    self.fn_map.insert(decl.name.str.clone(), vec![types]);
+                    len = 1;
+                }
+                let s= format!("{}.{}", decl.name.str, len);
+                decl.name.str = s.clone();
+                self.symbol_table.insert(s, Symbol::Func { 
+                    ty,
+                    block: Block::new(),
+                    symbols: vec![arg_symbols],
+                });
+            }
         }
         Ok(())
     }
@@ -499,10 +522,21 @@ impl Validate {
             arg_types.push(self.expr(s)?);
             arg_spans.push(s.span);
         }
+        let mut s = call.name.str.clone();
+        if let Some(sigs) = self.fn_map.get(&call.name.str) {
+            for (i, sig) in sigs.iter().enumerate() {
+                if *sig == arg_types {
+                    s = format!("{}.{}", s, i + 1);
+                    call.name.str = s.clone();
+                    break;
+                }
+            }
+        }
+        println!("aflsjkh {}", s);
         let ty;
         let expected_types;
         let temp: Vec<_>;
-        match self.symbol_table.get(&call.name.str) {
+        match self.symbol_table.get(&s) {
             Some(Symbol::Func { ty: t, block: _, symbols}) => {
                 ty = t;
                 if symbols.len() == 0 { // Recursive call
@@ -530,29 +564,29 @@ impl Validate {
             None => return Err(SemanticError::UndeclaredSymbol(call.name.clone())),
             _ => return Err(SemanticError::UndeclaredSymbol(call.name.clone())),
         }
-        let mut insert = None;
+        // let mut insert = None;
         if expected_types.len() != arg_types.len() {
             return Err(SemanticError::InvalidArgCount(call.name.clone(), expected_types.len(), arg_types.len()));
         }
-        for ((ty1, ty2), span) in expected_types.into_iter().zip(arg_types.iter()).zip(arg_spans.iter()) {
-            if *ty1 == Type::Any {
-                let str = match ty2 {
-                    Type::Int => "int",
-                    Type::String => "str",
-                    _ => panic!("Bad print type (todo)")
-                };
-                insert = Some(format!("{}.{}", call.name.str, str));
-            }
-            else if ty1 != ty2 {
-                return Err(SemanticError::ArgTypeMismatch(*span, ty1.clone(), ty2.clone()));
-            }
-        }
+        // for ((ty1, ty2), span) in expected_types.into_iter().zip(arg_types.iter()).zip(arg_spans.iter()) {
+        //     if *ty1 == Type::Any {
+        //         let str = match ty2 {
+        //             Type::Int => "int",
+        //             Type::String => "str",
+        //             _ => panic!("Bad print type (todo)")
+        //         };
+        //         insert = Some(format!("{}.{}", s, str));
+        //     }
+        //     else if ty1 != ty2 {
+        //         return Err(SemanticError::ArgTypeMismatch(*span, ty1.clone(), ty2.clone()));
+        //     }
+        // }
         let res = ty.clone();
-        if let Some(name) = insert {
-            let sym = self.symbol_table.get(&call.name.str).unwrap().clone();
-            call.name.str = name.clone();
-            self.symbol_table.insert(name, sym);
-        }
+        // if let Some(name) = insert {
+        //     let sym = self.symbol_table.get(&s).unwrap().clone();
+        //     call.name.str = name.clone();
+        //     self.symbol_table.insert(name, sym);
+        // }
         Ok(res)
     }
 
