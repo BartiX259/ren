@@ -12,10 +12,17 @@ pub enum Symbol {
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub enum Term {
+    /// Term contained in a single register
     Temp(usize),
+    /// Term contained in two registers
+    Double(usize),
+    /// Term living on the stack
     Stack(usize),
+    /// Pointer living on the stack
     Pointer(usize),
+    /// Data from symbol table
     Data(String),
+    /// Simple integer
     IntLit(i64),
 }
 
@@ -40,7 +47,7 @@ pub enum Op {
     Copy { from: Term, to: Term, size: u32 },
     Let { res: Term, term: Term },
     Decl { term: Term, size: u32 },
-    Arg { term: Term },
+    Arg { term: Term, double: bool },
     Param { term: Term },
     Call { res: Option<Term>, func: String },
     BeginCall,
@@ -65,6 +72,7 @@ impl fmt::Debug for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Term::Temp(id) => write!(f, "t{}", id),
+            Term::Double(id) => write!(f, "d{}", id),
             Term::Stack(id) => write!(f, "s{}", id),
             Term::Pointer(id) => write!(f, "p{}", id),
             Term::Data(s) => write!(f, "{}", s),
@@ -102,7 +110,7 @@ impl fmt::Debug for Op {
             Op::Copy { from, to, size } => write!(f, "copy {:?} into {:?} (size {})", from, to, size),
             Op::Let { res, term } => write!(f, "let {:?} = {:?}", res, term),
             Op::Decl { term, size } => write!(f, "decl {:?} (size {})", term, size),
-            Op::Arg { term } => write!(f, "arg {:?}", term),
+            Op::Arg { term, double } => write!(f, "arg {:?}{}", term, if *double { " (double)" } else { "" }),
             Op::Param { term } => write!(f, "param {:?}", term),
             Op::BeginCall => write!(f, "begin call"),
             Op::EndCall => write!(f, "end call"),

@@ -21,6 +21,7 @@ struct Lower<'a> {
     cur_block: Option<Block>,
     var_map: HashMap<String, Term>,
     temp_count: usize,
+    double_count: usize,
     stack_count: usize,
     pointer_count: usize,
     stack_return: Option<Term>,
@@ -42,6 +43,7 @@ impl<'a> Lower<'a> {
             cur_block: None,
             var_map: HashMap::new(),
             temp_count: 0,
+            double_count: 0,
             stack_count: 0,
             pointer_count: 0,
             stack_return: None,
@@ -207,6 +209,12 @@ impl<'a> Lower<'a> {
         }
         if r.is_stack() {
             self.var_map.insert(decl.name.str.clone(), r);
+        } else if let Term::Double(_) = r {
+            self.stack_count += 1;
+            let id = self.stack_count;
+            self.var_map.insert(decl.name.str.clone(), Term::Stack(id));
+            self.push_op(Op::Decl { term: Term::Stack(id), size: 16 }, decl.name.pos_id);
+            self.push_op(Op::Store { res: None, ptr: Term::Stack(id), offset: 0, op: "=".to_string(), term: r }, decl.name.pos_id);
         } else {
             self.stack_count += 1;
             let id = self.stack_count;
@@ -234,10 +242,10 @@ impl<'a> Lower<'a> {
         self.var_map.clear();
         if let Some(sym) = self.ir.get(&decl.name.str).cloned() {
             if let Symbol::Func { ty, block: _, symbols } = sym  {
-                if ty.salloc() {
+                if ty.size() > 16 {
                     self.pointer_count += 1;
                     self.ret_salloc = Some(Term::Pointer(self.pointer_count));
-                    self.push_op(Op::Arg { term: Term::Pointer(self.pointer_count) }, decl.name.pos_id);
+                    self.push_op(Op::Arg { term: Term::Pointer(self.pointer_count), double: false }, decl.name.pos_id);
                 }
                 symbols.clone_into(&mut self.cur_symbols);
             }
@@ -249,16 +257,16 @@ impl<'a> Lower<'a> {
                 println!("{:?}", self.ir.keys());
                 panic!("Argument not a var ({}).", s.str);
             };
-            if ty.salloc() {
+            if ty.size() > 16 {
                 self.pointer_count += 1;
                 let id = self.pointer_count;
                 self.var_map.insert(s.str.clone(), Term::Pointer(id));
-                self.push_op(Op::Arg { term: Term::Pointer(id) }, s.pos_id);
+                self.push_op(Op::Arg { term: Term::Pointer(id), double: false }, s.pos_id);
             } else {
                 self.stack_count += 1;
                 let id = self.stack_count;
                 self.var_map.insert(s.str.clone(), Term::Stack(id));
-                self.push_op(Op::Arg { term: Term::Stack(id) }, s.pos_id);
+                self.push_op(Op::Arg { term: Term::Stack(id), double: ty.size() > 8 }, s.pos_id);
             }
         }
         self.scope_id += 1;
@@ -302,7 +310,13 @@ impl<'a> Lower<'a> {
                 self.salloc_offset = 0;
             } else {
                 let r = self.expr(expr);
-                self.push_op(Op::Return { term: Some(r) }, ret.pos_id);
+                if expr.ty.size() > 8 {
+                    self.double_count += 1;
+                    self.push_op(Op::Read { res: Term::Double(self.double_count), ptr: r, offset: 0 }, ret.pos_id);
+                    self.push_op(Op::Return { term: Some(Term::Double(self.double_count))  }, ret.pos_id);
+                } else {
+                    self.push_op(Op::Return { term: Some(r)  }, ret.pos_id);
+                }
             }
         } else {
             self.push_op(Op::Return { term: None }, ret.pos_id);
@@ -450,13 +464,16 @@ impl<'a> Lower<'a> {
 
     fn call(&mut self, call: &node::Call) -> Term {
         let mut res = None;
+        let mut is_double = false;
         let mut params = Vec::new();
         if let Some(Symbol::Func { ty, block: _, symbols: _ }) = self.ir.get(&call.name.str) {
-            if ty.salloc() { // Pass pointer as first argument
+            if ty.size() > 16 { // Pass pointer as first argument
                 self.stack_count += 1;
                 let r = Term::Stack(self.stack_count);
                 self.push_op(Op::Decl { term: r.clone(), size: ty.size() }, call.name.pos_id);
                 res = Some(r);
+            } else if ty.size() > 8 {
+                is_double = true;
             }
         }
         self.push_op(Op::BeginCall, call.name.pos_id);
@@ -469,14 +486,34 @@ impl<'a> Lower<'a> {
             let r = self.expr(arg);
             if let Term::Stack(_) = r {
                 if self.var_map.values().any(|v| *v == r) {
-                    self.stack_count += 1;
-                    self.temp_count += 1;
-                    self.push_op(Op::Decl { term: Term::Stack(self.stack_count), size: arg.ty.size() }, call.name.pos_id);
-                    self.push_op(Op::Copy { from: r.clone(), to: Term::Stack(self.stack_count), size: arg.ty.size() }, call.name.pos_id);
-                    self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: Term::Stack(self.stack_count) }, call.name.pos_id);
+                    if arg.ty.size() > 16 {
+                        self.stack_count += 1;
+                        self.temp_count += 1;
+                        self.push_op(Op::Decl { term: Term::Stack(self.stack_count), size: arg.ty.size() }, call.name.pos_id);
+                        self.push_op(Op::Copy { from: r.clone(), to: Term::Stack(self.stack_count), size: arg.ty.size() }, call.name.pos_id);
+                        self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: Term::Stack(self.stack_count) }, call.name.pos_id);
+                    } else {
+                        self.temp_count += 1;
+                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r.clone(), offset: 0 }, call.name.pos_id);
+                        if arg.ty.size() > 8 {
+                            self.temp_count += 1;
+                            self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8 }, call.name.pos_id);
+                            params.push(Term::Temp(self.temp_count - 1));
+                        }
+                    }
                 } else {
-                    self.temp_count += 1;
-                    self.push_op(Op::UnOp {res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone() }, call.name.pos_id);
+                    if arg.ty.size() > 16 {
+                        self.temp_count += 1;
+                        self.push_op(Op::UnOp {res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone() }, call.name.pos_id);
+                    } else {
+                        self.temp_count += 1;
+                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r.clone(), offset: 0 }, call.name.pos_id);
+                        if arg.ty.size() > 8 {
+                            self.temp_count += 1;
+                            self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8 }, call.name.pos_id);
+                            params.push(Term::Temp(self.temp_count - 1));
+                        }
+                    }
                 }
                 params.push(Term::Temp(self.temp_count));
             } else {
@@ -487,29 +524,25 @@ impl<'a> Lower<'a> {
             self.push_op(Op::Param { term: p }, call.name.pos_id);
         }
         if let Some(r) = res.clone() {
-            self.temp_count += 1;
-            self.push_op(
-                Op::Call {
-                    func: call.name.str.clone(),
-                    res: Some(Term::Temp(self.temp_count))
-                },
-                call.name.pos_id,
-            );
-            res = Some(Term::Temp(self.temp_count));
             self.stack_return = Some(r);
+        }
+        let res;
+        if is_double {
+            self.double_count += 1;
+            res = Term::Double(self.double_count);
         } else {
             self.temp_count += 1;
-            self.push_op(
-                Op::Call {
-                    func: call.name.str.clone(),
-                    res: Some(Term::Temp(self.temp_count)),
-                },
-                call.name.pos_id,
-            );
-            res = Some(Term::Temp(self.temp_count));
+            res = Term::Temp(self.temp_count);
         }
+        self.push_op(
+            Op::Call {
+                func: call.name.str.clone(),
+                res: Some(res.clone())
+            },
+            call.name.pos_id,
+        );
         self.push_op(Op::EndCall, call.name.pos_id);
-        res.unwrap()
+        res
     }
 
     // fn r#macro(&mut self, r#macro: &node::Macro) {

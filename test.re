@@ -1,18 +1,21 @@
-struct big {
-    x: int
+struct small {
+    x: int,
+    y: int
 }
-fn get_big(b: int) -> big {
-    let x = big { x: 10 };
+fn get_big(b: int) -> small {
+    let x = small { x: 10, y: 50 };
     if b == 1 {
         return x;
     }
-    return big { x: 6 };
+    return small { x: 6, y: 20 };
 }
 
-fn set(s: big) {
+fn set(s: small) {
     print(s.x);
 }
 
 fn main() {
-    print("a\n");
+    set(get_big(1));
+    let x = get_big(0);
+    print(x.x);
 }

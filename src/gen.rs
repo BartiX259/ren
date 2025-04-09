@@ -41,6 +41,7 @@ struct Gen<'a> {
     symbol_table: &'a mut HashMap<String, Symbol>,
     fn_symbols: Vec<Vec<(String, Symbol)>>,
     locs: HashMap<Term, i64>,
+    doubles: HashMap<Term, (String, String)>,
     regs: Vec<Reg>,
     call_order: Vec<&'a str>,
     sp: i64,
@@ -59,6 +60,7 @@ impl<'a> Gen<'a> {
             symbol_table: ir,
             fn_symbols: Vec::new(),
             locs: HashMap::new(),
+            doubles: HashMap::new(),
             regs: vec![reg("rax"), reg("rbx"), reg("rcx"), reg("rdx"), reg("rdi"), reg("rsi")],
             call_order: vec!["rdi", "rsi", "rdx"],
             sp: 0,
@@ -193,12 +195,8 @@ impl<'a> Gen<'a> {
                     }
                     self.force_term_at(&Term::IntLit((size >> 3) as i64), &"rcx".to_string())?;
                     self.buf.push_line("rep movsq");
-                    let rsi = self.get_reg(&"rsi".to_string()).unwrap();
-                    rsi.term = None;
-                    rsi.locked = false;
-                    let rdi = self.get_reg(&"rdi".to_string()).unwrap();
-                    rdi.term = None;
-                    rdi.locked = false;
+                    self.clear_reg(&"rsi".to_string());
+                    self.clear_reg(&"rdi".to_string());
                 }
                 ir::Op::Let { term, res } => {
                     let r = self.eval_term(term, true)?;
@@ -209,14 +207,25 @@ impl<'a> Gen<'a> {
                     self.buf.push_line(format!("sub rsp, {}", size));
                     self.locs.insert(term, self.sp);
                 }
-                ir::Op::Arg { term } => {
+                ir::Op::Arg { term, double } => {
                     let reg = *self.call_order.get(self.arg_index).ok_or(GenError::TooManyArguments(self.last_loc.clone()))?;
                     self.arg_index += 1;
-                    self.save_reg(&reg.to_string(), &term);
                     if term.is_stack() {
-                        self.store_term(term, reg.to_string());
-                        self.lock_reg(&reg.to_string(), false);
+                        if double {
+                            self.sp += 16;
+                            self.buf.push_line(format!("sub rsp, 16"));
+                            self.locs.insert(term, self.sp);
+                            self.buf.push_line(format!("mov [rsp], {}", reg));
+                            let reg = *self.call_order.get(self.arg_index).ok_or(GenError::TooManyArguments(self.last_loc.clone()))?;
+                            self.arg_index += 1;
+                            self.buf.push_line(format!("mov [rsp+8], {}", reg));
+                        } else {
+                            self.save_reg(&reg.to_string(), &term);
+                            self.store_term(term, reg.to_string());
+                            self.lock_reg(&reg.to_string(), false);
+                        }
                     } else {
+                        self.save_reg(&reg.to_string(), &term);
                         self.lock_reg(&reg.to_string(), true);
                     }
                 }
@@ -237,11 +246,20 @@ impl<'a> Gen<'a> {
                     self.param_index = 0;
                 }
                 ir::Op::Param { term } => {
-                    println!("p1");
                     let target = *self.call_order.get(self.param_index).ok_or(GenError::TooManyArguments(self.last_loc.clone()))?;
-                    self.param_index += 1;
-                    self.force_term_at(&term, &target.to_string())?;
-                    self.lock_reg(&target.to_string(), true);
+                    if let Some((t1, t2)) = self.doubles.get(&term).cloned() {
+                        self.param_index += 1;
+                        self.swap_regs(t1, target.to_string());
+                        self.lock_reg(&target.to_string(), true);
+                        let target = *self.call_order.get(self.param_index).ok_or(GenError::TooManyArguments(self.last_loc.clone()))?;
+                        self.param_index += 1;
+                        self.swap_regs(t2, target.to_string());
+                        self.lock_reg(&target.to_string(), true);
+                    } else {
+                        self.param_index += 1;
+                        self.force_term_at(&term, &target.to_string())?;
+                        self.lock_reg(&target.to_string(), true);
+                    }
                     self.buf.comment(format!("param {:?}", term));
                 }
                 ir::Op::Call { func, res } => {
@@ -254,11 +272,14 @@ impl<'a> Gen<'a> {
                             self.lock_reg(&"rax".to_string(), true);
                         }
                         self.save_reg(&"rax".to_string(), &r);
+                        if let Term::Double(_) = r {
+                            self.doubles.insert(r.clone(), ("rax".to_string(), "rdx".to_string()));
+                            self.save_reg(&"rdx".to_string(), &r);
+                            self.lock_reg(&"rdx".to_string(), true);
+                        }
                     }
                     for name in self.call_order.clone() {
-                        let r = self.get_reg(&name.to_string()).unwrap();
-                        r.term = None;
-                        r.locked = false;
+                        self.clear_reg(&name.to_string());
                     }
                 }
                 ir::Op::EndCall => {
@@ -317,21 +338,28 @@ impl<'a> Gen<'a> {
                 }
                 ir::Op::Return { term }=> {
                     if let Some(t) = term {
-                        self.eval_term_at(&t, &"rax".to_string());
+                        if let Some((t1, t2)) = self.doubles.get(&t).cloned() {
+                            self.swap_regs("rax".to_string(), t1);
+                            self.swap_regs("rdx".to_string(), t2);
+                        } else {
+                            self.force_term_at(&t, &"rax".to_string())?;
+                        }
                     } else {
-                        self.eval_term_at(&Term::IntLit(0), &"rax".to_string());
+                        self.force_term_at(&Term::IntLit(0), &"rax".to_string())?;
                     }
                     if self.sp > 0 {
                         self.buf.push_line(format!("add rsp, {}", self.sp));
                     }
                     self.buf.push_line("ret");
+                    self.clear_reg(&"rax".to_string());
+                    self.clear_reg(&"rdx".to_string());
                 }
                 ir::Op::NaturalFlow => (),
                 ir::Op::Save => self.reg_states.push(self.regs.to_vec()),
                 ir::Op::Restore => self.restore_regs(),
             }
             match op_clone {
-                ir::Op::Save | ir::Op::Restore | ir::Op::Arg { term: _ } | ir::Op::Param { term: _ } | ir::Op::Call { func: _, res: _ } | ir::Op::BeginCall => (),
+                ir::Op::Save | ir::Op::Restore | ir::Op::Arg { .. } | ir::Op::Param { .. } | ir::Op::Call { .. } | ir::Op::BeginCall => (),
                 _ => self.buf.comment(format!("{:?}", op_clone)),
             }
         }
@@ -355,6 +383,10 @@ impl<'a> Gen<'a> {
         self.get_reg(reg).map(|r| r.locked = lock);
     }
 
+    fn clear_reg(&mut self, reg: &String) {
+        self.get_reg(reg).map(|r| { r.term = None; r.locked = false; });
+    }
+
     fn restore_regs(&mut self) {
         let state = self.reg_states.pop().unwrap();
         let binding = self.regs.clone();
@@ -365,9 +397,7 @@ impl<'a> Gen<'a> {
                     self.save_reg(&r.1.name.clone(), t);
                     self.lock_reg(&r.1.name.clone(), r.1.locked);
                 } else {
-                    let reg = self.get_reg(&r.1.name).unwrap();
-                    reg.term = None;
-                    reg.locked = false;
+                    self.clear_reg(&r.1.name);
                 }
             }
         }
@@ -613,8 +643,17 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    fn fmt_offset(&self, offset: i64) -> String {
+        if offset == 0 {
+            String::new()
+        } else if offset > 0 {
+            format!("+{}", offset)
+        } else {
+            format!("-{}", -offset)
+        }
+    }
+
     fn store(&mut self, term: Term, op: String, ptr: Term, mut offset: i64, res: Option<Term>) -> Result<(), GenError> {
-        let mut t = self.eval_term(term, res.is_none() && op != "*=" && op != "/=" && op != "%=")?;
         let p;
         if let Term::Stack(_) = ptr {
             p = "rsp".to_string();
@@ -622,14 +661,15 @@ impl<'a> Gen<'a> {
         } else {
             p = self.eval_term(ptr, false)?;
         }
-        let o;
-        if offset == 0 {
-            o = String::new();
-        } else if offset > 0 {
-            o = format!("+{}", offset);
-        } else {
-            o = format!("-{}", -offset);
+        if let Some((t1, t2)) = self.doubles.get(&term).cloned() {
+            self.buf.push_line(format!("mov qword [{}{}], {}", p, self.fmt_offset(offset), t1));
+            self.buf.push_line(format!("mov qword [{}{}], {}", p, self.fmt_offset(offset+8), t2));
+            self.clear_reg(&t1);
+            self.clear_reg(&t2);
+            return Ok(());
         }
+        let mut t = self.eval_term(term, res.is_none() && op != "*=" && op != "/=" && op != "%=")?;
+        let o = self.fmt_offset(offset);
         match op.as_str() {
             "=" => self.buf.push_line(format!("mov qword [{}{}], {}", p, o, t)),
             "+=" => self.buf.push_line(format!("add qword [{}{}], {}", p, o, t)),
@@ -687,14 +727,19 @@ impl<'a> Gen<'a> {
         } else {
             r = self.eval_term(ptr.clone(), false)?
         }
-        let o;
-        if offset == 0 {
-            o = String::new();
-        } else if offset > 0 {
-            o = format!("+{}", offset);
-        } else {
-            o = format!("-{}", -offset);
+        if let Term::Double(_) = res {
+            let t1 = self.get_free_reg()?;
+            self.buf.push_line(format!("mov {}, [{}{}]", t1, r, self.fmt_offset(offset)));
+            self.save_reg(&t1, &res);
+            self.lock_reg(&t1, true);
+            let t2 = self.get_free_reg()?;
+            self.buf.push_line(format!("mov {}, [{}{}]", t2, r, self.fmt_offset(offset+8)));
+            self.save_reg(&t2, &res);
+            self.lock_reg(&t2, true);
+            self.doubles.insert(res, (t1, t2));
+            return Ok(());
         }
+        let o = self.fmt_offset(offset);
         if let Term::Stack(_) = ptr {
             println!("eval {:?}", res);
             let res_reg = self.get_free_reg()?;
