@@ -35,6 +35,7 @@ pub enum SemanticError {
     FuncInFunc(PosStr),
     InvalidArgCount(PosStr, usize, usize),
     ArgTypeMismatch(Span, Type, Type),
+    NoFnSig(PosStr, Vec<Type>),
     StructInFunc(PosStr),
     InvalidStructKey(PosStr, PosStr),
     MissingStructKey(PosStr, String),
@@ -132,15 +133,12 @@ impl Validate {
                 let sym = Symbol::Var { ty };
                 arg_symbols.push((arg.0.str.clone(), sym.clone()));
             }
+            let s;
             if decl.name.str == "main" {
                 if self.symbol_table.contains_key("main") {
                     return Err(SemanticError::SymbolExists(decl.name.clone()));
                 }
-                self.symbol_table.insert("main".to_string(), Symbol::Func { 
-                    ty,
-                    block: Block::new(),
-                    symbols: vec![arg_symbols],
-                });
+                s = "main".to_string();
             } else {
                 let len;
                 if let Some(sigs) = self.fn_map.get_mut(&decl.name.str) {
@@ -153,14 +151,48 @@ impl Validate {
                     self.fn_map.insert(decl.name.str.clone(), vec![types]);
                     len = 1;
                 }
-                let s= format!("{}.{}", decl.name.str, len);
+                s = format!("{}.{}", decl.name.str, len);
                 decl.name.str = s.clone();
-                self.symbol_table.insert(s, Symbol::Func { 
-                    ty,
-                    block: Block::new(),
-                    symbols: vec![arg_symbols],
-                });
             }
+            self.symbol_table.insert(s, Symbol::Func { 
+                ty,
+                block: Block::new(),
+                symbols: vec![arg_symbols],
+            });
+        } else if let node::Stmt::Syscall(decl) = stmt {
+            let ty;
+            if let Some(t) = &decl.decl_type {
+                ty = self.r#type(t)?;
+            } else {
+                ty = Type::Void;
+            }
+            let mut types = Vec::new();
+            for arg in decl.types.iter() {
+                let ty = self.r#type(arg)?;
+                types.push(ty.clone());
+            }
+            let s;
+            if decl.name.str == "main" {
+                if self.symbol_table.contains_key("main") {
+                    return Err(SemanticError::SymbolExists(decl.name.clone()));
+                }
+                s = "main".to_string();
+            } else {
+                let len;
+                if let Some(sigs) = self.fn_map.get_mut(&decl.name.str) {
+                    if sigs.contains(&types) {
+                        return Err(SemanticError::SymbolExists(decl.name.clone()));
+                    }
+                    sigs.push(types.clone());
+                    len = sigs.len();
+                } else {
+                    self.fn_map.insert(decl.name.str.clone(), vec![types.clone()]);
+                    len = 1;
+                }
+                s = format!("{}.{}", decl.name.str, len);
+                decl.name.str = s.clone();
+            }
+            self.symbol_table.insert(s, Symbol::Syscall { id: decl.id, ty, args: types });
         }
         Ok(())
     }
@@ -179,6 +211,7 @@ impl Validate {
             node::Stmt::For(r#for) => self.r#for(r#for),
             node::Stmt::Break(pos_id) => self.check_loop("Break", *pos_id),
             node::Stmt::Continue(pos_id) => self.check_loop("Continue", *pos_id),
+            node::Stmt::Syscall(_) => Ok(()) // Checked while hoisting
         }
     }
 
@@ -201,6 +234,10 @@ impl Validate {
             node::ExprKind::Macro(r#macro) => self.r#macro(r#macro),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.span),
+            node::ExprKind::TypeCast(cast) => {
+                self.expr(&mut cast.expr)?;
+                self.r#type(&cast.ty)
+            }
         };
         if let Ok(ty) = &res {
             expr.ty = ty.clone();
@@ -524,15 +561,19 @@ impl Validate {
         }
         let mut s = call.name.str.clone();
         if let Some(sigs) = self.fn_map.get(&call.name.str) {
+            let mut found = false;
             for (i, sig) in sigs.iter().enumerate() {
                 if *sig == arg_types {
                     s = format!("{}.{}", s, i + 1);
                     call.name.str = s.clone();
+                    found = true;
                     break;
                 }
             }
+            if !found {
+                return Err(SemanticError::NoFnSig(call.name.clone(), arg_types));
+            }
         }
-        println!("aflsjkh {}", s);
         let ty;
         let expected_types;
         let temp: Vec<_>;
@@ -561,6 +602,11 @@ impl Validate {
                 temp = args.iter().collect();
                 expected_types = temp;
             }
+            Some(Symbol::Syscall { id: _, ty: t, args }) => {
+                ty = t;
+                temp = args.iter().collect();
+                expected_types = temp;
+            }
             None => return Err(SemanticError::UndeclaredSymbol(call.name.clone())),
             _ => return Err(SemanticError::UndeclaredSymbol(call.name.clone())),
         }
@@ -568,19 +614,11 @@ impl Validate {
         if expected_types.len() != arg_types.len() {
             return Err(SemanticError::InvalidArgCount(call.name.clone(), expected_types.len(), arg_types.len()));
         }
-        // for ((ty1, ty2), span) in expected_types.into_iter().zip(arg_types.iter()).zip(arg_spans.iter()) {
-        //     if *ty1 == Type::Any {
-        //         let str = match ty2 {
-        //             Type::Int => "int",
-        //             Type::String => "str",
-        //             _ => panic!("Bad print type (todo)")
-        //         };
-        //         insert = Some(format!("{}.{}", s, str));
-        //     }
-        //     else if ty1 != ty2 {
-        //         return Err(SemanticError::ArgTypeMismatch(*span, ty1.clone(), ty2.clone()));
-        //     }
-        // }
+        for ((ty1, ty2), span) in expected_types.into_iter().zip(arg_types.iter()).zip(arg_spans.iter()) {
+            if ty1 != ty2 {
+                return Err(SemanticError::ArgTypeMismatch(*span, ty1.clone(), ty2.clone()));
+            }
+        }
         let res = ty.clone();
         // if let Some(name) = insert {
         //     let sym = self.symbol_table.get(&s).unwrap().clone();

@@ -64,6 +64,8 @@ pub enum Token {
     For,
     Break,
     Continue,
+    As,
+    Syscall,
     Semi,
     Colon,
     Bang,
@@ -96,6 +98,8 @@ impl Token {
             Token::For => "for".to_string(),
             Token::Break => "break".to_string(),
             Token::Continue => "continue".to_string(),
+            Token::As => "as".to_string(),
+            Token::Syscall => "syscall".to_string(),
             Token::Semi => ";".to_string(),
             Token::Colon => ":".to_string(),
             Token::Bang => "!".to_string(),
@@ -140,6 +144,8 @@ impl Token {
             "for" => Some(Token::For),
             "break" => Some(Token::Break),
             "continue" => Some(Token::Continue),
+            "as" => Some(Token::As),
+            "syscall" => Some(Token::Syscall),
             _ => None,
         }
     }
@@ -247,6 +253,9 @@ fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError
             pos: FilePos { start: start_pos, end: start_pos }
         }))
     } else {
+        if str.chars().count() > 0 {
+            res.push(StringFragment::String(str));
+        }
         Ok(Token::StringLit { value: StringLit { frags: res } })
     }
 }

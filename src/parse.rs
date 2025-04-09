@@ -65,6 +65,7 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
             check_semi(tokens)?;
             return Ok(node::Stmt::Continue(tokens.prev_index() - 1));
         }
+        Some(Token::Syscall) => return Ok(node::Stmt::Syscall(parse_syscall(tokens)?)),
         _ => (),
     }
     let expr = parse_expr(tokens, 0)?;
@@ -94,30 +95,30 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
         }
         let prec: u8;
         let opstr: String;
-        let unclosed;
+        let mut unclosed = None;
         let tok = peek.unwrap();
         if let Token::Op { value } = tok {
             opstr = value.to_string();
             prec = op_prec(value.as_str());
-            unclosed = None;
-            if prec < min_prec {
-                break;
-            }
         } else if let Token::OpenSquare = tok {
             opstr = "[]".to_string();
             prec = op_prec("[]");
             unclosed = Some((Token::CloseSquare, "']'"));
-            if prec < min_prec {
-                break;
-            }
         } else if let Token::Dot = tok {
             opstr = ".".to_string();
             prec = op_prec(".");
-            unclosed = None;
-            if prec < min_prec {
-                break;
-            }
+        } else if let Token::As = tok {
+            tokens.next();
+            let ty = parse_type(tokens)?;
+            root = expr(start, tokens.prev_index(), node::ExprKind::TypeCast(node::TypeCast {
+                ty,
+                expr: Box::new(root),
+            }));
+            continue;
         } else {
+            break;
+        }
+        if prec < min_prec {
             break;
         }
         let op_pos = tokens.current_index();
@@ -350,6 +351,32 @@ fn parse_map_args(tokens: &mut VecIter<Token>, closing: Token) -> Result<(Vec<Po
     Ok((names, exprs))
 }
 
+fn parse_types_list(tokens: &mut VecIter<Token>, closing: Token) -> Result<Vec<node::Type>, ParseError> {
+    let mut types = Vec::new();
+    let close_str = format!("'{}'", closing.to_string());
+    if tokens.peek().is_none() {
+        return Err(ParseError::UnexpectedEndOfInput(close_str));
+    }
+    if let Some(t) = tokens.peek() {
+        if *t == closing {
+            tokens.next();
+            return Ok(types);
+        }
+    }
+    loop {
+        types.push(parse_type(tokens)?);
+        let tok = check_none(tokens, &close_str)?;
+        if closing == tok {
+            break;
+        } else if let Token::Comma = tok {
+            continue;
+        } else {
+            return Err(unexp(tok, tokens.prev_index(), &close_str));
+        }
+    }
+    Ok(types)
+}
+
 fn parse_type_args(tokens: &mut VecIter<Token>, closing: Token) -> Result<(Vec<PosStr>, Vec<node::Type>), ParseError> {
     let mut types = Vec::new();
     let mut names = Vec::new();
@@ -548,6 +575,41 @@ fn parse_macro(tokens: &mut VecIter<Token>, name: PosStr) -> Result<node::Expr, 
     }
 }
 
+fn parse_syscall(tokens: &mut VecIter<Token>) -> Result<node::Syscall, ParseError> {
+    tokens.next();
+    let tok = check_none(tokens, "the syscall id")?;
+    let Token::IntLit { value: id } = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "the syscall id"));
+    };
+    let tok = check_none(tokens, "':'")?;
+    let Token::Colon = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "':'"));
+    };
+    let tok = check_none(tokens, "the syscall name")?;
+    let Token::Word { value: name_str } = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "the syscall name"));
+    };
+    let name = PosStr { str: name_str, pos_id: tokens.prev_index() };
+    let tok = check_none(tokens, "'('")?;
+    let Token::OpenParen = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "'('"));
+    };
+    let types = parse_types_list(tokens, Token::CloseParen)?;
+    let decl_type;
+    if let Some(Token::Op {value}) = tokens.peek() {
+        if value == "->" {
+            tokens.next();
+            decl_type = Some(parse_type(tokens)?);
+        } else {
+            return Err(unexp(tokens.peek().unwrap().clone(), tokens.current_index(), "'->'"));
+        }
+    } else {
+        decl_type = None;
+    }
+    check_semi(tokens)?;
+    Ok(node::Syscall { id, name, types, decl_type })
+}
+
 fn check_none(tokens: &mut VecIter<Token>, expected: &str) -> Result<Token, ParseError> {
     if tokens.peek().is_none() {
         Err(ParseError::UnexpectedEndOfInput(expected.to_string()))
@@ -605,6 +667,7 @@ fn op_prec(op: &str) -> u8 {
         "/" => 10,
         "%" => 10,
         "!" => 11,
+        "as" => 11,
         "." => 12,
         "[]" => 12, // Highest precedence (done first)
         _ => panic!("No precedence for operator {}", op),

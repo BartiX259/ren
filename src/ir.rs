@@ -7,6 +7,7 @@ pub enum Symbol {
     Var { ty: Type },
     Func { ty: Type, block: Block, symbols: Vec<Vec<(String, Symbol)>> },
     ExternFunc { ty: Type, args: Vec<Type> },
+    Syscall { id: i64, ty: Type, args: Vec<Type> },
     StringLit { str: String }
 }
 

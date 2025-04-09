@@ -121,6 +121,18 @@ pub struct ArrLit {
 pub enum Macro {
     Salloc { count: u32, ty: Type }
 }
+#[derive(Debug)]
+pub struct Syscall {
+    pub id: i64,
+    pub name: PosStr,
+    pub types: Vec<Type>,
+    pub decl_type: Option<Type>,
+}
+#[derive(Debug, Clone)]
+pub struct TypeCast {
+    pub ty: Type,
+    pub expr: Box<Expr>
+}
 
 #[derive(Debug, Clone)]
 pub struct Expr {
@@ -139,6 +151,7 @@ pub enum ExprKind {
     Macro(Macro),
     BinExpr(BinExpr),
     UnExpr(UnExpr),
+    TypeCast(TypeCast)
 }
 #[derive(Debug)]
 pub enum Stmt {
@@ -154,4 +167,5 @@ pub enum Stmt {
     For(For),
     Break(usize),
     Continue(usize),
+    Syscall(Syscall)
 }

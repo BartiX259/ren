@@ -134,6 +134,15 @@ pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
             eprintln!("Argument type mismatch: expected {:?} but got {:?}", ty1, ty2);
             print_file_err(text, &FilePos::span(info, span));
         }
+        SemanticError::NoFnSig(pos_str, tys) => {
+            let ty_list = tys
+                .iter()
+                .map(|ty| format!("{:?}", ty))
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("Function '{}' doesn't accept ({}).", pos_str.str, ty_list);
+            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+        }
         SemanticError::InvalidStructKey(pos_str1, pos_str2) => {
             eprintln!("Struct '{}' doesn't have key '{}'.", pos_str1.str, pos_str2.str);
             print_file_err(text, info.get(pos_str2.pos_id).unwrap());

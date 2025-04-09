@@ -263,7 +263,12 @@ impl<'a> Gen<'a> {
                     self.buf.comment(format!("param {:?}", term));
                 }
                 ir::Op::Call { func, res } => {
-                    self.buf.push_line(format!("call {}", func));
+                    if let Some(Symbol::Syscall { id, .. }) = self.symbol_table.get(&func) {
+                        self.force_term_at(&Term::IntLit(*id), &"rax".to_string())?;
+                        self.buf.push_line("syscall");
+                    } else {
+                        self.buf.push_line(format!("call {}", func));
+                    }
                     self.buf.comment(format!("{:?}", op_clone));
                     if let Some(r) = res {
                         if r.is_stack() {

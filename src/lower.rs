@@ -96,6 +96,7 @@ impl<'a> Lower<'a> {
             node::Stmt::For(r#for) => self.r#for(r#for),
             node::Stmt::Break(pos_id) => self.push_op(Op::Jump { label: *self.loop_exit.last().unwrap() }, *pos_id),
             node::Stmt::Continue(pos_id) => self.push_op(Op::Jump { label: *self.loop_start.last().unwrap() }, *pos_id),
+            node::Stmt::Syscall(_) => ()
         }
     }
 
@@ -199,6 +200,7 @@ impl<'a> Lower<'a> {
             node::ExprKind::Macro(r#macro) => panic!("no macros for now"),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr),
+            node::ExprKind::TypeCast(cast) => self.expr(&cast.expr)
         }
     }
 
@@ -466,15 +468,18 @@ impl<'a> Lower<'a> {
         let mut res = None;
         let mut is_double = false;
         let mut params = Vec::new();
-        if let Some(Symbol::Func { ty, block: _, symbols: _ }) = self.ir.get(&call.name.str) {
-            if ty.size() > 16 { // Pass pointer as first argument
-                self.stack_count += 1;
-                let r = Term::Stack(self.stack_count);
-                self.push_op(Op::Decl { term: r.clone(), size: ty.size() }, call.name.pos_id);
-                res = Some(r);
-            } else if ty.size() > 8 {
-                is_double = true;
+        match self.ir.get(&call.name.str) {
+            Some(Symbol::Func { ty, .. }) | Some(Symbol::ExternFunc { ty, .. }) | Some(Symbol::Syscall { ty, .. }) => {
+                if ty.size() > 16 { // Pass pointer as first argument
+                    self.stack_count += 1;
+                    let r = Term::Stack(self.stack_count);
+                    self.push_op(Op::Decl { term: r.clone(), size: ty.size() }, call.name.pos_id);
+                    res = Some(r);
+                } else if ty.size() > 8 {
+                    is_double = true;
+                }
             }
+            _ => ()
         }
         self.push_op(Op::BeginCall, call.name.pos_id);
         if let Some(r) = &res {
