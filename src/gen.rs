@@ -3,9 +3,9 @@ use crate::ir::{self, Block, OpLoc, Symbol, Term};
 use std::collections::HashMap;
 
 /// Generate nasm code based on the IR
-pub fn gen(ir: &mut HashMap<String, Symbol>) -> Result<String, GenError> {
+pub fn gen(ir: &mut HashMap<String, Symbol>) -> Result<String, (String, GenError)> {
     let mut gen = Gen::new(ir);
-    gen.all()?;
+    gen.all().map_err(|e| (gen.cur_module, e))?;
     Ok(gen.buf.get_output())
 }
 
@@ -38,6 +38,7 @@ struct ProgState {
 
 struct Gen<'a> {
     buf: IndentedBuf,
+    cur_module: String,
     symbol_table: &'a mut HashMap<String, Symbol>,
     fn_symbols: Vec<Vec<(String, Symbol)>>,
     locs: HashMap<Term, i64>,
@@ -57,6 +58,7 @@ impl<'a> Gen<'a> {
     pub fn new(ir: &'a mut HashMap<String, Symbol>) -> Self {
         Self {
             buf: IndentedBuf::new(8, 24),
+            cur_module: String::new(),
             symbol_table: ir,
             fn_symbols: Vec::new(),
             locs: HashMap::new(),
@@ -98,15 +100,9 @@ impl<'a> Gen<'a> {
         self.buf.push_line("_start:");
         self.buf.indent();
         let main = self.symbol_table.get("main");
-        if let Some(Symbol::Func {
-            ty: _,
-            block: _,
-            symbols: _,
-        }) = main
-        {
-        } else {
+        let Some(Symbol::Func { .. } ) = main else {
             return Err(GenError::NoMainFn);
-        }
+        };
         self.buf.push_line("call main");
         self.buf.push_line("mov rdi, rax");
         self.buf.push_line("mov rax, 60");
@@ -140,7 +136,8 @@ impl<'a> Gen<'a> {
             self.sp = 0;
             self.arg_index = 0;
             let sym = self.symbol_table.get(&name);
-            if let Some(Symbol::Func { ty: _, block, symbols }) = sym {
+            if let Some(Symbol::Func { block, module, symbols, .. }) = sym {
+                self.cur_module = module.to_string();
                 self.buf.push_line("");
                 self.buf.push_line(format!("{}:", name));
                 self.buf.indent();

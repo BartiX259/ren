@@ -268,7 +268,7 @@ impl<'a> Lower<'a> {
         // self.stack_count = 0;
         self.var_map.clear();
         if let Some(sym) = self.ir.get(&decl.name.str).cloned() {
-            if let Symbol::Func { ty, block: _, symbols } = sym  {
+            if let Symbol::Func { ty, symbols, .. } = sym  {
                 if ty.size() > 16 {
                     self.pointer_count += 1;
                     self.ret_salloc = Some(Term::Pointer(self.pointer_count));
@@ -302,7 +302,7 @@ impl<'a> Lower<'a> {
         self.ret_salloc = None;
         println!("VAR MAP {}", decl.name.str);
         println!("{:?}", self.var_map);
-        if let Some(Symbol::Func { ty: _, block, symbols: _, }) = self.ir.get_mut(&decl.name.str) {
+        if let Some(Symbol::Func { block, .. }) = self.ir.get_mut(&decl.name.str) {
             *block = self.cur_block.clone().unwrap();
         } else {
             panic!("Counldn't find {} symbol", decl.name.str);

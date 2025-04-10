@@ -177,3 +177,46 @@ pub enum Stmt {
     Continue(usize),
     Syscall(Syscall)
 }
+#[derive(Debug)]
+pub struct Module {
+    pub path: String,
+    pub stmts: Vec<Stmt>
+}
+
+#[derive(Debug)]
+pub struct Import {
+    pub path: String,
+    pub parent: Option<String>,
+    pub pos_id: usize
+}
+
+#[derive(Debug)]
+pub struct Imports(pub Vec<String>);
+
+#[derive(Debug)]
+pub struct Root(pub Vec<Module>);
+
+impl Root {
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Stmt)> {
+        self.0.iter().flat_map(|module| {
+            let path = module.path.as_str();
+            module.stmts.iter().map(move |stmt| (path, stmt))
+        })
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&str, &mut Stmt)> {
+        self.0.iter_mut().flat_map(|module| {
+            let path = module.path.as_str();
+            module.stmts.iter_mut().map(move |stmt| (path, stmt))
+        })
+    }
+}
+
+impl IntoIterator for Root {
+    type Item = Stmt;
+    type IntoIter = std::vec::IntoIter<Stmt>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter().flat_map(|module| module.stmts.into_iter()).collect::<Vec<_>>().into_iter()
+    }
+}

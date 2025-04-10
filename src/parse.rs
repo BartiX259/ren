@@ -3,13 +3,18 @@ use crate::node::{self, ExprKind, PosStr, Span};
 use crate::tokenize::Token;
 
 /// Parse tokens into the ast
-pub fn parse(token_res: Vec<Token>) -> Result<Vec<node::Stmt>, ParseError> {
+pub fn parse(token_res: Vec<Token>, parent: Option<String>) -> Result<(Vec<node::Stmt>, Vec<node::Import>), ParseError> {
     let mut tokens = VecIter::new(token_res);
     let mut vec = Vec::new();
+    let mut imports = Vec::new();
+    while let Some(Token::Import { module }) = tokens.peek() {
+        imports.push(node::Import { path: module.clone(), parent: parent.clone(), pos_id: tokens.current_index() });
+        tokens.next();
+    }
     while tokens.peek().is_some() {
         vec.push(parse_stmt(&mut tokens)?);
     }
-    Ok(vec)
+    Ok((vec, imports))
 }
 
 #[derive(Debug)]
@@ -23,6 +28,7 @@ pub enum ParseError {
     UnexpectedToken(UnexpectedToken),
     UnexpectedEndOfInput(String),
     InvalidMacro(PosStr),
+    ImportNotAtStart(usize)
 }
 
 fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
@@ -66,6 +72,7 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
             return Ok(node::Stmt::Continue(tokens.prev_index() - 1));
         }
         Some(Token::Syscall) => return Ok(node::Stmt::Syscall(parse_syscall(tokens)?)),
+        Some(Token::Import { .. }) => return Err(ParseError::ImportNotAtStart(tokens.current_index())),
         _ => (),
     }
     let expr = parse_expr(tokens, 0)?;

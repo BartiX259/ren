@@ -52,6 +52,7 @@ pub enum Token {
     IntLit { value: i64 },
     StringLit { value: StringLit },
     Op { value: String },
+    Import { module: String },
     Let,
     Decl,
     Fn,
@@ -86,6 +87,7 @@ impl Token {
             Token::IntLit { value } => value.to_string(),
             Token::StringLit { value } => format!("\"{}\"", value),
             Token::Op { value } => value.clone(),
+            Token::Import { module} => format!("import {}", module),
             Token::Let => "let".to_string(),
             Token::Decl => "decl".to_string(),
             Token::Fn => "fn".to_string(),
@@ -167,6 +169,16 @@ fn tok_word(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeErro
     }
     if let Some(str_tok) = Token::from_string(&word) {
         return Ok(str_tok);
+    }
+    if word == "import" {
+        let mut module = String::new();
+        while let Some(&next_ch) = iter.peek() {
+            if next_ch == '\n' { break; }
+            module.push(next_ch);
+            iter.next();
+        }
+        module = module.trim().to_string();
+        return Ok(Token::Import { module });
     }
     Ok(Token::Word { value: word })
 }

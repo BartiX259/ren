@@ -1,8 +1,11 @@
+use std::fs;
+use std::io::Error;
+
 use crate::ir::OpLoc;
 use crate::gen::GenError;
-use crate::node::Span;
+use crate::node::{self, Span};
 use crate::parse::ParseError;
-use crate::tokenize::TokenizeError;
+use crate::tokenize::{self, TokenizeError};
 use crate::validate::SemanticError;
 
 #[derive(Debug, Clone)]
@@ -22,33 +25,45 @@ impl FilePos {
     }
 }
 
-pub fn token_err(text: &String, e: TokenizeError) {
+pub fn import_error(err: Error, import: &node::Import) {
+    if let Some(parent) = &import.parent {
+        print_err();
+        eprintln!("For path '{}': {err}", import.path);
+        print_module_err_id(&parent, import.pos_id);
+    } else {
+        print_err();
+        eprintln!("For path '{}': {err}", import.path);
+    }
+}
+
+pub fn token_err(path: &String, e: TokenizeError) {
     print_err();
     match e {
         TokenizeError::InvalidCharacter(c) => {
             eprintln!("Invalid character '{}'", c.ch);
-            print_file_err(text, &c.pos);
+            print_module_err_pos(&path, c.pos);
         }
         TokenizeError::InvalidNumberCharacter(c) => {
             eprintln!("Invalid character '{}' in number", c.ch);
-            print_file_err(text, &c.pos);
+            print_module_err_pos(&path, c.pos);
         }
         TokenizeError::UnclosedCharacter(c) => {
             eprintln!("Unclosed character '{}'", c.ch);
-            print_file_err(text, &c.pos);
+            print_module_err_pos(&path, c.pos);
         }
     }
 }
 
-pub fn parse_err(text: &String, e: ParseError, info: Vec<FilePos>) {
+pub fn parse_err(path: &String, e: ParseError) {
     print_err();
     match e {
         ParseError::UnexpectedToken(u) => {
             eprintln!("Unexpected token '{}', expected {}.", u.token.to_string(), u.expected);
-            print_file_err(text, info.get(u.info_id).unwrap());
+            print_module_err_id(path, u.info_id);
         }
         ParseError::UnexpectedEndOfInput(expected) => {
             eprintln!("Unexpected end of input, expected {}.", expected);
+            let text = fs::read_to_string(&path).unwrap();
             let mut end = text.len();
             for c in text.chars().rev() {
                 if !c.is_whitespace() {
@@ -57,7 +72,7 @@ pub fn parse_err(text: &String, e: ParseError, info: Vec<FilePos>) {
                 end -= 1;
             }
             print_file_err(
-                text,
+                &text, path,
                 &FilePos {
                     start: end,
                     end
@@ -66,73 +81,77 @@ pub fn parse_err(text: &String, e: ParseError, info: Vec<FilePos>) {
         }
         ParseError::InvalidMacro(pos_str) => {
             eprintln!("Invalid macro '{}'.", pos_str.str);
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
+        }
+        ParseError::ImportNotAtStart(pos_id) => {
+            eprintln!("Import not at the top of the file.");
+            print_module_err_id(path, pos_id);
         }
     }
 }
 
-pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
+pub fn sematic_err(path: &String, e: SemanticError) {
     print_err();
     match e {
         SemanticError::InvalidType(span) => {
             eprintln!("Invalid type.");
-            print_file_err(text, &FilePos::span(info, span));
+            print_module_err_span(path, span);
         }
         SemanticError::SymbolExists(pos_str) => {
             eprintln!("Symbol '{}' exists.", pos_str.str);
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::UndeclaredSymbol(pos_str) => {
             eprintln!("Undeclared symbol '{}'.", pos_str.str);
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::TypeMismatch(pos_str, ty1, ty2) => {
             eprintln!("Type mismatch: can't use '{}' with {:?} and {:?}", pos_str.str, ty1, ty2);
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::InvalidReturn(pos_id) => {
             eprintln!("Invalid return statement.");
-            print_file_err(text, info.get(pos_id).unwrap());
+            print_module_err_id(path, pos_id);
         }
         SemanticError::NotInLoop(name, pos_id) => {
             eprintln!("{} statement not in a loop.", name);
-            print_file_err(text, info.get(pos_id).unwrap());
+            print_module_err_id(path, pos_id);
         }
         SemanticError::InvalidAssign(span) => {
             eprintln!("Invalid assignment.");
-            print_file_err(text, &FilePos::span(info, span));
+            print_module_err_span(path, span);
         }
         SemanticError::InvalidUnaryOperator(pos_str) => {
             eprintln!("Invalid unary operator '{}'.", pos_str.str);
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::InvalidAddressOf(pos_str) => {
             eprintln!("Invalid '&' use. Expected &symbol.");
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::InvalidDereference(pos_str, ty) => {
             eprintln!("Invalid dereference: can't dereference {:?}", ty);
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::StructDereference(span) => {
             eprintln!("Can't dereference struct. Use '.' directly with the pointer.");
-            print_file_err(text, &FilePos::span(info, span));
+            print_module_err_span(path, span);
         }
         SemanticError::FuncInFunc(pos_str) => {
             eprintln!("Function inside another function.");
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::StructInFunc(pos_str) => {
             eprintln!("Struct declaration inside a function.");
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::InvalidArgCount(pos_str, exp, got) => {
             eprintln!("Invalid argument count, expected {} arguments but got {}", exp, got);
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::ArgTypeMismatch(span, ty1, ty2) => {
             eprintln!("Argument type mismatch: expected {:?} but got {:?}", ty1, ty2);
-            print_file_err(text, &FilePos::span(info, span));
+            print_module_err_span(path, span);
         }
         SemanticError::NoFnSig(pos_str, tys) => {
             let ty_list = tys
@@ -141,40 +160,40 @@ pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
                 .collect::<Vec<_>>()
                 .join(", ");
             eprintln!("Function '{}' doesn't accept ({}).", pos_str.str, ty_list);
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::InvalidStructKey(pos_str1, pos_str2) => {
             eprintln!("Struct '{}' doesn't have key '{}'.", pos_str1.str, pos_str2.str);
-            print_file_err(text, info.get(pos_str2.pos_id).unwrap());
+            print_module_err_id(path, pos_str2.pos_id);
         }
         SemanticError::MissingStructKey(pos_str, key) => {
             eprintln!("Missing key '{}' for struct '{}'.", key, pos_str.str);
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::StructTypeMismatch(pos_str, ty1, ty2) => {
             eprintln!("Struct type mismatch: expected {:?} but got {:?}", ty1, ty2);
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::InvalidMemberAccess(span) => {
             eprintln!("Invalid member access.");
-            print_file_err(text, &FilePos::span(info, span));
+            print_module_err_span(path, span);
         }
         SemanticError::EmptyArray(span) => {
             eprintln!("Empty arrays not allowed. Use 'decl' or initialize with values.");
-            print_file_err(text, &FilePos::span(info, span));
+            print_module_err_span(path, span);
         }
         SemanticError::ArrayTypeMismatch(span, ty1, ty2) => {
             eprintln!("Array type mismatch: expected {:?} but got {:?}", ty1, ty2);
-            print_file_err(text, &FilePos::span(info, span));
+            print_module_err_span(path, span);
         }
         SemanticError::MissingLen(pos_str) => {
             eprintln!("Missing length for '{}'. For example, '{}[int, 4]'.", pos_str.str, pos_str.str);
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+            print_module_err_id(path, pos_str.pos_id);
         }
     }
 }
 
-pub fn gen_err(text: &String, e: GenError, info: Vec<FilePos>) {
+pub fn gen_err(path: &String, e: GenError) {
     print_err();
     match e {
         GenError::NoMainFn => {
@@ -182,43 +201,19 @@ pub fn gen_err(text: &String, e: GenError, info: Vec<FilePos>) {
         }
         GenError::ReservedSymbol(loc) => {
             eprintln!("Symbol is reserved");
-            print_file_err(
-                text,
-                &FilePos {
-                    start: info.get(loc.start_id).unwrap().start,
-                    end: info.get(loc.end_id).unwrap().end,
-                },
-            );
+            print_module_err_op(path, loc);
         }
         GenError::NoFreeRegisters(loc) => {
             eprintln!("Ran out of registers. Consider splitting up this expression.");
-            print_file_err(
-                text,
-                &FilePos {
-                    start: info.get(loc.start_id).unwrap().start,
-                    end: info.get(loc.end_id).unwrap().end,
-                },
-            );
+            print_module_err_op(path, loc);
         }
         GenError::TooManyArguments(loc) => {
             eprintln!("Too many arguments. Consider making and passing a struct instead.");
-            print_file_err(
-                text,
-                &FilePos {
-                    start: info.get(loc.start_id).unwrap().start,
-                    end: info.get(loc.end_id).unwrap().end,
-                },
-            );
+            print_module_err_op(path, loc);
         }
         GenError::ExpectedLiteral(loc) => {
             eprintln!("Expected a literal.");
-            print_file_err(
-                text,
-                &FilePos {
-                    start: info.get(loc.start_id).unwrap().start,
-                    end: info.get(loc.end_id).unwrap().end,
-                },
-            );
+            print_module_err_op(path, loc);
         }
     }
 }
@@ -227,7 +222,34 @@ fn print_err() {
     eprint!("\x1b[91mError: \x1b[0m");
 }
 
-fn print_file_err(text: &String, pos: &FilePos) {
+fn print_module_err_id(module: &String, pos_id: usize) {
+    let text = fs::read_to_string(&module).unwrap();
+    let (_, locs) = tokenize::tokenize(&text).unwrap();
+    let pos = locs.get(pos_id).unwrap();
+    print_file_err(&text, module, pos);
+}
+
+fn print_module_err_pos(module: &String, file_pos: FilePos) {
+    let text = fs::read_to_string(&module).unwrap();
+    print_file_err(&text,  module, &file_pos);
+}
+
+fn print_module_err_span(module: &String, span: Span) {
+    let text = fs::read_to_string(&module).unwrap();
+    let (_, locs) = tokenize::tokenize(&text).unwrap();
+    print_file_err(&text, module, &FilePos::span(locs, span));
+}
+
+fn print_module_err_op(module: &String, op: OpLoc) {
+    let text = fs::read_to_string(&module).unwrap();
+    let (_, locs) = tokenize::tokenize(&text).unwrap();
+    print_file_err(&text, module, &FilePos {
+        start: locs.get(op.start_id).unwrap().start,
+        end: locs.get(op.end_id).unwrap().end,
+    });
+}
+
+fn print_file_err(text: &String, module: &String, pos: &FilePos) {
     let mut line: String = String::new();
     let mut cur_pos: usize = 0;
     let mut line_pos: usize = 0;
@@ -247,6 +269,7 @@ fn print_file_err(text: &String, pos: &FilePos) {
             if cur_pos > pos.start {
                 let padding = usize::ilog10(line_nr);
                 let padstr = " ".repeat(padding as usize + 2);
+                eprintln!("\x1b[94m{}{}\x1b[0m", padstr, module);
                 eprintln!("\x1b[94m{}|\x1b[0m", padstr);
                 eprintln!("\x1b[94m{} |\x1b[0m {}", line_nr, line);
                 eprint!("\x1b[94m{}|\x1b[0m", padstr);
@@ -278,3 +301,4 @@ fn print_file_err(text: &String, pos: &FilePos) {
         }
     }
 }
+

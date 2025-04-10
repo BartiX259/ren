@@ -1,12 +1,8 @@
+import lib/std
+
 fn main() {
-    t([1] as int[]);
-    b((1, 2));
+    b(["asd"] as str[]);
 }
-
-fn t(x: int[]) {
-    x[0];
-}
-
-fn b(x: (int, str)) {
-    
+fn b(x: str[]) {
+    print(x[0]);
 }

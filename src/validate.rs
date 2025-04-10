@@ -5,17 +5,26 @@ use std::collections::{HashMap, HashSet};
 
 
 /// Validate the ast, return a symbol table if successful
-pub fn validate(stmts: &mut Vec<node::Stmt>) -> Result<HashMap<String, Symbol>, SemanticError> {
+pub fn validate(root: &mut node::Root) -> Result<HashMap<String, Symbol>, (String, SemanticError)> {
     let mut val = Validate::new();
-    for stmt in stmts.iter() {
-        val.hoist_type(stmt)?;
+    for (module, stmt) in root.iter() {
+        if module != val.cur_module {
+            val.cur_module = module.to_string();
+        }
+        val.hoist_type(stmt).map_err(|e| (module.to_string(), e))?;
     }
-    for stmt in stmts.iter_mut() {
-        val.hoist_func(stmt)?;
+    for (module, stmt) in root.iter_mut() {
+        if module != val.cur_module {
+            val.cur_module = module.to_string();
+        }
+        val.hoist_func(stmt).map_err(|e| (module.to_string(), e))?;
     }
     println!("{:?}", val.symbol_table);
-    for stmt in stmts {
-        val.stmt(stmt)?;
+    for (module, stmt) in root.iter_mut() {
+        if module != val.cur_module {
+            val.cur_module = module.to_string();
+        }
+        val.stmt(stmt).map_err(|e| (module.to_string(), e))?;
     }
     Ok(val.symbol_table)
 }
@@ -48,6 +57,7 @@ pub enum SemanticError {
 
 pub struct Validate {
     pub symbol_table: HashMap<String, Symbol>,
+    cur_module: String,
     fn_map: HashMap<String, Vec<Vec<Type>>>,
     fn_symbols: Vec<Vec<(String, Symbol)>>,
     symbol_stack: Vec<usize>,
@@ -61,6 +71,7 @@ impl Validate {
     pub fn new() -> Self {
         Self {
             symbol_table: HashMap::new(),
+            cur_module: String::new(),
             fn_map: HashMap::new(),
             fn_symbols: Vec::new(),
             symbol_stack: Vec::new(),
@@ -155,7 +166,7 @@ impl Validate {
                 decl.name.str = s.clone();
             }
             self.symbol_table.insert(s, Symbol::Func { 
-                ty,
+                ty, module: self.cur_module.clone(),
                 block: Block::new(),
                 symbols: vec![arg_symbols],
             });
@@ -597,7 +608,7 @@ impl Validate {
         let expected_types;
         let temp: Vec<_>;
         match self.symbol_table.get(&s) {
-            Some(Symbol::Func { ty: t, block: _, symbols}) => {
+            Some(Symbol::Func { ty: t, symbols, .. }) => {
                 ty = t;
                 if symbols.len() == 0 { // Recursive call
                     temp = self.fn_symbols

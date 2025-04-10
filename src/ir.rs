@@ -5,7 +5,7 @@ use crate::types::Type;
 pub enum Symbol {
     Struct { ty: Type },
     Var { ty: Type },
-    Func { ty: Type, block: Block, symbols: Vec<Vec<(String, Symbol)>> },
+    Func { ty: Type, block: Block, module: String, symbols: Vec<Vec<(String, Symbol)>> },
     ExternFunc { ty: Type, args: Vec<Type> },
     Syscall { id: i64, ty: Type, args: Vec<Type> },
     StringLit { str: String }
