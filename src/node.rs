@@ -1,4 +1,5 @@
 use crate::types;
+use crate::helpers::StringLit;
 
 #[derive(Debug, Clone)]
 pub struct PosStr {
@@ -145,7 +146,8 @@ pub enum ExprKind {
     IntLit(i64),
     ArrLit(ArrLit),
     StructLit(StructLit),
-    StringLit(crate::helpers::StringLit),
+    StringLit(StringLit),
+    TupleLit(Vec<Expr>),
     Variable(PosStr),
     Call(Call),
     Macro(Macro),

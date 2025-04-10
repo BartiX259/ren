@@ -3,14 +3,14 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Void,
-    Any,
     Int,
     Float,
     Bool,
     String,
     Pointer(Box<Type>),
     Array { inner: Box<Type>, length: usize },
-    Struct(HashMap<String, (Type, u32)>)
+    Struct(HashMap<String, (Type, u32)>),
+    Tuple(Vec<Type>)
 }
 
 impl Type {
@@ -18,17 +18,18 @@ impl Type {
         match self {
             Type::Struct(map) => map.iter().map(|(_, (ty, _))| ty.size()).sum(),
             Type::Array { inner, length } => *length as u32 * inner.size(),
+            Type::Tuple(tys) => tys.iter().map(|ty| ty.size()).sum(),
             Type::String => 16,
             _ => 8
         }
     }
-    pub fn pointer(&self) -> Option<Type> {
+    pub fn dereference(&self) -> Option<Type> {
         match self {
             Type::Pointer(p) | Type::Array { inner: p, length: _ } => Some(*p.clone()),
             _ => None
         }
     }
-    pub fn stack(&self) -> Option<Type> {
+    pub fn address_of(&self) -> Option<Type> {
         match self {
             Type::Array { inner: p, length: _ } => Some(*p.clone()),
             _ => None
@@ -36,7 +37,7 @@ impl Type {
     }
     pub fn salloc(&self) -> bool {
         match self {
-            Type::Array { inner: _, length: _ } | Type::Struct(_) | Type::String => true,
+            Type::Array { .. } | Type::Struct(_) | Type::String | Type::Tuple(_) => true,
             _ => false
         }
     }

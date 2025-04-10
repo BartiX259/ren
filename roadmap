@@ -1,5 +1,6 @@
-- Peephole optimization
 - Tuples
+- Multiple files
+- Peephole optimization
 - Heap
 - String interpolation
 - Lists

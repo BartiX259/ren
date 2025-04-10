@@ -222,6 +222,13 @@ impl Validate {
             .map(|res| Type::Array { inner: Box::new(res.0), length: res.1 }),
             node::ExprKind::StructLit(struct_lit) => self.struct_lit(struct_lit),
             node::ExprKind::StringLit(_) => Ok(Type::String),
+            node::ExprKind::TupleLit(exprs) => {
+                let types = exprs
+                    .iter_mut()
+                    .map(|e| self.expr(e))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Type::Tuple(types))
+            }
             node::ExprKind::Variable(pos_str) => self
                 .symbol_table
                 .get(&pos_str.str)
@@ -455,7 +462,7 @@ impl Validate {
                 }
             }
             "=" => {
-                // Assignment operators
+                // Assignment operator
                 if ty1 == ty2 {
                     Ok(ty1)
                 } else {
@@ -463,11 +470,17 @@ impl Validate {
                 }
             }
             "[]" => {
-                if let Some(t) = ty1.pointer() {
+                if let Some(t) = ty1.dereference() {
                     if ty2 == Type::Int {
                         Ok(t)
                     } else {
                         Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
+                    }
+                } else if let Type::Tuple(v) = ty1 {
+                    if let ExprKind::IntLit(i) = bin.rhs.kind {
+                        v.get(i as usize).cloned().ok_or(SemanticError::InvalidMemberAccess(bin.rhs.span))
+                    } else {
+                        Err(SemanticError::InvalidMemberAccess(bin.rhs.span))
                     }
                 } else {
                     Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
@@ -483,7 +496,7 @@ impl Validate {
             "-" => Ok(ty),
             "&" => {
                 if let node::ExprKind::Variable(_) = un.expr.kind {
-                    if let Some(p) = ty.stack() {
+                    if let Some(p) = ty.address_of() {
                         Ok(Type::Pointer(Box::new(p)))
                     } else {
                         Ok(Type::Pointer(Box::new(ty)))

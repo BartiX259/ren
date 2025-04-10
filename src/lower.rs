@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ir::{Block, Symbol, Term, Op, OpLoc};
+use crate::types::Type;
 use crate::{node, types};
 use crate::helpers::StringLit;
 
@@ -107,7 +108,7 @@ impl<'a> Lower<'a> {
             }
             node::ExprKind::ArrLit(arr_lit) => {
                 let ptr;
-                let Some(inner) = expr.ty.pointer() else {
+                let Some(inner) = expr.ty.dereference() else {
                     panic!("Salloc not a pointer");
                 };
                 let size = inner.size();
@@ -186,6 +187,30 @@ impl<'a> Lower<'a> {
                     self.push_op(
                         Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(new_sym) }, expr.span.end
                     );
+                }
+                if Some(ptr.clone()) == self.cur_salloc {
+                    self.cur_salloc = None;
+                    self.salloc_offset = 0;
+                }
+                ptr
+            }
+            node::ExprKind::TupleLit(exprs) => {
+                let ptr;
+                if let Some(p) = &self.cur_salloc {
+                    ptr = p.clone();
+                } else {
+                    self.stack_count += 1;
+                    ptr = Term::Stack(self.stack_count);
+                    self.cur_salloc = Some(ptr.clone());
+                    self.push_op(Op::Decl { term: ptr.clone(), size: expr.ty.size() }, expr.span.end);
+                }
+                for expr in exprs {
+                    let r = self.expr(expr);
+                    if !expr.ty.salloc() {
+                        self.temp_count += 1;
+                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r }, expr.span.end);
+                        self.salloc_offset += expr.ty.size() as i64;
+                    }
                 }
                 if Some(ptr.clone()) == self.cur_salloc {
                     self.cur_salloc = None;

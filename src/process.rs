@@ -199,7 +199,7 @@ impl Process {
         let mut lhs = self.expr(*bin.lhs);
         let ltype = self.cur_type.clone();
         let mut rhs = self.expr(*bin.rhs);
-        if let Some(p) = ltype.pointer() { // Pointer arithmetic - multiply by size of inner type
+        if let Some(p) = ltype.dereference() { // Pointer arithmetic - multiply by size of inner type
             let rspan = rhs.span;
             rhs = node::Expr {
                 ty: rhs.ty.clone(),
@@ -223,14 +223,24 @@ impl Process {
             }
         }
         if bin.op.str == "[]" { // Array access -> add and dereference
+            let offset;
+            if let Type::Tuple(v) = &lhs.ty {
+                let node::ExprKind::IntLit(i) = rhs.kind else { unreachable!() };
+                let o: u32 = v.iter().take(i as usize).map(|ty| ty.size()).sum();
+                let mut temp = rhs.clone();
+                temp.kind = node::ExprKind::IntLit(o as i64);
+                offset = temp;
+            } else {
+                offset = rhs;
+            }
             return node::ExprKind::UnExpr(node::UnExpr {
                 op: self.pos_str("*".to_string()),
                 expr: Box::new(node::Expr { 
                     ty: lhs.ty.clone(),
-                    span: lhs.span.add(rhs.span),
+                    span: lhs.span.add(offset.span),
                     kind: self.calc_bin_expr(node::BinExpr {
                         lhs: Box::new(lhs),
-                        rhs: Box::new(rhs),
+                        rhs: Box::new(offset),
                         op: self.pos_str("+".to_string())
                     })
                 })

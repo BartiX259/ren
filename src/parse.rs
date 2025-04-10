@@ -172,12 +172,21 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             return Ok(expr(start, start, node::ExprKind::Variable(pos_str)));
         }
         Token::OpenParen => { // Brackets
-            let res = parse_expr(tokens, 1)?;
-            let tok = check_none(tokens, "')'")?;
-            if let Token::CloseParen = tok {
-                return Ok(res);
-            } else {
-                return Err(unexp(tok, tokens.prev_index(), "')'"));
+            let mut tuple = Vec::new();
+            loop {
+                let res = parse_expr(tokens, 1)?;
+                let tok = check_none(tokens, "')'")?;
+                if let Token::CloseParen = tok {
+                    if tuple.len() > 0 {
+                        tuple.push(res);
+                        return Ok(expr(start, tokens.prev_index(), node::ExprKind::TupleLit(tuple)));
+                    }
+                    return Ok(res);
+                } else if let Token::Comma = tok {
+                    tuple.push(res);
+                } else {
+                    return Err(unexp(tok, tokens.prev_index(), "')'"));
+                }
             }
         }
         Token::Op { value } => { // Unary expression
@@ -637,39 +646,40 @@ fn unexp(token: Token, info_id: usize, expected: &str) -> ParseError {
 
 fn op_prec(op: &str) -> u8 {
     match op {
-        "=" => 0,  // Lowest precedence (done last)
-        "+=" => 0,
-        "-=" => 0,
-        "*=" => 0,
-        "/=" => 0,
-        "%=" => 0,
-        "|=" => 0,
-        "^=" => 0,
-        "&=" => 0,
-        "<<=" => 0,
-        ">>=" => 0,
-        "||" => 1,
-        "&&" => 2,
-        "|" => 3,
-        "^" => 4,
-        "&" => 5,
-        "==" => 6,
-        "!=" => 6,
-        "<" => 7,
-        "<=" => 7,
-        ">" => 7,
-        ">=" => 7,
-        "<<" => 8,
-        ">>" => 8,
-        "+" => 9,
-        "-" => 9,
-        "*" => 10,
-        "/" => 10,
-        "%" => 10,
-        "!" => 11,
-        "as" => 11,
-        "." => 12,
-        "[]" => 12, // Highest precedence (done first)
+        "," => 0,
+        "=" => 1,  // Lowest precedence (done last)
+        "+=" => 1,
+        "-=" => 1,
+        "*=" => 1,
+        "/=" => 1,
+        "%=" => 1,
+        "|=" => 1,
+        "^=" => 1,
+        "&=" => 1,
+        "<<=" => 1,
+        ">>=" => 1,
+        "||" => 2,
+        "&&" => 3,
+        "|" => 4,
+        "^" => 5,
+        "&" => 6,
+        "==" => 7,
+        "!=" => 7,
+        "<" => 8,
+        "<=" => 8,
+        ">" => 8,
+        ">=" => 8,
+        "<<" => 9,
+        ">>" => 9,
+        "+" => 10,
+        "-" => 10,
+        "*" => 11,
+        "/" => 11,
+        "%" => 11,
+        "!" => 12,
+        "as" => 12,
+        "." => 13,
+        "[]" => 13, // Highest precedence (done first)
         _ => panic!("No precedence for operator {}", op),
     }
 }
@@ -707,6 +717,7 @@ fn op_assoc(op: &str) -> u8 {
         "%" => 1,
         "." => 1,
         "[]" => 1,
+        "," => 1,
         _ => panic!("No associativity for operator {}", op),
     }
 }
