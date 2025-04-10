@@ -225,7 +225,7 @@ impl<'a> Lower<'a> {
             node::ExprKind::Macro(r#macro) => panic!("no macros for now"),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr),
-            node::ExprKind::TypeCast(cast) => self.expr(&cast.expr)
+            node::ExprKind::TypeCast(cast) => self.type_cast(cast, &expr.ty)
         }
     }
 
@@ -655,5 +655,25 @@ impl<'a> Lower<'a> {
         self.push_op(Op::NaturalFlow, r#for.pos_id);
         self.loop_start.pop();
         self.loop_exit.pop();
+    }
+
+    fn type_cast(&mut self, cast: &node::TypeCast, to: &Type) -> Term {
+        let r = self.expr(&cast.expr);
+        let id = cast.expr.span.end;
+        let res;
+        match (&cast.expr.ty, to) {
+            (Type::Array { inner: _, length }, Type::TaggedArray { inner: _ }) => {
+                self.stack_count += 1;
+                let s = Term::Stack(self.stack_count);
+                self.temp_count += 1;
+                self.push_op(Op::Decl { term: s.clone(), size: 16 }, id);
+                self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 0, op: "=".to_string(), term: Term::IntLit(*length as i64) }, id);
+                self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r }, id);
+                self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: Term::Temp(self.temp_count) }, id);
+                res = s;
+            }
+            _ => res = r
+        }
+        res
     }
 }

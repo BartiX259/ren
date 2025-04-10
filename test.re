@@ -1,6 +1,12 @@
 fn main() {
-    let x = (1, "asd", 5);
+    t([1] as int[]);
+    b((1, 2));
+}
+
+fn t(x: int[]) {
     x[0];
-    x[1];
-    x[2];
+}
+
+fn b(x: (int, str)) {
+    
 }

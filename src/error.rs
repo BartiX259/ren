@@ -74,9 +74,9 @@ pub fn parse_err(text: &String, e: ParseError, info: Vec<FilePos>) {
 pub fn sematic_err(text: &String, e: SemanticError, info: Vec<FilePos>) {
     print_err();
     match e {
-        SemanticError::InvalidType(pos_str) => {
-            eprintln!("Invalid type '{}'.", pos_str.str);
-            print_file_err(text, info.get(pos_str.pos_id).unwrap());
+        SemanticError::InvalidType(span) => {
+            eprintln!("Invalid type.");
+            print_file_err(text, &FilePos::span(info, span));
         }
         SemanticError::SymbolExists(pos_str) => {
             eprintln!("Symbol '{}' exists.", pos_str.str);

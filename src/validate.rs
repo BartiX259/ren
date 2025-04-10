@@ -21,7 +21,7 @@ pub fn validate(stmts: &mut Vec<node::Stmt>) -> Result<HashMap<String, Symbol>, 
 }
 
 pub enum SemanticError {
-    InvalidType(PosStr),
+    InvalidType(Span),
     SymbolExists(PosStr),
     UndeclaredSymbol(PosStr),
     TypeMismatch(PosStr, Type, Type),
@@ -482,6 +482,12 @@ impl Validate {
                     } else {
                         Err(SemanticError::InvalidMemberAccess(bin.rhs.span))
                     }
+                } else if let Type::TaggedArray { inner } = &ty1 {
+                    if ty2 == Type::Int {
+                        Ok(*inner.clone())
+                    } else {
+                        Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
+                    }
                 } else {
                     Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
                 }
@@ -676,41 +682,35 @@ impl Validate {
     }
 
     fn r#type(&self, r#type: &node::Type) -> Result<Type, SemanticError> {
-        match r#type.str.str.as_str() {
-            "int" => self.no_subtype(r#type, Type::Int),
-            "float" => self.no_subtype(r#type, Type::Float),
-            "bool" => self.no_subtype(r#type, Type::Bool),
-            "str" => self.no_subtype(r#type, Type::String),
-            "ref" => Ok(Type::Pointer(self.get_subtype(r#type)?)),
-            "arr" => Ok(Type::Array {inner: self.get_subtype(r#type)?, length: self.get_len(r#type)? }),
-            other => {
-                if let Some(t) = self.symbol_table.get(other) {
-                    if let Symbol::Struct { ty } = t {
-                        return Ok(ty.clone());
+        match &r#type.kind {
+            node::TypeKind::Word(word) => match word.as_str() {
+                "int" => Ok(Type::Int),
+                "float" => Ok(Type::Float),
+                "bool" => Ok(Type::Bool),
+                "str" => Ok(Type::String),
+                other => {
+                    if let Some(t) = self.symbol_table.get(other) {
+                        if let Symbol::Struct { ty } = t {
+                            return Ok(ty.clone());
+                        }
                     }
+                    Err(SemanticError::InvalidType(r#type.span))
                 }
-                Err(SemanticError::InvalidType(r#type.str.clone()))
             }
-        }
-    }
-    fn no_subtype(&self, node_type: &node::Type, res_type: Type) -> Result<Type, SemanticError> {
-        if node_type.sub.is_some() {
-            return Err(SemanticError::InvalidType(node_type.str.clone()));
-        }
-        Ok(res_type)
-    }
-    fn get_subtype(&self, node_type: &node::Type) -> Result<Box<Type>, SemanticError> {
-        if let Some(s) = &node_type.sub {
-            Ok(Box::new(self.r#type(s)?))
-        } else {
-            Err(SemanticError::InvalidType(node_type.str.clone()))
-        }
-    }
-    fn get_len(&self, node_type: &node::Type) -> Result<usize, SemanticError> {
-        if let Some(l) = &node_type.len {
-            Ok(*l)
-        } else {
-            Err(SemanticError::MissingLen(node_type.str.clone()))
+            node::TypeKind::Pointer(inner) => Ok(Type::Pointer(Box::new(self.r#type(&inner)?))),
+            node::TypeKind::Array(inner, len_opt) => if let Some(len) = len_opt {
+                Ok(Type::Array { inner: Box::new(self.r#type(&inner)?), length: *len as usize })
+            } else {
+                Ok(Type::TaggedArray { inner: Box::new(self.r#type(&inner)?)})
+            }
+            node::TypeKind::Tuple(type_list) => {
+                let mut types = Vec::new();
+                for arg in type_list.iter() {
+                    let ty = self.r#type(arg)?;
+                    types.push(ty.clone());
+                }
+                Ok(Type::Tuple(types))
+            }
         }
     }
 

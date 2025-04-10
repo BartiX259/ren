@@ -519,33 +519,39 @@ fn parse_for(tokens: &mut VecIter<Token>) -> Result<node::For, ParseError> {
     Ok(node::For { pos_id, init, cond, incr, scope})
 }
 
+fn r#type(start: usize, end: usize, kind: node::TypeKind) -> node::Type {
+    node::Type { kind, span: Span { start, end } }
+}
+
 fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
+    let start = tokens.current_index();
     let tok = check_none(tokens, "a type")?;
-    if let Token::Word { value } = tok {
-        let str = PosStr {
-            str: value,
-            pos_id: tokens.prev_index(),
-        };
-        let mut sub = None;
-        let mut len = None;
+    if let Token::Word { value } = &tok {
+        let ty = r#type(start, start + 1, node::TypeKind::Word(value.clone()));
         if let Some(Token::OpenSquare) = tokens.peek() {
+            let mut len = None;
             tokens.next();
-            sub = Some(Box::new(parse_type(tokens)?));
-            let mut cl = check_none(tokens, "']'")?;
-            if let Token::Comma = cl {
-                let tok = check_none(tokens, "a length")?;
-                if let Token::IntLit { value } = tok {
-                    len = Some(value as usize);
-                } else {
-                    return Err(unexp(cl, tokens.prev_index(), "a length"));
-                }
-                cl = check_none(tokens, "']'")?;
+            if let Some(Token::IntLit { value }) = tokens.peek() {
+                len = Some(value.clone());
+                tokens.next();
             }
+            let cl = check_none(tokens, "']'")?;
             let Token::CloseSquare = cl else {
                 return Err(unexp(cl, tokens.prev_index(), "']'"));
             };
+            Ok(r#type(start, tokens.prev_index(), node::TypeKind::Array(Box::new(ty), len)))
+        } else {
+            Ok(ty)
         }
-        Ok(node::Type { str, sub, len })
+    } else if let Token::Op { value } = &tok {
+        if value == "*" {
+            Ok(r#type(start, tokens.prev_index(), node::TypeKind::Pointer(Box::new(parse_type(tokens)?))))
+        } else {
+            Err(unexp(tok, tokens.prev_index(), "a type"))
+        }
+    } else if let Token::OpenParen = &tok {
+        let list = parse_types_list(tokens, Token::CloseParen)?;
+        Ok(r#type(start, tokens.prev_index(), node::TypeKind::Tuple(list)))
     } else {
         Err(unexp(tok, tokens.prev_index(), "a type"))
     }

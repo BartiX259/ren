@@ -219,27 +219,39 @@ impl Process {
                     ty: lhs.ty.clone(),
                     span: lhs.span,
                     kind: node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(lhs), op: self.pos_str("&".to_string()) })
-                }    
+                }
             }
         }
         if bin.op.str == "[]" { // Array access -> add and dereference
+            let ptr;
             let offset;
             if let Type::Tuple(v) = &lhs.ty {
                 let node::ExprKind::IntLit(i) = rhs.kind else { unreachable!() };
                 let o: u32 = v.iter().take(i as usize).map(|ty| ty.size()).sum();
-                let mut temp = rhs.clone();
+                let mut temp = rhs;
                 temp.kind = node::ExprKind::IntLit(o as i64);
+                ptr = lhs;
                 offset = temp;
+            } else if let Type::TaggedArray { inner } = &lhs.ty {
+                let mut temp = lhs.clone();
+                let mut add = lhs.clone();
+                let mut addtemp = lhs.clone();
+                addtemp.kind = node::ExprKind::IntLit(8 as i64);
+                add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(lhs), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
+                temp.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
+                ptr = temp;
+                offset = rhs;
             } else {
+                ptr = lhs;
                 offset = rhs;
             }
             return node::ExprKind::UnExpr(node::UnExpr {
                 op: self.pos_str("*".to_string()),
                 expr: Box::new(node::Expr { 
-                    ty: lhs.ty.clone(),
-                    span: lhs.span.add(offset.span),
+                    ty: ptr.ty.clone(),
+                    span: ptr.span.add(offset.span),
                     kind: self.calc_bin_expr(node::BinExpr {
-                        lhs: Box::new(lhs),
+                        lhs: Box::new(ptr),
                         rhs: Box::new(offset),
                         op: self.pos_str("+".to_string())
                     })

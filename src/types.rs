@@ -9,6 +9,7 @@ pub enum Type {
     String,
     Pointer(Box<Type>),
     Array { inner: Box<Type>, length: usize },
+    TaggedArray { inner: Box<Type> },
     Struct(HashMap<String, (Type, u32)>),
     Tuple(Vec<Type>)
 }
@@ -19,7 +20,7 @@ impl Type {
             Type::Struct(map) => map.iter().map(|(_, (ty, _))| ty.size()).sum(),
             Type::Array { inner, length } => *length as u32 * inner.size(),
             Type::Tuple(tys) => tys.iter().map(|ty| ty.size()).sum(),
-            Type::String => 16,
+            Type::String | Type::TaggedArray { .. } => 16,
             _ => 8
         }
     }
@@ -37,7 +38,7 @@ impl Type {
     }
     pub fn salloc(&self) -> bool {
         match self {
-            Type::Array { .. } | Type::Struct(_) | Type::String | Type::Tuple(_) => true,
+            Type::Array { .. } | Type::Struct(_) | Type::String | Type::Tuple(_) | Type::TaggedArray { .. } => true,
             _ => false
         }
     }

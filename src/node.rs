@@ -45,10 +45,16 @@ pub struct Call {
     pub args: Vec<Expr>,
 }
 #[derive(Debug, Clone)]
+pub enum TypeKind {
+    Word(String),
+    Pointer(Box<Type>),
+    Array(Box<Type>, Option<i64>),
+    Tuple(Vec<Type>),
+}
+#[derive(Debug, Clone)]
 pub struct Type {
-    pub str: PosStr,
-    pub sub: Option<Box<Type>>,
-    pub len: Option<usize>,
+    pub kind: TypeKind,
+    pub span: Span
 }
 #[derive(Debug)]
 pub struct Fn {
