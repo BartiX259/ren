@@ -222,7 +222,6 @@ impl<'a> Lower<'a> {
                 self.var_map.get(&pos_str.str).unwrap().clone()
             }
             node::ExprKind::Call(call) => self.call(call),
-            node::ExprKind::Macro(r#macro) => panic!("no macros for now"),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.ty.size()),
             node::ExprKind::TypeCast(cast) => self.type_cast(cast, &expr.ty)
@@ -588,15 +587,6 @@ impl<'a> Lower<'a> {
         self.push_op(Op::EndCall, call.name.pos_id);
         res
     }
-
-    // fn r#macro(&mut self, r#macro: &node::Macro) {
-    //     self.temp_count += 1;
-    //     match r#macro {
-    //         node::Macro::Salloc { count, ty } => {
-    //             self.push_op(Op::Salloc { size: *count, res: Term::Temp(self.temp_count) }, 0);
-    //         }
-    //     }
-    // }
 
     fn r#loop(&mut self, r#loop: &node::Loop) {
         self.label_count += 2;

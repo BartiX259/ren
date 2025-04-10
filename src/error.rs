@@ -14,13 +14,13 @@ pub struct FilePos {
     pub end: usize,
 }
 impl FilePos {
-    pub fn pos_id(info: Vec<FilePos>, pos_id: usize) -> Self {
-        info.get(pos_id).unwrap().clone()
+    pub fn pos_id(locs: Vec<FilePos>, pos_id: usize) -> Self {
+        locs.get(pos_id).unwrap().clone()
     }
-    pub fn span(info: Vec<FilePos>, span: Span) -> Self {
+    pub fn span(locs: Vec<FilePos>, span: Span) -> Self {
         Self {
-            start: info.get(span.start).unwrap().start,
-            end: info.get(span.end).unwrap().end
+            start: locs.get(span.start).unwrap().start,
+            end: locs.get(span.end).unwrap().end
         }
     }
 }
@@ -59,7 +59,7 @@ pub fn parse_err(path: &String, e: ParseError) {
     match e {
         ParseError::UnexpectedToken(u) => {
             eprintln!("Unexpected token '{}', expected {}.", u.token.to_string(), u.expected);
-            print_module_err_id(path, u.info_id);
+            print_module_err_id(path, u.pos_id);
         }
         ParseError::UnexpectedEndOfInput(expected) => {
             eprintln!("Unexpected end of input, expected {}.", expected);
@@ -78,10 +78,6 @@ pub fn parse_err(path: &String, e: ParseError) {
                     end
                 },
             )
-        }
-        ParseError::InvalidMacro(pos_str) => {
-            eprintln!("Invalid macro '{}'.", pos_str.str);
-            print_module_err_id(path, pos_str.pos_id);
         }
         ParseError::ImportNotAtStart(pos_id) => {
             eprintln!("Import not at the top of the file.");
@@ -186,10 +182,6 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Array type mismatch: expected {:?} but got {:?}", ty1, ty2);
             print_module_err_span(path, span);
         }
-        SemanticError::MissingLen(pos_str) => {
-            eprintln!("Missing length for '{}'. For example, '{}[int, 4]'.", pos_str.str, pos_str.str);
-            print_module_err_id(path, pos_str.pos_id);
-        }
     }
 }
 
@@ -211,10 +203,6 @@ pub fn gen_err(path: &String, e: GenError) {
             eprintln!("Too many arguments. Consider making and passing a struct instead.");
             print_module_err_op(path, loc);
         }
-        GenError::ExpectedLiteral(loc) => {
-            eprintln!("Expected a literal.");
-            print_module_err_op(path, loc);
-        }
     }
 }
 
@@ -225,8 +213,7 @@ fn print_err() {
 fn print_module_err_id(module: &String, pos_id: usize) {
     let text = fs::read_to_string(&module).unwrap();
     let (_, locs) = tokenize::tokenize(&text).unwrap();
-    let pos = locs.get(pos_id).unwrap();
-    print_file_err(&text, module, pos);
+    print_file_err(&text, module, &FilePos::pos_id(locs, pos_id));
 }
 
 fn print_module_err_pos(module: &String, file_pos: FilePos) {
@@ -265,11 +252,15 @@ fn print_file_err(text: &String, module: &String, pos: &FilePos) {
         if cur_pos == pos.end {
             line_end = line_pos + 2;
         }
+        if cur_pos == len {
+            line.push(c);
+            line_pos += 1;
+        }
         if c == '\n' || cur_pos == len {
-            if cur_pos > pos.start {
+            if cur_pos > pos.start || cur_pos == len {
                 let padding = usize::ilog10(line_nr);
                 let padstr = " ".repeat(padding as usize + 2);
-                eprintln!("\x1b[94m{}{}\x1b[0m", padstr, module);
+                eprintln!("\x1b[94m{}> {}\x1b[0m", padstr, module);
                 eprintln!("\x1b[94m{}|\x1b[0m", padstr);
                 eprintln!("\x1b[94m{} |\x1b[0m {}", line_nr, line);
                 eprint!("\x1b[94m{}|\x1b[0m", padstr);

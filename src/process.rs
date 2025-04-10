@@ -232,7 +232,7 @@ impl Process {
                 temp.kind = node::ExprKind::IntLit(o as i64);
                 ptr = lhs;
                 offset = temp;
-            } else if let Type::TaggedArray { inner } = &lhs.ty {
+            } else if let Type::TaggedArray { .. } = &lhs.ty {
                 let mut temp = lhs.clone();
                 let mut add = lhs.clone();
                 let mut addtemp = lhs.clone();

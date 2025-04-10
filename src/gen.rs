@@ -14,7 +14,6 @@ pub enum GenError {
     NoFreeRegisters(OpLoc),
     ReservedSymbol(OpLoc),
     TooManyArguments(OpLoc),
-    ExpectedLiteral(OpLoc),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -803,16 +802,6 @@ impl<'a> Gen<'a> {
         self.buf.push_line(op);
         self.buf.push_line(format!(" {}, {}", Self::reg_8bit(r2), Self::reg_8bit(r1)));
         self.buf.push_line(format!("movzx {}, {}", r1, Self::reg_8bit(r2)));
-    }
-
-    fn assign_bin(&mut self, op: &str, term: Term, r1: &String, r2: &String) {
-        self.bin(op, r1, r2);
-        self.store_term(term.clone(), r1.to_string());
-    }
-
-    fn assign_rax(&mut self, op: &str, term: Term, r1: &mut String, r2: &mut String) {
-        self.bin_rax(op, r1, r2);
-        self.store_term(term.clone(), r1.to_string());
     }
 
     fn reg_8bit(reg: &String) -> String {

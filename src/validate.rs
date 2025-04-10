@@ -52,7 +52,6 @@ pub enum SemanticError {
     InvalidMemberAccess(Span),
     EmptyArray(Span),
     ArrayTypeMismatch(Span, Type, Type),
-    MissingLen(PosStr),
 }
 
 pub struct Validate {
@@ -249,7 +248,6 @@ impl Validate {
                 })
                 .ok_or(SemanticError::UndeclaredSymbol(pos_str.clone())),
             node::ExprKind::Call(call) => self.call(call),
-            node::ExprKind::Macro(r#macro) => self.r#macro(r#macro),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.span),
             node::ExprKind::TypeCast(cast) => {
@@ -721,14 +719,6 @@ impl Validate {
                     types.push(ty.clone());
                 }
                 Ok(Type::Tuple(types))
-            }
-        }
-    }
-
-    fn r#macro(&mut self, r#macro: &node::Macro) -> Result<Type, SemanticError> {
-        match r#macro {
-            node::Macro::Salloc { count: _, ty } => {
-                Ok(Type::Pointer(Box::new(self.r#type(ty)?)))
             }
         }
     }

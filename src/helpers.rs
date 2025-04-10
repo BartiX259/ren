@@ -107,9 +107,6 @@ impl IndentedBuf {
     pub fn get_output(self) -> String {
         self.buf
     }
-    pub fn get_output_ref(&self) -> &String {
-        &self.buf
-    }
 }
 
 /// String literal
@@ -158,7 +155,7 @@ impl StringLit {
         for frag in self.frags.iter() {
             match frag {
                 StringFragment::String(s) => res += s.chars().count(),
-                StringFragment::Char(i) => res += 1,
+                StringFragment::Char(_) => res += 1,
             }
         }
         res

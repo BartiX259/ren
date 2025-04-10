@@ -20,14 +20,13 @@ pub fn parse(token_res: Vec<Token>, parent: Option<String>) -> Result<(Vec<node:
 #[derive(Debug)]
 pub struct UnexpectedToken {
     pub token: Token,
-    pub info_id: usize,
+    pub pos_id: usize,
     pub expected: String,
 }
 #[derive(Debug)]
 pub enum ParseError {
     UnexpectedToken(UnexpectedToken),
     UnexpectedEndOfInput(String),
-    InvalidMacro(PosStr),
     ImportNotAtStart(usize)
 }
 
@@ -169,12 +168,6 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                 tokens.next();
                 let (field_names, field_exprs) = parse_map_args(tokens, Token::CloseCurly)?;
                 return Ok(expr(start, tokens.prev_index(), node::ExprKind::StructLit(node::StructLit { name: pos_str, field_names, field_exprs })));
-            } else if let Some(Token::Bang) = tokens.peek() {
-                tokens.next();
-                return parse_macro(
-                    tokens,
-                    pos_str
-                );
             }
             return Ok(expr(start, start, node::ExprKind::Variable(pos_str)));
         }
@@ -564,39 +557,6 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
     }
 }
 
-fn parse_macro(tokens: &mut VecIter<Token>, name: PosStr) -> Result<node::Expr, ParseError> {
-    let start = tokens.prev_index() - 2;
-    match name.str.as_str() {
-        "salloc" => {
-            let tok = check_none(tokens, "'('")?;
-            if let Token::OpenParen = tok {
-            } else {
-                return Err(unexp(tok, tokens.prev_index(), "'('"));
-            }
-            let tok = check_none(tokens, "a count")?;
-            let count;
-            if let Token::IntLit { value } = tok {
-                count = value as u32;
-            } else {
-                return Err(unexp(tok, tokens.prev_index(), "an integer"));
-            }
-            let tok = check_none(tokens, "','")?;
-            if let Token::Comma = tok {
-            } else {
-                return Err(unexp(tok, tokens.prev_index(), "','"));
-            }
-            let ty = parse_type(tokens)?;
-            let tok = check_none(tokens, "')'")?;
-            if let Token::CloseParen = tok {
-            } else {
-                return Err(unexp(tok, tokens.prev_index(), "')'"));
-            }
-            return Ok(expr(start, tokens.prev_index(), node::ExprKind::Macro(node::Macro::Salloc { count, ty })));
-        }
-        _ => Err(ParseError::InvalidMacro(name)),
-    }
-}
-
 fn parse_syscall(tokens: &mut VecIter<Token>) -> Result<node::Syscall, ParseError> {
     tokens.next();
     let tok = check_none(tokens, "the syscall id")?;
@@ -649,10 +609,10 @@ fn check_semi(tokens: &mut VecIter<Token>) -> Result<(), ParseError> {
     }
 }
 
-fn unexp(token: Token, info_id: usize, expected: &str) -> ParseError {
+fn unexp(token: Token, pos_id: usize, expected: &str) -> ParseError {
     return ParseError::UnexpectedToken(UnexpectedToken {
         token,
-        info_id,
+        pos_id,
         expected: expected.to_string(),
     });
 }

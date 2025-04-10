@@ -5,8 +5,6 @@ use std::path::Path;
 use std::process::Command;
 use std::process::ExitCode;
 
-use node::Imports;
-use node::Module;
 use node::Root;
 
 mod error;
@@ -114,7 +112,7 @@ fn parse_module(import: &node::Import) -> Result<(Vec<node::Stmt>, Vec<node::Imp
         }
     };
 
-    let (tokens, locs) = match tokenize::tokenize(&content) {
+    let (tokens, _) = match tokenize::tokenize(&content) {
         Ok(res) => res,
         Err(e) => {
             error::token_err(&content, e);

@@ -124,10 +124,6 @@ pub struct ArrLit {
     pub pos_id: usize
 }
 
-#[derive(Debug, Clone)]
-pub enum Macro {
-    Salloc { count: u32, ty: Type }
-}
 #[derive(Debug)]
 pub struct Syscall {
     pub id: i64,
@@ -156,7 +152,6 @@ pub enum ExprKind {
     TupleLit(Vec<Expr>),
     Variable(PosStr),
     Call(Call),
-    Macro(Macro),
     BinExpr(BinExpr),
     UnExpr(UnExpr),
     TypeCast(TypeCast)
@@ -189,9 +184,6 @@ pub struct Import {
     pub parent: Option<String>,
     pub pos_id: usize
 }
-
-#[derive(Debug)]
-pub struct Imports(pub Vec<String>);
 
 #[derive(Debug)]
 pub struct Root(pub Vec<Module>);
