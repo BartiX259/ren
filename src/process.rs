@@ -205,14 +205,14 @@ impl Process {
                 ty: rhs.ty.clone(),
                 span: rspan,
                 kind: self.calc_bin_expr(node::BinExpr {
-                lhs: Box::new(rhs),
-                rhs: Box::new(node::Expr {
-                    ty: Type::Int,
-                    span: rspan,
-                    kind: node::ExprKind::IntLit(p.size() as i64)
-                }),
-                op: self.pos_str("*".to_string())
-            })
+                    lhs: Box::new(rhs),
+                    rhs: Box::new(node::Expr {
+                        ty: Type::Int,
+                        span: rspan,
+                        kind: node::ExprKind::IntLit(p.size() as i64)
+                    }),
+                    op: self.pos_str("*".to_string())
+                })
             };
             if ltype.salloc() { // Add & to stack allocations
                 lhs = node::Expr {

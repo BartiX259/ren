@@ -92,13 +92,13 @@ fn main() -> ExitCode {
     fs::write("out.S", result).expect("Unable to write file");
 
     println!("nasm: {:?}", Command::new("nasm").args(["-felf64", "out.S", "-o", "out.o"]).output());
-    println!("nasm std: {:?}", Command::new("nasm").args(["-felf64", "lib/std.S", "-o", "std.o"]).output());
+    // println!("nasm std: {:?}", Command::new("nasm").args(["-felf64", "lib/std.S", "-o", "std.o"]).output());
     println!(
         "ld:   {:?}",
         Command::new("ld")
             .args([
                 "-o", "out",
-                "out.o", "std.o" //, "-lc", "--dynamic-linker", "/lib64/ld-linux-x86-64.so.2"
+                "out.o"//, "std.o" //, "-lc", "--dynamic-linker", "/lib64/ld-linux-x86-64.so.2"
             ])
             .output()
     );

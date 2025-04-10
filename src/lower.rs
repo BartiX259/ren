@@ -224,7 +224,7 @@ impl<'a> Lower<'a> {
             node::ExprKind::Call(call) => self.call(call),
             node::ExprKind::Macro(r#macro) => panic!("no macros for now"),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
-            node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr),
+            node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.ty.size()),
             node::ExprKind::TypeCast(cast) => self.type_cast(cast, &expr.ty)
         }
     }
@@ -475,8 +475,22 @@ impl<'a> Lower<'a> {
         Term::Temp(self.temp_count)
     }
 
-    fn un_expr(&mut self, un: &node::UnExpr) -> Term {
+    fn un_expr(&mut self, un: &node::UnExpr, size: u32) -> Term {
         let term = self.expr(&un.expr);
+        if un.op.str == "*" {
+            if size > 16 {
+                self.stack_count += 1;
+                let s = Term::Stack(self.stack_count);
+                self.push_op(Op::Decl { term: s.clone(), size }, un.op.pos_id);
+                self.push_op(Op::Copy { from: term, to: s.clone(), size }, un.op.pos_id);
+                return s;
+            } else if size > 8 {
+                self.double_count += 1;
+                let d = Term::Double(self.double_count);
+                self.push_op(Op::Read { res: d.clone(), ptr: term, offset: 0 }, un.op.pos_id);
+                return d;
+            }
+        }
         self.temp_count += 1;
         self.push_op(
             Op::UnOp {
