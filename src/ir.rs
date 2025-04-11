@@ -1,7 +1,7 @@
 use std::fmt;
 use crate::types::Type;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Symbol {
     Struct { ty: Type },
     Var { ty: Type },
@@ -59,8 +59,10 @@ pub enum Op {
     BinJump { label: u16, lhs: Term, op: String, rhs: Term },
     Return { term: Option<Term> },
     NaturalFlow,
-    Save,
-    Restore,
+    BeginLoop,
+    EndLoop,
+    BeginScope,
+    EndScope,
 }
 
 impl Block {
@@ -122,8 +124,10 @@ impl fmt::Debug for Op {
             Op::BinJump { label, lhs, op, rhs } => write!(f, "if {:?} {} {:?} jump L{}", lhs, op, rhs, label),
             Op::Return { term } => write!(f, "return {}", fmt_opt(term)),
             Op::NaturalFlow => write!(f, "→"),
-            Op::Save => write!(f, "save"),
-            Op::Restore => write!(f, "restore"),
+            Op::BeginLoop => write!(f, "begin loop"),
+            Op::EndLoop => write!(f, "end loop"),
+            Op::BeginScope => write!(f, "begin scope"),
+            Op::EndScope => write!(f, "end scope")
         }
     }
 }
@@ -140,5 +144,36 @@ impl fmt::Debug for Block {
         }
         writeln!(f, "EndBlock")?;
         Ok(())
+    }
+}
+
+fn fmt_args(args: &Vec<Type>) -> String {
+    let mut s = "(".to_string();
+    let mut start = true;
+    for arg in args {
+        if !start {
+            s += ", ";
+        } else {
+            start = false;
+        }
+        s += format!("{:?}", arg).as_str();
+    }
+    s += ")";
+    s
+}
+
+impl fmt::Debug for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Symbol::Struct { ty } => writeln!(f, "struct {:?}\n", ty),
+            Symbol::Var { ty } => writeln!(f, "var {:?}\n", ty),
+            Symbol::Func { ty, block, module, symbols } => {
+                write!(f, "func in {}: {} -> {:?}", module, fmt_args(&(symbols.get(0).unwrap().iter().map(|(_, sym)| { let Symbol::Var { ty } = sym else { unreachable!() }; ty.clone() }).collect::<Vec<Type>>())) , ty)?;
+                writeln!(f, "{:?}", block)
+            }
+            Symbol::ExternFunc { ty, args } => writeln!(f, "extern func: {} -> {:?}\n", fmt_args(args), ty),
+            Symbol::Syscall { id, ty, args } => writeln!(f, "syscall {}: {} -> {:?}\n", id, fmt_args(args), ty),
+            Symbol::StringLit { str } => writeln!(f, "str {}\n", str),
+        }
     }
 }

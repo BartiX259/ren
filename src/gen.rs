@@ -48,6 +48,7 @@ struct Gen<'a> {
     last_loc: OpLoc,
     reg_states: Vec<Vec<Reg>>,
     saved_states: Vec<ProgState>,
+    saved_sps: Vec<i64>,
     param_index: usize,
     arg_index: usize,
     calling: bool,
@@ -68,6 +69,7 @@ impl<'a> Gen<'a> {
             last_loc: OpLoc { start_id: 0, end_id: 0 },
             reg_states: Vec::new(),
             saved_states: Vec::new(),
+            saved_sps: Vec::new(),
             param_index: 0,
             arg_index: 0,
             calling: false,
@@ -288,6 +290,7 @@ impl<'a> Gen<'a> {
                     self.param_index = state.param_index;
                     if self.sp != state.sp {
                         self.buf.push_line(format!("add rsp, {}", self.sp - state.sp));
+                        self.buf.comment(format!("restore sp (call)"));
                         self.sp = state.sp;
                     }
                     for r in state.regs.iter().rev() {
@@ -314,10 +317,13 @@ impl<'a> Gen<'a> {
                     self.buf.push_line(format!("{:<width$}", str, width = 8));
                     self.buf.indent();
                 }
-                ir::Op::Jump { label } => self.buf.push_line(format!("jmp .L{}", label)),
+                ir::Op::Jump { label } => {
+                    self.buf.push_line(format!("jmp .L{}", label));
+                }
                 ir::Op::CondJump { cond, label } => {
                     let r = self.eval_term(cond, false)?;
                     self.buf.push_line(format!("test {}, {}", r, r));
+                    self.restore_sp();
                     self.buf.push_line(format!("jnz .L{}", label));
                 }
                 ir::Op::BinJump { lhs, rhs, op, label } => {
@@ -333,6 +339,7 @@ impl<'a> Gen<'a> {
                         "!=" => "jne",
                         _ => panic!("Unsupported binary operation in BinJump: {}", op),
                     };
+                    self.restore_sp();
                     self.buf.push_line(format!("{} .L{}", jmp_instr, label));
                     self.lock_reg(&r1, false);
                     self.lock_reg(&r2, false);
@@ -356,11 +363,13 @@ impl<'a> Gen<'a> {
                     self.clear_reg(&"rdx".to_string());
                 }
                 ir::Op::NaturalFlow => (),
-                ir::Op::Save => self.reg_states.push(self.regs.to_vec()),
-                ir::Op::Restore => self.restore_regs(),
+                ir::Op::BeginLoop => self.reg_states.push(self.regs.to_vec()),
+                ir::Op::EndLoop => self.restore_regs(),
+                ir::Op::BeginScope => self.saved_sps.push(self.sp),
+                ir::Op::EndScope => self.restore_sp(),
             }
             match op_clone {
-                ir::Op::Save | ir::Op::Restore | ir::Op::Arg { .. } | ir::Op::Param { .. } | ir::Op::Call { .. } | ir::Op::BeginCall | ir::Op::EndCall => (),
+                ir::Op::BeginLoop | ir::Op::EndLoop | ir::Op::Arg { .. } | ir::Op::Param { .. } | ir::Op::Call { .. } | ir::Op::BeginCall | ir::Op::EndCall | ir::Op::BeginScope | ir::Op::EndScope => (),
                 _ => self.buf.comment(format!("{:?}", op_clone)),
             }
         }
@@ -465,6 +474,16 @@ impl<'a> Gen<'a> {
             }
         }
         //println!("swap {} {}, {:?}", r1, r2, self.regs);
+    }
+
+    fn restore_sp(&mut self) {
+        if let Some(sp) = self.saved_sps.pop() {
+            if self.sp != sp {
+                self.buf.push_line(format!("add rsp, {}", self.sp - sp));
+                self.buf.comment(format!("restore sp"));
+                self.sp = sp;
+            }
+        }
     }
 
     /// Find a term and move it to a target register
@@ -589,8 +608,6 @@ impl<'a> Gen<'a> {
             "<=" => self.cond("setle", &r1, &r2),
             "==" => self.cond("sete", &r1, &r2),
             "!=" => self.cond("setne", &r1, &r2),
-            "||" => self.bool_op("or", &r1, &r2),
-            "&&" => self.bool_op("and", &r1, &r2),
             "|" => self.bin("or", &r1, &r2),
             "&" => self.bin("and", &r1, &r2),
             "^" => self.bin("xor", &r1, &r2),
@@ -621,10 +638,8 @@ impl<'a> Gen<'a> {
             "&" => {
                 let loc = self.locs.get(&term).expect(format!("Couldn't find {:?}", term).as_str());
                 let target = self.get_free_reg()?;
-                if self.sp == *loc {
-                    self.buf.push_line(format!("mov {}, rsp", target));
-                } else {
-                    self.buf.push_line(format!("mov {}, rsp", target));
+                self.buf.push_line(format!("mov {}, rsp", target));
+                if self.sp != *loc {
                     self.buf.push_line(format!("add {}, {}", target, self.sp - loc));
                 }
                 self.save_reg(&target, &res);
@@ -637,6 +652,10 @@ impl<'a> Gen<'a> {
         match op.as_str() {
             "-" => self.buf.push_line(format!("neg {}", r)),
             "*" => self.buf.push_line(format!("mov {}, [{}]", r, r)),
+            "!" => {
+                self.buf.push_line(format!("test {}, {}", r, r));
+                self.buf.push_line(format!("sete {}", Self::reg_8bit(&r)));
+            }
             _ => unreachable!(),
         }
         self.save_reg(&r, &res);
@@ -796,12 +815,6 @@ impl<'a> Gen<'a> {
         self.buf.push(cond);
         self.buf.push_line(format!(" {}", Self::reg_8bit(r1)));
         self.buf.push_line(format!("movzx {}, {}", r1, Self::reg_8bit(r1)));
-    }
-
-    fn bool_op(&mut self, op: &str, r1: &String, r2: &String) {
-        self.buf.push_line(op);
-        self.buf.push_line(format!(" {}, {}", Self::reg_8bit(r2), Self::reg_8bit(r1)));
-        self.buf.push_line(format!("movzx {}, {}", r1, Self::reg_8bit(r2)));
     }
 
     fn reg_8bit(reg: &String) -> String {

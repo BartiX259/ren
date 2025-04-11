@@ -69,7 +69,6 @@ pub enum Token {
     Syscall,
     Semi,
     Colon,
-    Bang,
     OpenParen,
     CloseParen,
     OpenCurly,
@@ -104,7 +103,6 @@ impl Token {
             Token::Syscall => "syscall".to_string(),
             Token::Semi => ";".to_string(),
             Token::Colon => ":".to_string(),
-            Token::Bang => "!".to_string(),
             Token::OpenParen => "(".to_string(),
             Token::CloseParen => ")".to_string(),
             Token::OpenCurly => "{".to_string(),
@@ -120,7 +118,6 @@ impl Token {
         match ch {
             ';' => Some(Token::Semi),
             ':' => Some(Token::Colon),
-            '!' => Some(Token::Bang),
             '(' => Some(Token::OpenParen),
             ')' => Some(Token::CloseParen),
             '{' => Some(Token::OpenCurly),
@@ -268,6 +265,7 @@ fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError
         if str.chars().count() > 0 {
             res.push(StringFragment::String(str));
         }
+        res.push(StringFragment::Char(0));
         Ok(Token::StringLit { value: StringLit { frags: res } })
     }
 }
@@ -289,9 +287,9 @@ fn is_operator_pair(first: char, second: char) -> bool {
         ('^', '=') |
         ('&', '=') |
         ('=', '=') |
+        ('!', '=') |
         ('<', '=') |
         ('>', '=') |
-        ('!', '=') |
         ('&', '&') |
         ('|', '|') |
         ('<', '<') |

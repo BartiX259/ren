@@ -430,17 +430,17 @@ impl Validate {
         match bin.op.str.as_str() {
             "+" | "-" | "+=" | "-=" => {
                 // Arithmetic and pointer arithmetic
-                match (ty1.clone(), ty2.clone()) {
+                match (&ty1, &ty2) {
                     (Type::Int, Type::Int) => Ok(Type::Int),
                     (Type::Float, Type::Float) => Ok(Type::Float),
                     (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
-                    (Type::Pointer(p), Type::Int) => Ok(Type::Pointer(p)),
+                    (Type::Pointer(p), Type::Int) => Ok(Type::Pointer(p.clone())),
                     _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2)),
                 }
             }
             "*" | "/" | "*=" | "/=" => {
                 // Arithmetic and no pointer arithmetic
-                match (ty1.clone(), ty2.clone()) {
+                match (&ty1, &ty2) {
                     (Type::Int, Type::Int) => Ok(Type::Int),
                     (Type::Float, Type::Float) => Ok(Type::Float),
                     (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
@@ -449,18 +449,19 @@ impl Validate {
             }
             "%" | "%=" | "|" | "|=" | "^" | "^=" | "&" | "&=" | "<<" | "<<=" | ">>" | ">>=" => {
                 // Integer only operators
-                match (ty1.clone(), ty2.clone()) {
+                match (&ty1, &ty2) {
                     (Type::Int, Type::Int) => Ok(Type::Int),
                     _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2)),
                 }
             }
             "&&" | "||" => {
                 // Logical operators
-                if ty1 == Type::Bool && ty2 == Type::Bool {
-                    Ok(Type::Bool)
-                } else {
-                    Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
-                }
+                Ok(Type::Bool)
+                // if ty1 == Type::Bool && ty2 == Type::Bool {
+                //     Ok(Type::Bool)
+                // } else {
+                //     Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
+                // }
             }
             "==" | "!=" | "<" | ">" | "<=" | ">=" => {
                 // Comparison operators
@@ -531,6 +532,7 @@ impl Validate {
                     Err(SemanticError::InvalidDereference(un.op.clone(), ty))
                 }
             }
+            "!" => Ok(Type::Bool),
             _ => Err(SemanticError::InvalidUnaryOperator(un.op.clone())),
         }
     }

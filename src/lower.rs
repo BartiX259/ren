@@ -309,6 +309,7 @@ impl<'a> Lower<'a> {
     }
 
     fn scope(&mut self, scope: &Vec<node::Stmt>) {
+        self.push_op(Op::BeginScope, 0);
         let sc = self.scope_id;
         self.load_symbols(sc);
         self.scope_id += 1;
@@ -316,6 +317,7 @@ impl<'a> Lower<'a> {
             self.stmt(s);
         }
         self.unload_symbols(sc);
+        self.push_op(Op::EndScope, 0);
     }
 
     fn ret(&mut self, ret: &node::Ret) {
@@ -351,17 +353,19 @@ impl<'a> Lower<'a> {
 
     fn r#if(&mut self, r#if: &node::If) {
         let mut if_chain = vec![r#if];
+        let mut labels = Vec::new();
         let mut els = &r#if.els;
         while let Some(i) = els {
             if_chain.push(i);
             els = &i.els;
         }
-        self.label_count += 1;
-        let start_label = self.label_count;
         let mut has_else = false;
         for i in if_chain.iter() {
             if let Some(e) = &i.expr {
+                self.push_op(Op::BeginScope, r#if.pos_id);
                 let r = self.expr(e);
+                self.label_count += 1;
+                labels.push(self.label_count);
                 self.push_op(
                     Op::CondJump {
                         cond: r,
@@ -370,21 +374,21 @@ impl<'a> Lower<'a> {
                     i.pos_id,
                 );
             } else {
+                self.label_count += 1;
+                labels.push(self.label_count);
                 self.push_op(Op::Jump { label: self.label_count }, i.pos_id);
                 has_else = true;
             }
-            self.label_count += 1;
         }
+        self.label_count += 1;
         let end_label = self.label_count;
         if !has_else {
             self.push_op(Op::Jump { label: end_label }, r#if.pos_id);
         }
-        let mut cur_label = start_label;
-        for i in if_chain.iter() {
-            self.push_op(Op::Label { label: cur_label }, i.pos_id);
+        for (i, l) in if_chain.iter().zip(labels) {
+            self.push_op(Op::Label { label: l }, i.pos_id);
             self.scope(&i.scope);
-            cur_label += 1;
-            if cur_label != end_label - 1 {
+            if l != end_label - 1 {
                 self.push_op(Op::Jump { label: end_label }, i.pos_id);
             }
         }
@@ -411,6 +415,25 @@ impl<'a> Lower<'a> {
             }
         }
         let lhs = self.expr(&bin.lhs);
+        if bin.is_bool() {
+            self.label_count += 1;
+            let l = self.label_count;
+            self.stack_count += 1;
+            let s = Term::Stack(self.stack_count);
+            self.push_op(Op::Let { res: s.clone(), term: lhs.clone() }, bin.op.pos_id);
+            if bin.op.str == "&&" {
+                self.temp_count += 1;
+                let t = Term::Temp(self.temp_count);
+                self.push_op(Op::UnOp { res: t.clone(), op: "!".to_string(), term: lhs.clone() }, bin.op.pos_id);
+                self.push_op(Op::CondJump { label: l, cond: t }, bin.op.pos_id);
+            } else if bin.op.str == "||" {
+                self.push_op(Op::CondJump { label: l, cond: lhs.clone() }, bin.op.pos_id);
+            }
+            let r = self.expr(&bin.rhs);
+            self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 0, op: "=".to_string(), term: r }, bin.op.pos_id);
+            self.push_op(Op::Label { label: l }, bin.op.pos_id);
+            return s;
+        }
         let rhs = self.expr(&bin.rhs);
         self.temp_count += 1;
         if bin.is_assign() {
@@ -441,15 +464,15 @@ impl<'a> Lower<'a> {
         } else {
             let is_stack = if let Term::Stack(_) = lhs { true } else { false };
             if bin.lhs.ty.salloc() && is_stack {
-                self.temp_count += 1;
                 self.push_op(
                     Op::UnOp {
-                        res: Term::Temp(self.temp_count - 1),
+                        res: Term::Temp(self.temp_count),
                         op: "&".to_string(),
                         term: lhs,
                     },
                     bin.op.pos_id
                 );
+                self.temp_count += 1;
                 self.push_op(
                     Op::BinOp {
                         res: Some(Term::Temp(self.temp_count)),
@@ -595,9 +618,9 @@ impl<'a> Lower<'a> {
         let e = self.label_count;
         self.loop_exit.push(e);
         self.push_op(Op::Label {label: s }, r#loop.pos_id);
-        self.push_op(Op::Save, 0);
+        self.push_op(Op::BeginLoop, 0);
         self.scope(&r#loop.scope);
-        self.push_op(Op::Restore, 0);
+        self.push_op(Op::EndLoop, 0);
         self.push_op(Op::Jump { label: s }, r#loop.pos_id);
         self.push_op(Op::Label { label: e }, r#loop.pos_id);
         self.loop_start.pop();
@@ -612,9 +635,9 @@ impl<'a> Lower<'a> {
         self.loop_exit.push(e);
         self.push_op(Op::Jump { label: c }, r#while.pos_id);
         self.push_op(Op::Label { label: s }, r#while.pos_id);
-        self.push_op(Op::Save, 0);
+        self.push_op(Op::BeginLoop, 0);
         self.scope(&r#while.scope);
-        self.push_op(Op::Restore, 0);
+        self.push_op(Op::EndLoop, 0);
         self.push_op(Op::Label { label: c }, r#while.pos_id);
         let cond = self.expr(&r#while.expr);
         self.push_op(
@@ -641,9 +664,9 @@ impl<'a> Lower<'a> {
         self.loop_start.push(c);
         self.loop_exit.push(e);
         self.push_op(Op::Label { label: s }, r#for.pos_id);
-        self.push_op(Op::Save, 0);
+        self.push_op(Op::BeginLoop, 0);
         self.scope(&r#for.scope);
-        self.push_op(Op::Restore, 0);
+        self.push_op(Op::EndLoop, 0);
         self.push_op(Op::Label { label: c }, r#for.pos_id);
         self.push_op(Op::NaturalFlow, r#for.pos_id);
         self.expr(&r#for.incr);

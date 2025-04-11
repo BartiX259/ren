@@ -155,7 +155,7 @@ impl StringLit {
         for frag in self.frags.iter() {
             match frag {
                 StringFragment::String(s) => res += s.chars().count(),
-                StringFragment::Char(_) => res += 1,
+                StringFragment::Char(i) => if *i != 0 { res += 1 },
             }
         }
         res
