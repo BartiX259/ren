@@ -228,6 +228,7 @@ impl Validate {
     fn expr(&mut self, expr: &mut node::Expr) -> Result<Type, SemanticError> {
         let res = match &mut expr.kind {
             node::ExprKind::IntLit(_) => Ok(Type::Int),
+            node::ExprKind::CharLit(_) => Ok(Type::Char),
             node::ExprKind::ArrLit(arr_lit) => self.expr_list(&mut arr_lit.exprs, arr_lit.pos_id)
             .map(|res| Type::Array { inner: Box::new(res.0), length: res.1 }),
             node::ExprKind::StructLit(struct_lit) => self.struct_lit(struct_lit),
@@ -699,6 +700,7 @@ impl Validate {
                 "float" => Ok(Type::Float),
                 "bool" => Ok(Type::Bool),
                 "str" => Ok(Type::String),
+                "char" => Ok(Type::Char),
                 other => {
                     if let Some(t) = self.symbol_table.get(other) {
                         if let Symbol::Struct { ty } = t {

@@ -152,6 +152,7 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
     let start = tokens.prev_index();
     match tok {
         Token::IntLit { value } => Ok(expr(start, start,  node::ExprKind::IntLit(value))),
+        Token::CharLit { value } => Ok(expr(start, start,  node::ExprKind::CharLit(value))),
         Token::Word { value } => { // Term
             let pos_str = PosStr {
                 str: value,

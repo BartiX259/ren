@@ -106,6 +106,9 @@ impl<'a> Lower<'a> {
             node::ExprKind::IntLit(val) => {
                 Term::IntLit(*val)
             }
+            node::ExprKind::CharLit(val) => {
+                Term::IntLit(*val as i64)
+            }
             node::ExprKind::ArrLit(arr_lit) => {
                 let ptr;
                 let Some(inner) = expr.ty.dereference() else {
@@ -119,13 +122,13 @@ impl<'a> Lower<'a> {
                     self.stack_count += 1;
                     ptr = Term::Stack(self.stack_count);
                     self.cur_salloc = Some(ptr.clone());
-                    self.push_op(Op::Decl { term: ptr.clone(), size: arr_lit.exprs.len() as u32 * size }, arr_lit.pos_id);
+                    self.push_op(Op::Decl { term: ptr.clone(), size: Type::align(arr_lit.exprs.len() as u32 * size) }, arr_lit.pos_id);
                 }
                 for expr in &arr_lit.exprs {
                     let r = self.expr(expr);
                     if !inner_salloc {
                         self.temp_count += 1;
-                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r }, arr_lit.pos_id);
+                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r, size: expr.ty.size() }, arr_lit.pos_id);
                         self.salloc_offset += size as i64;
                     }
                 }
@@ -146,13 +149,13 @@ impl<'a> Lower<'a> {
                     self.stack_count += 1;
                     ptr = Term::Stack(self.stack_count);
                     self.cur_salloc = Some(ptr.clone());
-                    self.push_op(Op::Decl { term: ptr.clone(), size: ty.size() }, lit.name.pos_id);
+                    self.push_op(Op::Decl { term: ptr.clone(), size: ty.aligned_size() }, lit.name.pos_id);
                 }
                 for expr in &lit.field_exprs {
                     let r = self.expr(expr);
                     if !expr.ty.salloc() {
                         self.temp_count += 1;
-                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r }, lit.name.pos_id);
+                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r, size: expr.ty.size() }, lit.name.pos_id);
                         self.salloc_offset += expr.ty.size() as i64;
                     }
                 }
@@ -170,14 +173,14 @@ impl<'a> Lower<'a> {
                     self.stack_count += 1;
                     ptr = Term::Stack(self.stack_count);
                     self.cur_salloc = Some(ptr.clone());
-                    self.push_op(Op::Decl { term: ptr.clone(), size: types::Type::String.size()}, expr.span.end);
+                    self.push_op(Op::Decl { term: ptr.clone(), size: types::Type::String.aligned_size()}, expr.span.end);
                 }
                 self.temp_count += 1;
-                self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::IntLit(lit.len() as i64) }, expr.span.end);
+                self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::IntLit(lit.len() as i64), size: 8 }, expr.span.end);
                 self.salloc_offset += 8;
                 if let Some(sym) = self.string_map.get(lit) {
                     self.push_op(
-                        Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(sym.clone()) }, expr.span.end
+                        Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(sym.clone()), size: 8 }, expr.span.end
                     );
                 } else {
                     self.string_id += 1;
@@ -185,7 +188,7 @@ impl<'a> Lower<'a> {
                     self.string_map.insert(lit.clone(), new_sym.clone());
                     self.ir.insert(new_sym.clone(), Symbol::StringLit { str: lit.to_string() });
                     self.push_op(
-                        Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(new_sym) }, expr.span.end
+                        Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(new_sym), size: 8 }, expr.span.end
                     );
                 }
                 if Some(ptr.clone()) == self.cur_salloc {
@@ -202,13 +205,13 @@ impl<'a> Lower<'a> {
                     self.stack_count += 1;
                     ptr = Term::Stack(self.stack_count);
                     self.cur_salloc = Some(ptr.clone());
-                    self.push_op(Op::Decl { term: ptr.clone(), size: expr.ty.size() }, expr.span.end);
+                    self.push_op(Op::Decl { term: ptr.clone(), size: expr.ty.aligned_size() }, expr.span.end);
                 }
                 for expr in exprs {
                     let r = self.expr(expr);
                     if !expr.ty.salloc() {
                         self.temp_count += 1;
-                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r }, expr.span.end);
+                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r, size: expr.ty.size() }, expr.span.end);
                         self.salloc_offset += expr.ty.size() as i64;
                     }
                 }
@@ -240,7 +243,7 @@ impl<'a> Lower<'a> {
             let id = self.stack_count;
             self.var_map.insert(decl.name.str.clone(), Term::Stack(id));
             self.push_op(Op::Decl { term: Term::Stack(id), size: 16 }, decl.name.pos_id);
-            self.push_op(Op::Store { res: None, ptr: Term::Stack(id), offset: 0, op: "=".to_string(), term: r }, decl.name.pos_id);
+            self.push_op(Op::Store { res: None, ptr: Term::Stack(id), offset: 0, op: "=".to_string(), term: r, size: 16 }, decl.name.pos_id);
         } else {
             self.stack_count += 1;
             let id = self.stack_count;
@@ -258,7 +261,7 @@ impl<'a> Lower<'a> {
         self.stack_count += 1;
         let id = self.stack_count;
         self.var_map.insert(decl.name.str.clone(), Term::Stack(id));
-        self.push_op(Op::Decl { term: Term::Stack(id), size: decl.ty.size() }, decl.name.pos_id);
+        self.push_op(Op::Decl { term: Term::Stack(id), size: decl.ty.aligned_size() }, decl.name.pos_id);
     }
 
     fn r#fn(&mut self, decl: &node::Fn) {
@@ -330,7 +333,7 @@ impl<'a> Lower<'a> {
                 }
                 if from.is_stack() {
                     if from != r {
-                        self.push_op(Op::Copy { from, to: r.clone(), size: ret.expr.as_ref().unwrap().ty.size() }, ret.pos_id);
+                        self.push_op(Op::Copy { from, to: r.clone(), size: ret.expr.as_ref().unwrap().ty.aligned_size() }, ret.pos_id);
                     }
                 }
                 self.push_op(Op::Return { term: Some(r) }, ret.pos_id);
@@ -407,7 +410,8 @@ impl<'a> Lower<'a> {
                         ptr,
                         offset: 0,
                         op: bin.op.str.clone(),
-                        term
+                        term,
+                        size: bin.rhs.ty.size()
                     },
                     u.op.pos_id,
                 );
@@ -421,6 +425,7 @@ impl<'a> Lower<'a> {
             self.stack_count += 1;
             let s = Term::Stack(self.stack_count);
             self.push_op(Op::Let { res: s.clone(), term: lhs.clone() }, bin.op.pos_id);
+            self.push_op(Op::BeginScope, bin.op.pos_id);
             if bin.op.str == "&&" {
                 self.temp_count += 1;
                 let t = Term::Temp(self.temp_count);
@@ -430,7 +435,7 @@ impl<'a> Lower<'a> {
                 self.push_op(Op::CondJump { label: l, cond: lhs.clone() }, bin.op.pos_id);
             }
             let r = self.expr(&bin.rhs);
-            self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 0, op: "=".to_string(), term: r }, bin.op.pos_id);
+            self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 0, op: "=".to_string(), term: r, size: 1 }, bin.op.pos_id);
             self.push_op(Op::Label { label: l }, bin.op.pos_id);
             return s;
         }
@@ -444,7 +449,7 @@ impl<'a> Lower<'a> {
                         Op::Copy { 
                             from: rhs,
                             to: lhs,
-                            size: bin.lhs.ty.size()
+                            size: bin.lhs.ty.aligned_size()
                         },
                         bin.op.pos_id
                     );
@@ -456,7 +461,8 @@ impl<'a> Lower<'a> {
                         ptr: lhs,
                         offset: 0,
                         op: bin.op.str.clone(),
-                        term: Term::Temp(self.temp_count - 1)
+                        term: rhs,
+                        size: bin.rhs.ty.size()
                     },
                     bin.op.pos_id
                 );
@@ -534,7 +540,7 @@ impl<'a> Lower<'a> {
                 if ty.size() > 16 { // Pass pointer as first argument
                     self.stack_count += 1;
                     let r = Term::Stack(self.stack_count);
-                    self.push_op(Op::Decl { term: r.clone(), size: ty.size() }, call.name.pos_id);
+                    self.push_op(Op::Decl { term: r.clone(), size: ty.aligned_size() }, call.name.pos_id);
                     res = Some(r);
                 } else if ty.size() > 8 {
                     is_double = true;
@@ -555,8 +561,8 @@ impl<'a> Lower<'a> {
                     if arg.ty.size() > 16 {
                         self.stack_count += 1;
                         self.temp_count += 1;
-                        self.push_op(Op::Decl { term: Term::Stack(self.stack_count), size: arg.ty.size() }, call.name.pos_id);
-                        self.push_op(Op::Copy { from: r.clone(), to: Term::Stack(self.stack_count), size: arg.ty.size() }, call.name.pos_id);
+                        self.push_op(Op::Decl { term: Term::Stack(self.stack_count), size: arg.ty.aligned_size() }, call.name.pos_id);
+                        self.push_op(Op::Copy { from: r.clone(), to: Term::Stack(self.stack_count), size: arg.ty.aligned_size() }, call.name.pos_id);
                         self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: Term::Stack(self.stack_count) }, call.name.pos_id);
                     } else {
                         self.temp_count += 1;
@@ -694,9 +700,9 @@ impl<'a> Lower<'a> {
                 let s = Term::Stack(self.stack_count);
                 self.temp_count += 1;
                 self.push_op(Op::Decl { term: s.clone(), size: 16 }, id);
-                self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 0, op: "=".to_string(), term: Term::IntLit(*length as i64) }, id);
+                self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 0, op: "=".to_string(), term: Term::IntLit(*length as i64), size: to.size() }, id);
                 self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r }, id);
-                self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: Term::Temp(self.temp_count) }, id);
+                self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: Term::Temp(self.temp_count), size: to.size() }, id);
                 res = s;
             }
             _ => res = r

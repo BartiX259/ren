@@ -20,6 +20,8 @@ pub fn tokenize(input: &String) -> Result<(Vec<Token>, Vec<FilePos>), TokenizeEr
             tokens.push(tok_op(ch, &mut iter));
         } else if ch == '"' {
             tokens.push(tok_str(ch, &mut iter)?);
+        } else if ch == '\'' {
+            tokens.push(tok_char(ch, &mut iter)?);
         } else if ch.is_whitespace() {
             continue;
         } else {
@@ -51,6 +53,7 @@ pub enum Token {
     Word { value: String },
     IntLit { value: i64 },
     StringLit { value: StringLit },
+    CharLit { value: u32 },
     Op { value: String },
     Import { module: String },
     Let,
@@ -84,9 +87,10 @@ impl Token {
         match self {
             Token::Word { value } => value.clone(),
             Token::IntLit { value } => value.to_string(),
-            Token::StringLit { value } => format!("\"{}\"", value),
+            Token::StringLit { value } => format!("\"{value}\""),
+            Token::CharLit { value } => format!("'{value}'"),
             Token::Op { value } => value.clone(),
-            Token::Import { module} => format!("import {}", module),
+            Token::Import { module} => format!("import {module}"),
             Token::Let => "let".to_string(),
             Token::Decl => "decl".to_string(),
             Token::Fn => "fn".to_string(),
@@ -240,18 +244,11 @@ fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError
             str = String::new();
             let Some(esc) = iter.next() else {
                 return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
-                    ch: next_ch,
+                    ch: '\\',
                     pos: FilePos { start: iter.prev_index(), end: iter.prev_index() }
                 }))
             };
-            match esc {
-                'n' => res.push(StringFragment::Char('\n' as u32)),
-                '\\' => res.push(StringFragment::Char('\\' as u32)),
-                _ => return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
-                    ch: next_ch,
-                    pos: FilePos { start: iter.prev_index(), end: iter.prev_index() }
-                }))
-            }
+            res.push(StringFragment::Char(esc_char(esc, iter)?));
         } else {
             str.push(next_ch);
         }
@@ -267,6 +264,45 @@ fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError
         }
         res.push(StringFragment::Char(0));
         Ok(Token::StringLit { value: StringLit { frags: res } })
+    }
+}
+
+/// Builds a char literal until `start` appears
+fn tok_char(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError> {
+    let startpos = FilePos { start: iter.current_index(), end: iter.current_index() };
+    let value = match iter.next() {
+        Some('\\') => {
+            let Some(esc) = iter.next() else {
+                return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
+                    ch: '\\',
+                    pos: FilePos { start: iter.prev_index(), end: iter.prev_index() }
+                }))
+            };
+            esc_char(esc, iter)?
+        }
+        None => return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
+            ch: start,
+            pos: startpos
+        })),
+        Some(val) => val as u32
+    };
+    let Some('\'') = iter.next() else {
+        return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
+            ch: start,
+            pos: startpos
+        }));
+    };
+    Ok(Token::CharLit { value })
+}
+
+fn esc_char(esc: char, iter: &mut VecIter<char>) -> Result<u32, TokenizeError> {
+    match esc {
+        'n' => Ok('\n' as u32),
+        '\\' => Ok('\\' as u32),
+        _ => Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
+            ch: '\\',
+            pos: FilePos { start: iter.prev_index(), end: iter.prev_index() }
+        }))
     }
 }
 

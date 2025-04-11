@@ -6,6 +6,7 @@ pub enum Type {
     Int,
     Float,
     Bool,
+    Char,
     String,
     Pointer(Box<Type>),
     Array { inner: Box<Type>, length: usize },
@@ -21,8 +22,15 @@ impl Type {
             Type::Array { inner, length } => *length as u32 * inner.size(),
             Type::Tuple(tys) => tys.iter().map(|ty| ty.size()).sum(),
             Type::String | Type::TaggedArray { .. } => 16,
+            Type::Char | Type::Bool => 1,
             _ => 8
         }
+    }
+    pub fn aligned_size(&self) -> u32 {
+        Self::align(self.size())
+    }
+    pub fn align(size: u32) -> u32 {
+        (size + 7) & !7  // round up to the next multiple of 8
     }
     pub fn dereference(&self) -> Option<Type> {
         match self {

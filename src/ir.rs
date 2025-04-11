@@ -43,7 +43,7 @@ pub struct Block {
 pub enum Op {
     BinOp { res: Option<Term>, lhs: Term, op: String, rhs: Term },
     UnOp { res: Term, op: String, term: Term },
-    Store { res: Option<Term>, ptr: Term, offset: i64, op: String, term: Term },
+    Store { res: Option<Term>, ptr: Term, offset: i64, op: String, term: Term, size: u32 },
     Read { res: Term, ptr: Term, offset: i64 },
     Copy { from: Term, to: Term, size: u32 },
     Let { res: Term, term: Term },
@@ -108,7 +108,7 @@ impl fmt::Debug for Op {
         match self {
             Op::BinOp { res, lhs, op, rhs } => write!(f, "{}{:?} {} {:?}", fmt_opt(res), lhs, op, rhs),
             Op::UnOp { res, op, term } => write!(f, "{:?} = {}{:?}", res, op, term),
-            Op::Store { res, ptr, offset, op: _, term } => write!(f, "{}*({}) = {:?}", fmt_opt(res), fmt_ptr(ptr, offset), term),
+            Op::Store { res, ptr, offset, op: _, term, size } => write!(f, "{}*({}) = {:?} (size {})", fmt_opt(res), fmt_ptr(ptr, offset), term, size),
             Op::Read { res, ptr, offset } => write!(f, "{:?} = *({})", res, fmt_ptr(ptr, offset)),
             Op::Copy { from, to, size } => write!(f, "copy {:?} into {:?} (size {})", from, to, size),
             Op::Let { res, term } => write!(f, "let {:?} = {:?}", res, term),

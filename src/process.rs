@@ -134,18 +134,20 @@ impl Process {
     }
 
     fn calc_bin_expr(&self, bin: node::BinExpr) -> node::ExprKind {
-        if let node::ExprKind::IntLit(l) = &bin.lhs.kind {
-            if let node::ExprKind::IntLit(r) = &bin.rhs.kind {
-                return node::ExprKind::IntLit(
-                    match bin.op.str.as_str() {
-                        "+" => l + r,
-                        "-" => l - r,
-                        "*" => l * r,
-                        "/" => l / r,
-                        "%" => l % r,
-                        _ => panic!("Unexpected operation")
-                    }
-                );
+        if !bin.is_bool() {
+            if let node::ExprKind::IntLit(l) = &bin.lhs.kind {
+                if let node::ExprKind::IntLit(r) = &bin.rhs.kind {
+                    return node::ExprKind::IntLit(
+                        match bin.op.str.as_str() {
+                            "+" => l + r,
+                            "-" => l - r,
+                            "*" => l * r,
+                            "/" => l / r,
+                            "%" => l % r,
+                            _ => panic!("Unexpected operation")
+                        }
+                    );
+                }
             }
         }
         node::ExprKind::BinExpr(bin)

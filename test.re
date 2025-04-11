@@ -1,13 +1,7 @@
 import lib/std
 
 fn main() {
-    if 0 || !print("asd") {
-        print("x\n");
-    } else if "a" {
-        let y = "y";
-        print(y);
-        print(y);
-    } else {
-        print("z");
-    }
+    let true = 1 && 1;
+    let x = (true, true, 7, 'a');
+    print(x[3]);
 }

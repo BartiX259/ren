@@ -149,6 +149,7 @@ pub struct Expr {
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     IntLit(i64),
+    CharLit(u32),
     ArrLit(ArrLit),
     StructLit(StructLit),
     StringLit(StringLit),

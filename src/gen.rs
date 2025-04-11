@@ -166,7 +166,7 @@ impl<'a> Gen<'a> {
             match op {
                 ir::Op::BinOp { lhs, rhs, op, res } => self.binop(lhs, rhs, op, res)?,
                 ir::Op::UnOp { term, op, res } => self.unop(term, op, res)?,
-                ir::Op::Store { term, op, ptr, offset, res } => self.store(term, op, ptr, offset, res)?,
+                ir::Op::Store { term, op, ptr, offset, res, size } => self.store(term, op, ptr, offset, res, size)?,
                 ir::Op::Read { ptr, offset, res } => self.read(ptr, offset, res)?,
                 ir::Op::Copy { from, to, size } => {
                     if let Term::Stack(_) = from {
@@ -673,7 +673,7 @@ impl<'a> Gen<'a> {
         }
     }
 
-    fn store(&mut self, term: Term, op: String, ptr: Term, mut offset: i64, res: Option<Term>) -> Result<(), GenError> {
+    fn store(&mut self, term: Term, op: String, ptr: Term, mut offset: i64, res: Option<Term>, size: u32) -> Result<(), GenError> {
         let p;
         if let Term::Stack(_) = ptr {
             p = "rsp".to_string();
@@ -681,43 +681,45 @@ impl<'a> Gen<'a> {
         } else {
             p = self.eval_term(ptr, false)?;
         }
+        let s = Self::word_size_name(size);
         if let Some((t1, t2)) = self.doubles.get(&term).cloned() {
-            self.buf.push_line(format!("mov qword [{}{}], {}", p, self.fmt_offset(offset), t1));
-            self.buf.push_line(format!("mov qword [{}{}], {}", p, self.fmt_offset(offset+8), t2));
+            self.buf.push_line(format!("mov {s} [{}{}], {}", p, self.fmt_offset(offset), t1));
+            self.buf.push_line(format!("mov {s} [{}{}], {}", p, self.fmt_offset(offset+8), t2));
             self.clear_reg(&t1);
             self.clear_reg(&t2);
             return Ok(());
         }
         let mut t = self.eval_term(term, res.is_none() && op != "*=" && op != "/=" && op != "%=")?;
+        let display_term = Self::reg_name(&t, size);
         let o = self.fmt_offset(offset);
         match op.as_str() {
-            "=" => self.buf.push_line(format!("mov qword [{}{}], {}", p, o, t)),
-            "+=" => self.buf.push_line(format!("add qword [{}{}], {}", p, o, t)),
-            "-=" => self.buf.push_line(format!("sub qword [{}{}], {}", p, o, t)),
-            "|=" => self.buf.push_line(format!("or qword [{}{}], {}", p, o, t)),
-            "^=" => self.buf.push_line(format!("xor qword [{}{}], {}", p, o, t)),
-            "&=" => self.buf.push_line(format!("and qword [{}{}], {}", p, o, t)),
+            "=" => self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, display_term)),
+            "+=" => self.buf.push_line(format!("add {s} [{}{}], {}", p, o, display_term)),
+            "-=" => self.buf.push_line(format!("sub {s} [{}{}], {}", p, o, display_term)),
+            "|=" => self.buf.push_line(format!("or {s} [{}{}], {}", p, o, display_term)),
+            "^=" => self.buf.push_line(format!("xor {s} [{}{}], {}", p, o, display_term)),
+            "&=" => self.buf.push_line(format!("and {s} [{}{}], {}", p, o, display_term)),
             "*=" => {
                 let mut free = self.get_free_reg()?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
                 self.bin_rax("mul", &mut free, &mut t);
-                self.buf.push_line(format!("mov qword [{}{}], {}", p, o, free));
+                self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
             "/=" => {
                 let mut free = self.get_free_reg()?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
                 self.bin_rax("div", &mut free, &mut t);
-                self.buf.push_line(format!("mov qword [{}{}], {}", p, o, free));
+                self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
             "%=" => {
                 let mut free = self.get_free_reg()?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
                 self.bin_rax("div", &mut free, &mut t);
                 self.buf.push_line("xchg rax, rdx");
-                self.buf.push_line(format!("mov qword [{}{}], {}", p, o, free));
+                self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
-            ">>=" => self.bin_cl("shr qword", &mut format!("[{}{}]", p, o), &mut t),
-            "<<=" => self.bin_cl("shl qword", &mut format!("[{}{}]", p, o), &mut t),
+            ">>=" => self.bin_cl(format!("shr {s}").as_str(), &mut format!("[{}{}]", p, o), &mut t),
+            "<<=" => self.bin_cl(format!("shl {s}").as_str(), &mut format!("[{}{}]", p, o), &mut t),
             _ => unreachable!(),
         }
         if let Some(r) = res {
@@ -828,4 +830,37 @@ impl<'a> Gen<'a> {
             _ => panic!("No 8 bit counterpart"),
         }
     }
+    fn word_size_name(size: u32) -> &'static str {
+        match size {
+            1 => "byte",
+            2 => "word",
+            3 | 4 => "dword",
+            _ => "qword",
+        }
+    }
+    fn reg_name(base: &str, size: u32) -> String {
+        let r;
+        match size {
+            1 => match base {
+                "rax" => "al", "rbx" => "bl", "rcx" => "cl", "rdx" => "dl",
+                "rsi" => "sil", "rdi" => "dil", "rbp" => "bpl", "rsp" => "spl",
+                _ if base.starts_with("r") => { r = format!("{}b", base); r.as_str() },
+                _ => base,
+            }.to_string(),
+            2 => match base {
+                "rax" => "ax", "rbx" => "bx", "rcx" => "cx", "rdx" => "dx",
+                "rsi" => "si", "rdi" => "di", "rbp" => "bp", "rsp" => "sp",
+                _ if base.starts_with("r") => { r = format!("{}w", base); r.as_str() },
+                _ => base,
+            }.to_string(),
+            3 | 4 => match base {
+                "rax" => "eax", "rbx" => "ebx", "rcx" => "ecx", "rdx" => "edx",
+                "rsi" => "esi", "rdi" => "edi", "rbp" => "ebp", "rsp" => "esp",
+                _ if base.starts_with("r") => { r = format!("{}d", base); r.as_str() },
+                _ => base,
+            }.to_string(),
+            _ => base.to_string(),
+        }
+    }
+
 }
