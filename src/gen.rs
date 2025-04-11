@@ -323,6 +323,7 @@ impl<'a> Gen<'a> {
                 ir::Op::CondJump { cond, label } => {
                     let r = self.eval_term(cond, false)?;
                     self.buf.push_line(format!("test {}, {}", r, r));
+                    self.clear_reg(&r);
                     self.restore_sp();
                     self.buf.push_line(format!("jnz .L{}", label));
                 }
@@ -341,8 +342,8 @@ impl<'a> Gen<'a> {
                     };
                     self.restore_sp();
                     self.buf.push_line(format!("{} .L{}", jmp_instr, label));
-                    self.lock_reg(&r1, false);
-                    self.lock_reg(&r2, false);
+                    self.clear_reg(&r1);
+                    self.clear_reg(&r2);
                 }
                 ir::Op::Return { term }=> {
                     if let Some(t) = term {
@@ -572,13 +573,12 @@ impl<'a> Gen<'a> {
         if let Some(r) = self.get_reg(&reg.to_string()) {
             if let Some(t) = &r.term {
                 let binding = t.clone();
-                r.term = None;
                 if r.locked {
-                    r.locked = false;
                     free = Some((self.get_free_reg()?, binding));
                 }
             }
         }
+        self.clear_reg(&reg);
         if let Some(f) = free {
             self.buf.push_line(format!("mov {}, {}", f.0, reg));
             self.save_reg(&f.0, &f.1);
@@ -596,11 +596,11 @@ impl<'a> Gen<'a> {
         match op.as_str() {
             "+" => self.bin("add", &r1, &r2),
             "-" => self.bin("sub", &r1, &r2),
-            "*" => self.bin_rax("mul", &mut r1, &mut r2),
-            "/" => self.bin_rax("div", &mut r1, &mut r2),
+            "*" => self.bin_rax("mul", &mut r1, &mut r2)?,
+            "/" => self.bin_rax("div", &mut r1, &mut r2)?,
             "%" => {
-                self.bin_rax("div", &mut r1, &mut r2);
-                self.buf.push_line("xchg rax, rdx");
+                self.bin_rax("div", &mut r1, &mut r2)?;
+                r1 = "rdx".to_string();
             },
             ">" => self.cond("setg", &r1, &r2),
             "<" => self.cond("setl", &r1, &r2),
@@ -615,8 +615,8 @@ impl<'a> Gen<'a> {
             "<<" => self.bin_cl("shl", &mut r1, &mut r2),
             _ => todo!(),
         }
-        self.save_reg(&r2, &rhs);
-        self.lock_reg(&r2, false);
+        self.save_reg(&r1, &lhs);
+        self.clear_reg(&r2);
         if let Some(r) = &res {
             self.save_reg(&r1, r);
             if r.is_stack() {
@@ -702,19 +702,19 @@ impl<'a> Gen<'a> {
             "*=" => {
                 let mut free = self.get_free_reg()?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
-                self.bin_rax("mul", &mut free, &mut t);
+                self.bin_rax("mul", &mut free, &mut t)?;
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
             "/=" => {
                 let mut free = self.get_free_reg()?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
-                self.bin_rax("div", &mut free, &mut t);
+                self.bin_rax("div", &mut free, &mut t)?;
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
             "%=" => {
                 let mut free = self.get_free_reg()?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
-                self.bin_rax("div", &mut free, &mut t);
+                self.bin_rax("div", &mut free, &mut t)?;
                 self.buf.push_line("xchg rax, rdx");
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
@@ -726,7 +726,7 @@ impl<'a> Gen<'a> {
             self.save_reg(&t, &r);
             self.lock_reg(&t, true);
         } else {
-            self.lock_reg(&t, false);
+            self.clear_reg(&t);
         }
         self.lock_reg(&p, false);
         // Might have modified a symbol on the stack, so forget about symbols in the registers
@@ -782,7 +782,7 @@ impl<'a> Gen<'a> {
         self.buf.push_line(format!("{} {}, {}", op, r1, r2));
     }
 
-    fn bin_rax(&mut self, op: &str, r1: &mut String, r2: &mut String) {
+    fn bin_rax(&mut self, op: &str, r1: &mut String, r2: &mut String) -> Result<(), GenError> {
         self.swap_regs(r1.to_string(), "rax".to_string());
         if r2 == "rax" {
             *r2 = r1.to_string();
@@ -791,9 +791,11 @@ impl<'a> Gen<'a> {
         }
         *r1 = "rax".to_string();
         if op == "div" {
+            self.free_reg(&"rdx".to_string())?;
             self.buf.push_line("xor rdx, rdx");
         }
         self.buf.push_line(format!("{} {}", op, r2));
+        Ok(())
     }
     fn bin_cl(&mut self, op: &str, r1: &mut String, r2: &mut String) {
         if r2.parse::<i64>().is_ok() {

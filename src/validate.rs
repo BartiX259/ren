@@ -1,7 +1,7 @@
 use crate::ir::{Block, Symbol};
 use crate::types::Type;
 use crate::node::{self, ExprKind, PosStr, Span};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 
 /// Validate the ast, return a symbol table if successful
@@ -45,7 +45,7 @@ pub enum SemanticError {
     InvalidArgCount(PosStr, usize, usize),
     ArgTypeMismatch(Span, Type, Type),
     NoFnSig(PosStr, Vec<Type>),
-    StructInFunc(PosStr),
+    TypeInFunc(PosStr),
     InvalidStructKey(PosStr, PosStr),
     MissingStructKey(PosStr, String),
     StructTypeMismatch(PosStr, Type, Type),
@@ -98,23 +98,12 @@ impl Validate {
     }
 
     fn hoist_type(&mut self, stmt: &node::Stmt) -> Result<(), SemanticError> {
-        if let node::Stmt::StructDecl(decl) = stmt {
+        if let node::Stmt::TypeDecl(decl) = stmt {
             if self.symbol_table.contains_key(&decl.name.str) {
                 return Err(SemanticError::SymbolExists(decl.name.clone()));
             }
-            let names: Vec<String> = decl.field_names.iter().map(|pos_str| pos_str.str.clone()).collect();
-            let mut types = Vec::new();
-            let mut offsets = Vec::new();
-            let mut i = 0;
-            for node_ty in decl.field_types.iter() {
-                let ty = self.r#type(node_ty)?;
-                offsets.push(i);
-                i += ty.size();
-                types.push(ty);
-            }
-            let map: HashMap<String, (Type, u32)> = names.into_iter().zip(types.into_iter().zip(offsets.into_iter())).collect();
-            let ty = Type::Struct(map);
-            self.symbol_table.insert(decl.name.str.clone(), Symbol::Struct { ty });
+            let ty = self.r#type(&decl.r#type)?;
+            self.symbol_table.insert(decl.name.str.clone(), Symbol::Type { ty });
         }
         Ok(())
     }
@@ -213,7 +202,7 @@ impl Validate {
             node::Stmt::Let(decl) => self.r#let(decl),
             node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
-            node::Stmt::StructDecl(decl) => self.struct_decl(decl),
+            node::Stmt::TypeDecl(decl) => self.type_decl(decl),
             node::Stmt::Ret(ret) => self.ret(ret),
             node::Stmt::If(r#if) => self.r#if(r#if),
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
@@ -253,7 +242,7 @@ impl Validate {
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.span),
             node::ExprKind::TypeCast(cast) => {
                 self.expr(&mut cast.expr)?;
-                self.r#type(&cast.ty)
+                self.r#type(&cast.r#type)
             }
         };
         if let Ok(ty) = &res {
@@ -331,9 +320,9 @@ impl Validate {
         Ok(())
     }
 
-    fn struct_decl(&mut self, decl: &node::StructDecl) -> Result<(), SemanticError> {
+    fn type_decl(&mut self, decl: &node::TypeDecl) -> Result<(), SemanticError> {
         if self.cur_func.is_some() {
-            return Err(SemanticError::StructInFunc(decl.name.clone()));
+            return Err(SemanticError::TypeInFunc(decl.name.clone()));
         }
         Ok(())
     }
@@ -435,7 +424,10 @@ impl Validate {
                     (Type::Int, Type::Int) => Ok(Type::Int),
                     (Type::Float, Type::Float) => Ok(Type::Float),
                     (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
+                    (Type::Int, Type::Char) => Ok(Type::Int),
+                    (Type::Char, Type::Int) => Ok(Type::Char),
                     (Type::Pointer(p), Type::Int) => Ok(Type::Pointer(p.clone())),
+                    (Type::Pointer(_), Type::Pointer(_)) => Ok(Type::Int),
                     _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2)),
                 }
             }
@@ -539,32 +531,18 @@ impl Validate {
     }
 
     fn struct_lit(&mut self, lit: &mut node::StructLit) -> Result<Type, SemanticError> {
-        let decl_type = self.symbol_table.get(&lit.name.str).cloned();
-        let Some(Symbol::Struct { ty }) = decl_type else {
-            return Err(SemanticError::UndeclaredSymbol(lit.name.clone()));
-        };
-        let Type::Struct(map) = ty.clone() else {
-            unreachable!();
-        };
-        for (name, expr) in lit.field_names.iter().zip(lit.field_exprs.iter_mut()) {
-            let field_ty = self.expr(expr)?;
-            let m = map.get(&name.str);
-            if let Some((t, _)) = m {
-                if *t != field_ty {
-                    return Err(SemanticError::StructTypeMismatch(name.clone(), t.clone(), field_ty))
-                }
-            } else {
-                return Err(SemanticError::InvalidStructKey(lit.name.clone(), name.clone()));
+        let mut i = 0;
+        let mut map: HashMap<String, (Type, u32)> = HashMap::new();
+        for (node_name, node_expr) in lit.field_names.iter().zip(lit.field_exprs.iter_mut()) {
+            let ty = self.expr(node_expr)?;
+            if map.contains_key(&node_name.str) {
+                return Err(SemanticError::SymbolExists(node_name.clone()));
             }
+            let add = ty.size();
+            map.insert(node_name.str.clone(), (ty, i));
+            i += add;
         }
-        let set: HashSet<String> = lit.field_names.iter().map(|pos_str| pos_str.str.clone()).collect();
-        for name in map.keys() {
-            if set.get(name).is_none() {
-                return Err(SemanticError::MissingStructKey(lit.name.clone(), name.clone()));
-            }
-        }
-
-        Ok(ty)
+        Ok(Type::Struct(map))
     }
 
     fn expr_list(&mut self, exprs: &mut Vec<node::Expr>, pos_id: usize) -> Result<(Type, usize), SemanticError> {
@@ -703,7 +681,7 @@ impl Validate {
                 "char" => Ok(Type::Char),
                 other => {
                     if let Some(t) = self.symbol_table.get(other) {
-                        if let Symbol::Struct { ty } = t {
+                        if let Symbol::Type { ty } = t {
                             return Ok(ty.clone());
                         }
                     }
@@ -723,6 +701,20 @@ impl Validate {
                     types.push(ty.clone());
                 }
                 Ok(Type::Tuple(types))
+            }
+            node::TypeKind::Struct(node_names, node_types) => {
+                let mut i = 0;
+                let mut map: HashMap<String, (Type, u32)> = HashMap::new();
+                for (node_name, node_ty) in node_names.iter().zip(node_types.iter()) {
+                    let ty = self.r#type(node_ty)?;
+                    if map.contains_key(&node_name.str) {
+                        return Err(SemanticError::SymbolExists(node_name.clone()));
+                    }
+                    let add = ty.size();
+                    map.insert(node_name.str.clone(), (ty, i));
+                    i += add;
+                }
+                Ok(Type::Struct(map))
             }
         }
     }

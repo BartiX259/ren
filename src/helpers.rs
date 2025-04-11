@@ -22,6 +22,13 @@ where
         self.iter.peek()
     }
 
+    /// Peek at the item two steps ahead, without advancing the iterator
+    pub fn peek2(&mut self) -> Option<I> {
+        let mut clone = self.iter.clone();
+        clone.next();
+        clone.peek().cloned()
+    }
+
     /// Get the current index
     pub fn current_index(&self) -> usize {
         self.index

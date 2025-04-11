@@ -200,27 +200,30 @@ impl Process {
         }
         let mut lhs = self.expr(*bin.lhs);
         let ltype = self.cur_type.clone();
+        let rtype = bin.rhs.ty.clone();
         let mut rhs = self.expr(*bin.rhs);
-        if let Some(p) = ltype.dereference() { // Pointer arithmetic - multiply by size of inner type
-            let rspan = rhs.span;
-            rhs = node::Expr {
-                ty: rhs.ty.clone(),
-                span: rspan,
-                kind: self.calc_bin_expr(node::BinExpr {
-                    lhs: Box::new(rhs),
-                    rhs: Box::new(node::Expr {
-                        ty: Type::Int,
-                        span: rspan,
-                        kind: node::ExprKind::IntLit(p.size() as i64)
-                    }),
-                    op: self.pos_str("*".to_string())
-                })
-            };
-            if ltype.salloc() { // Add & to stack allocations
-                lhs = node::Expr {
-                    ty: lhs.ty.clone(),
-                    span: lhs.span,
-                    kind: node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(lhs), op: self.pos_str("&".to_string()) })
+        if let Some(p) = ltype.dereference() {
+            if let Some(_) = rtype.dereference() {} else { // Pointer arithmetic - multiply by size of inner type
+                let rspan = rhs.span;
+                rhs = node::Expr {
+                    ty: rhs.ty.clone(),
+                    span: rspan,
+                    kind: self.calc_bin_expr(node::BinExpr {
+                        lhs: Box::new(rhs),
+                        rhs: Box::new(node::Expr {
+                            ty: Type::Int,
+                            span: rspan,
+                            kind: node::ExprKind::IntLit(p.size() as i64)
+                        }),
+                        op: self.pos_str("*".to_string())
+                    })
+                };
+                if ltype.salloc() { // Add & to stack allocations
+                    lhs = node::Expr {
+                        ty: lhs.ty.clone(),
+                        span: lhs.span,
+                        kind: node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(lhs), op: self.pos_str("&".to_string()) })
+                    }
                 }
             }
         }

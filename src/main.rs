@@ -115,7 +115,7 @@ fn parse_module(import: &node::Import) -> Result<(Vec<node::Stmt>, Vec<node::Imp
     let (tokens, _) = match tokenize::tokenize(&content) {
         Ok(res) => res,
         Err(e) => {
-            error::token_err(&content, e);
+            error::token_err(&import.path, e);
             return Err(ExitCode::from(1));
         }
     };

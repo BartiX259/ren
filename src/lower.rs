@@ -89,7 +89,7 @@ impl<'a> Lower<'a> {
             node::Stmt::Let(decl) => self.r#let(decl),
             node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
-            node::Stmt::StructDecl(_) => (),
+            node::Stmt::TypeDecl(_) => (),
             node::Stmt::Ret(ret) => self.ret(ret),
             node::Stmt::If(r#if) => self.r#if(r#if),
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
@@ -140,26 +140,26 @@ impl<'a> Lower<'a> {
             }
             node::ExprKind::StructLit(lit) => {
                 let ptr;
-                let Some(Symbol::Struct { ty }) = self.ir.get(&lit.name.str) else {
-                    panic!("Missing struct symbol");
-                };
+                let ty = &expr.ty;
+                let mut is_salloc = true;
                 if let Some(p) = &self.cur_salloc {
                     ptr = p.clone();
+                    is_salloc = false;
                 } else {
                     self.stack_count += 1;
                     ptr = Term::Stack(self.stack_count);
                     self.cur_salloc = Some(ptr.clone());
-                    self.push_op(Op::Decl { term: ptr.clone(), size: ty.aligned_size() }, lit.name.pos_id);
+                    self.push_op(Op::Decl { term: ptr.clone(), size: ty.aligned_size() }, expr.span.end);
                 }
                 for expr in &lit.field_exprs {
                     let r = self.expr(expr);
                     if !expr.ty.salloc() {
                         self.temp_count += 1;
-                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r, size: expr.ty.size() }, lit.name.pos_id);
+                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r, size: expr.ty.size() }, expr.span.end);
                         self.salloc_offset += expr.ty.size() as i64;
                     }
                 }
-                if Some(ptr.clone()) == self.cur_salloc {
+                if is_salloc {
                     self.cur_salloc = None;
                     self.salloc_offset = 0;
                 }
@@ -167,8 +167,10 @@ impl<'a> Lower<'a> {
             }
             node::ExprKind::StringLit(lit) => {
                 let ptr;
+                let mut is_salloc = true;
                 if let Some(p) = &self.cur_salloc {
                     ptr = p.clone();
+                    is_salloc = false;
                 } else {
                     self.stack_count += 1;
                     ptr = Term::Stack(self.stack_count);
@@ -191,7 +193,8 @@ impl<'a> Lower<'a> {
                         Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(new_sym), size: 8 }, expr.span.end
                     );
                 }
-                if Some(ptr.clone()) == self.cur_salloc {
+                self.salloc_offset += 8;
+                if is_salloc {
                     self.cur_salloc = None;
                     self.salloc_offset = 0;
                 }
@@ -199,8 +202,10 @@ impl<'a> Lower<'a> {
             }
             node::ExprKind::TupleLit(exprs) => {
                 let ptr;
+                let mut is_salloc = true;
                 if let Some(p) = &self.cur_salloc {
                     ptr = p.clone();
+                    is_salloc = false;
                 } else {
                     self.stack_count += 1;
                     ptr = Term::Stack(self.stack_count);
@@ -215,7 +220,7 @@ impl<'a> Lower<'a> {
                         self.salloc_offset += expr.ty.size() as i64;
                     }
                 }
-                if Some(ptr.clone()) == self.cur_salloc {
+                if is_salloc {
                     self.cur_salloc = None;
                     self.salloc_offset = 0;
                 }
@@ -225,7 +230,7 @@ impl<'a> Lower<'a> {
                 self.var_map.get(&pos_str.str).unwrap().clone()
             }
             node::ExprKind::Call(call) => self.call(call),
-            node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
+            node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr, expr.ty.size()),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.ty.size()),
             node::ExprKind::TypeCast(cast) => self.type_cast(cast, &expr.ty)
         }
@@ -287,6 +292,11 @@ impl<'a> Lower<'a> {
                 panic!("Argument not a var ({}).", s.str);
             };
             if ty.size() > 16 {
+                self.pointer_count += 1;
+                let id = self.pointer_count;
+                self.var_map.insert(s.str.clone(), Term::Pointer(id));
+                self.push_op(Op::Arg { term: Term::Pointer(id), double: false }, s.pos_id);
+            } else if let Some(p) = ty.dereference() {
                 self.pointer_count += 1;
                 let id = self.pointer_count;
                 self.var_map.insert(s.str.clone(), Term::Pointer(id));
@@ -398,7 +408,7 @@ impl<'a> Lower<'a> {
         self.push_op(Op::Label { label: end_label }, r#if.pos_id);
     }
 
-    fn bin_expr(&mut self, bin: &node::BinExpr) -> Term {
+    fn bin_expr(&mut self, bin: &node::BinExpr, size: u32) -> Term {
         if let node::ExprKind::UnExpr(u) = &bin.lhs.kind {
             if u.op.str == "*" && bin.is_assign() {
                 let term = self.expr(&bin.rhs);
@@ -411,7 +421,7 @@ impl<'a> Lower<'a> {
                         offset: 0,
                         op: bin.op.str.clone(),
                         term,
-                        size: bin.rhs.ty.size()
+                        size
                     },
                     u.op.pos_id,
                 );
@@ -454,6 +464,12 @@ impl<'a> Lower<'a> {
                         bin.op.pos_id
                     );
                 }
+            } else if let Type::Pointer(_) = bin.rhs.ty {
+                if bin.op.str == "=" {
+                    self.push_op(Op::BinOp { res: Some(lhs), lhs: rhs, op: "+".to_string(), rhs: Term::IntLit(0) }, bin.op.pos_id);
+                } else {
+                    self.push_op(Op::BinOp { res: Some(lhs.clone()), lhs, op: bin.op.str.strip_suffix("=").unwrap().to_string(), rhs }, bin.op.pos_id);
+                }
             } else {
                 self.push_op(
                     Op::Store { 
@@ -462,7 +478,7 @@ impl<'a> Lower<'a> {
                         offset: 0,
                         op: bin.op.str.clone(),
                         term: rhs,
-                        size: bin.rhs.ty.size()
+                        size
                     },
                     bin.op.pos_id
                 );

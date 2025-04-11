@@ -137,7 +137,7 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Function inside another function.");
             print_module_err_id(path, pos_str.pos_id);
         }
-        SemanticError::StructInFunc(pos_str) => {
+        SemanticError::TypeInFunc(pos_str) => {
             eprintln!("Struct declaration inside a function.");
             print_module_err_id(path, pos_str.pos_id);
         }

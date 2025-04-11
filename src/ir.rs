@@ -3,7 +3,7 @@ use crate::types::Type;
 
 #[derive(Clone)]
 pub enum Symbol {
-    Struct { ty: Type },
+    Type { ty: Type },
     Var { ty: Type },
     Func { ty: Type, block: Block, module: String, symbols: Vec<Vec<(String, Symbol)>> },
     ExternFunc { ty: Type, args: Vec<Type> },
@@ -165,11 +165,12 @@ fn fmt_args(args: &Vec<Type>) -> String {
 impl fmt::Debug for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Symbol::Struct { ty } => writeln!(f, "struct {:?}\n", ty),
+            Symbol::Type { ty } => writeln!(f, "type {:?}\n", ty),
             Symbol::Var { ty } => writeln!(f, "var {:?}\n", ty),
             Symbol::Func { ty, block, module, symbols } => {
                 write!(f, "func in {}: {} -> {:?}", module, fmt_args(&(symbols.get(0).unwrap().iter().map(|(_, sym)| { let Symbol::Var { ty } = sym else { unreachable!() }; ty.clone() }).collect::<Vec<Type>>())) , ty)?;
-                writeln!(f, "{:?}", block)
+                writeln!(f, "{:?}", block)?;
+                writeln!(f, "symbols: {:?}", symbols)
             }
             Symbol::ExternFunc { ty, args } => writeln!(f, "extern func: {} -> {:?}\n", fmt_args(args), ty),
             Symbol::Syscall { id, ty, args } => writeln!(f, "syscall {}: {} -> {:?}\n", id, fmt_args(args), ty),

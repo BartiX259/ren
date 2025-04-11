@@ -28,16 +28,9 @@ pub struct Decl {
     pub ty: types::Type
 }
 #[derive(Debug)]
-pub struct StructDecl {
+pub struct TypeDecl {
     pub name: PosStr,
-    pub field_names: Vec<PosStr>,
-    pub field_types: Vec<Type>,
-}
-#[derive(Debug, Clone)]
-pub struct StructLit {
-    pub name: PosStr,
-    pub field_names: Vec<PosStr>,
-    pub field_exprs: Vec<Expr>,
+    pub r#type: Type
 }
 #[derive(Debug, Clone)]
 pub struct Call {
@@ -50,6 +43,7 @@ pub enum TypeKind {
     Pointer(Box<Type>),
     Array(Box<Type>, Option<i64>),
     Tuple(Vec<Type>),
+    Struct(Vec<PosStr>, Vec<Type>)
 }
 #[derive(Debug, Clone)]
 pub struct Type {
@@ -126,6 +120,11 @@ pub struct ArrLit {
     pub exprs: Vec<Expr>,
     pub pos_id: usize
 }
+#[derive(Debug, Clone)]
+pub struct StructLit {
+    pub field_names: Vec<PosStr>,
+    pub field_exprs: Vec<Expr>,
+}
 
 #[derive(Debug)]
 pub struct Syscall {
@@ -136,7 +135,7 @@ pub struct Syscall {
 }
 #[derive(Debug, Clone)]
 pub struct TypeCast {
-    pub ty: Type,
+    pub r#type: Type,
     pub expr: Box<Expr>
 }
 
@@ -166,7 +165,7 @@ pub enum Stmt {
     Let(Let),
     Decl(Decl),
     Fn(Fn),
-    StructDecl(StructDecl),
+    TypeDecl(TypeDecl),
     Ret(Ret),
     If(If),
     Loop(Loop),
