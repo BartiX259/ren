@@ -1,4 +1,6 @@
 - Peephole optimization
+- Arg parsing?
 - Heap
 - String interpolation
 - Lists
+- Files

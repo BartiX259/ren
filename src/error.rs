@@ -138,7 +138,7 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::TypeInFunc(pos_str) => {
-            eprintln!("Struct declaration inside a function.");
+            eprintln!("Type declaration inside a function.");
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::InvalidArgCount(pos_str, exp, got) => {
@@ -167,7 +167,7 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::StructTypeMismatch(pos_str, ty1, ty2) => {
-            eprintln!("Struct type mismatch: expected {:?} but got {:?}", ty1, ty2);
+            eprintln!("Struct type mismatch: expected {:?} but got {:?}.", ty1, ty2);
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::InvalidMemberAccess(span) => {
@@ -179,7 +179,11 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             print_module_err_span(path, span);
         }
         SemanticError::ArrayTypeMismatch(span, ty1, ty2) => {
-            eprintln!("Array type mismatch: expected {:?} but got {:?}", ty1, ty2);
+            eprintln!("Array type mismatch: expected {:?} but got {:?}.", ty1, ty2);
+            print_module_err_span(path, span);
+        }
+        SemanticError::InvalidCast(span, ty1, ty2) => {
+            eprintln!("Can't cast from {:?} into {:?}.", ty1, ty2);
             print_module_err_span(path, span);
         }
     }

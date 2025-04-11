@@ -17,7 +17,7 @@ fn print(x_: int) {
 }
 
 fn print(x_: str) {
-    write(1, *(&x_ as **char+1), x_ as int);
+    write(1, x_ as *char, x_ as int);
 }
 
 fn print(x_: bool) {

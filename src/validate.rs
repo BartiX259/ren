@@ -52,6 +52,7 @@ pub enum SemanticError {
     InvalidMemberAccess(Span),
     EmptyArray(Span),
     ArrayTypeMismatch(Span, Type, Type),
+    InvalidCast(Span, Type, Type)
 }
 
 pub struct Validate {
@@ -240,10 +241,7 @@ impl Validate {
             node::ExprKind::Call(call) => self.call(call),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.span),
-            node::ExprKind::TypeCast(cast) => {
-                self.expr(&mut cast.expr)?;
-                self.r#type(&cast.r#type)
-            }
+            node::ExprKind::TypeCast(cast) => self.type_cast(cast, expr.span),
         };
         if let Ok(ty) = &res {
             expr.ty = ty.clone();
@@ -637,40 +635,6 @@ impl Validate {
         Ok(res)
     }
 
-    fn r#loop(&mut self, r#loop: &mut node::Loop) -> Result<(), SemanticError> {
-        self.loop_count += 1;
-        self.scope(&mut r#loop.scope)?;
-        self.loop_count -= 1;
-        Ok(())
-    }
-    fn r#while(&mut self, r#while: &mut node::While) -> Result<(), SemanticError> {
-        self.expr(&mut r#while.expr)?;
-        self.loop_count += 1;
-        self.scope(&mut r#while.scope)?;
-        self.loop_count -= 1;
-        Ok(())
-    }
-    fn r#for(&mut self, r#for: &mut node::For) -> Result<(), SemanticError> {
-        match &mut r#for.init {
-            node::LetOrExpr::Let(r#let) => self.r#let(r#let)?,
-            node::LetOrExpr::Expr(expr) => self.expr(expr).map(|_| ())?
-        }
-        self.expr(&mut r#for.cond)?;
-        self.expr(&mut r#for.incr)?;
-        self.loop_count += 1;
-        self.scope(&mut r#for.scope)?;
-        self.loop_count -= 1;
-        Ok(())
-    }
-
-    /// Checks if validator is currently in a loop
-    fn check_loop(&self, name: &str, pos_id: usize) -> Result<(), SemanticError> {
-        if self.loop_count == 0 {
-            return Err(SemanticError::NotInLoop(name.to_string(), pos_id));
-        }
-        Ok(())
-    }
-
     fn r#type(&self, r#type: &node::Type) -> Result<Type, SemanticError> {
         match &r#type.kind {
             node::TypeKind::Word(word) => match word.as_str() {
@@ -718,4 +682,60 @@ impl Validate {
             }
         }
     }
+
+    fn type_cast(&mut self, cast: &mut node::TypeCast, span: Span) -> Result<Type, SemanticError> {
+        let from = self.expr(&mut cast.expr)?;
+        let to = self.r#type(&cast.r#type)?;
+        match (&from, &to) {
+            (Type::String, Type::Pointer(inner)) if matches!(**inner, Type::Char) => (),
+            (Type::String, Type::Int) => (),
+            (Type::Struct(s1), Type::Struct(s2)) => {
+                for (n2, (t2, _)) in s2.iter() {
+                    let Some((t1, _)) = s1.get(n2) else {
+                        return Err(SemanticError::InvalidCast(span, from, to));
+                    };
+                    if t1 != t2 {
+                        return Err(SemanticError::InvalidCast(span, from, to));
+                    }
+                }
+            }
+            _ => return Err(SemanticError::InvalidCast(span, from, to))
+        }
+        Ok(to)
+    }
+
+    fn r#loop(&mut self, r#loop: &mut node::Loop) -> Result<(), SemanticError> {
+        self.loop_count += 1;
+        self.scope(&mut r#loop.scope)?;
+        self.loop_count -= 1;
+        Ok(())
+    }
+    fn r#while(&mut self, r#while: &mut node::While) -> Result<(), SemanticError> {
+        self.expr(&mut r#while.expr)?;
+        self.loop_count += 1;
+        self.scope(&mut r#while.scope)?;
+        self.loop_count -= 1;
+        Ok(())
+    }
+    fn r#for(&mut self, r#for: &mut node::For) -> Result<(), SemanticError> {
+        match &mut r#for.init {
+            node::LetOrExpr::Let(r#let) => self.r#let(r#let)?,
+            node::LetOrExpr::Expr(expr) => self.expr(expr).map(|_| ())?
+        }
+        self.expr(&mut r#for.cond)?;
+        self.expr(&mut r#for.incr)?;
+        self.loop_count += 1;
+        self.scope(&mut r#for.scope)?;
+        self.loop_count -= 1;
+        Ok(())
+    }
+
+    /// Checks if validator is currently in a loop
+    fn check_loop(&self, name: &str, pos_id: usize) -> Result<(), SemanticError> {
+        if self.loop_count == 0 {
+            return Err(SemanticError::NotInLoop(name.to_string(), pos_id));
+        }
+        Ok(())
+    }
+
 }

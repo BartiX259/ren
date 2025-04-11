@@ -721,6 +721,51 @@ impl<'a> Lower<'a> {
                 self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: Term::Temp(self.temp_count), size: to.size() }, id);
                 res = s;
             }
+            (Type::String, Type::Pointer(inner)) if matches!(**inner, Type::Char) => {
+                self.temp_count += 1;
+                self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8 }, id);
+                res = Term::Temp(self.temp_count);
+            }
+            (Type::Struct(s1), Type::Struct(s2)) => {
+                let mut ret = true;
+                if s1.len() != s2.len() {
+                    ret = false;
+                } else {
+                    for (n2, (_, o2)) in s2.iter() { // Check if struct already matches
+                        let Some((_, o1)) = s1.get(n2) else {
+                            unreachable!();
+                        };
+                        if o1 != o2 {
+                            ret = false;
+                            break;
+                        }
+                    }
+                }
+                if ret {
+                    res = r;
+                } else {
+                    self.stack_count += 1;
+                    let s = Term::Stack(self.stack_count);
+                    self.pointer_count += 1;
+                    self.push_op(Op::Decl { term: s.clone(), size: to.aligned_size() }, id);
+                    for (n2, (t2, o2)) in s2.iter() {
+                        let Some((_, o1)) = s1.get(n2) else {
+                            unreachable!();
+                        };
+                        self.temp_count += 1;
+                        self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone() }, id);
+                        self.temp_count += 1;
+                        self.push_op(Op::BinOp { res: Some(Term::Temp(self.temp_count)), lhs: Term::Temp(self.temp_count - 1), op: "+".to_string(), rhs: Term::IntLit(*o1 as i64) }, id);
+                        self.temp_count += 1;
+                        self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: s.clone() }, id);
+                        self.temp_count += 1;
+                        self.push_op(Op::BinOp { res: Some(Term::Temp(self.temp_count)), lhs: Term::Temp(self.temp_count - 1), op: "+".to_string(), rhs: Term::IntLit(*o2 as i64) }, id);
+                    
+                        self.push_op(Op::Copy { from: Term::Temp(self.temp_count-2), to: Term::Temp(self.temp_count), size: t2.size() }, id);
+                    }
+                    res = s;
+                }
+            }
             _ => res = r
         }
         res
