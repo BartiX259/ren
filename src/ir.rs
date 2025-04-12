@@ -41,10 +41,10 @@ pub struct Block {
 
 #[derive(Clone)]
 pub enum Op {
-    BinOp { res: Option<Term>, lhs: Term, op: String, rhs: Term },
-    UnOp { res: Term, op: String, term: Term },
+    BinOp { res: Option<Term>, lhs: Term, op: String, rhs: Term, size: u32 },
+    UnOp { res: Term, op: String, term: Term, size: u32 },
     Store { res: Option<Term>, ptr: Term, offset: i64, op: String, term: Term, size: u32 },
-    Read { res: Term, ptr: Term, offset: i64 },
+    Read { res: Term, ptr: Term, offset: i64, size: u32 },
     Copy { from: Term, to: Term, size: u32 },
     Let { res: Term, term: Term },
     Decl { term: Term, size: u32 },
@@ -106,10 +106,10 @@ fn fmt_ptr(ptr: &Term, offset: &i64) -> String {
 impl fmt::Debug for Op {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Op::BinOp { res, lhs, op, rhs } => write!(f, "{}{:?} {} {:?}", fmt_opt(res), lhs, op, rhs),
-            Op::UnOp { res, op, term } => write!(f, "{:?} = {}{:?}", res, op, term),
-            Op::Store { res, ptr, offset, op: _, term, size } => write!(f, "{}*({}) = {:?} (size {})", fmt_opt(res), fmt_ptr(ptr, offset), term, size),
-            Op::Read { res, ptr, offset } => write!(f, "{:?} = *({})", res, fmt_ptr(ptr, offset)),
+            Op::BinOp { res, lhs, op, rhs, size } => write!(f, "{}{:?} {} {:?} (size {})", fmt_opt(res), lhs, op, rhs, size),
+            Op::UnOp { res, op, term, size } => write!(f, "{:?} = {}{:?} (size {})", res, op, term, size),
+            Op::Store { res, ptr, offset, op, term, size } => write!(f, "{}*({}) {} {:?} (size {})", fmt_opt(res), fmt_ptr(ptr, offset), op, term, size),
+            Op::Read { res, ptr, offset, size } => write!(f, "{:?} = *({}) (size {})", res, fmt_ptr(ptr, offset), size),
             Op::Copy { from, to, size } => write!(f, "copy {:?} into {:?} (size {})", from, to, size),
             Op::Let { res, term } => write!(f, "let {:?} = {:?}", res, term),
             Op::Decl { term, size } => write!(f, "decl {:?} (size {})", term, size),

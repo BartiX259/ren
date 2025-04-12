@@ -71,6 +71,9 @@ impl BinExpr {
     pub fn is_bool(&self) -> bool {
         return ["&&", "||"].contains(&self.op.str.as_str());
     }
+    pub fn is_cmp(&self) -> bool {
+        return [">", ">=", "<", "<=", "==", "!="].contains(&self.op.str.as_str());
+    }
 }
 #[derive(Debug, Clone)]
 pub struct UnExpr {

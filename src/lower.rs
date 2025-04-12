@@ -241,7 +241,14 @@ impl<'a> Lower<'a> {
         if let Some(ret) = &self.stack_return {
             r = ret.clone();
         }
-        if r.is_stack() {
+        let mut is_var = false;
+        for var in self.var_map.values() {
+            if *var == r {
+                is_var = true;
+                break;
+            }
+        }
+        if r.is_stack() && !is_var {
             self.var_map.insert(decl.name.str.clone(), r);
         } else if let Term::Double(_) = r {
             self.stack_count += 1;
@@ -353,7 +360,7 @@ impl<'a> Lower<'a> {
                 let r = self.expr(expr);
                 if expr.ty.size() > 8 {
                     self.double_count += 1;
-                    self.push_op(Op::Read { res: Term::Double(self.double_count), ptr: r, offset: 0 }, ret.pos_id);
+                    self.push_op(Op::Read { res: Term::Double(self.double_count), ptr: r, offset: 0, size: 16 }, ret.pos_id);
                     self.push_op(Op::Return { term: Some(Term::Double(self.double_count))  }, ret.pos_id);
                 } else {
                     self.push_op(Op::Return { term: Some(r)  }, ret.pos_id);
@@ -439,7 +446,7 @@ impl<'a> Lower<'a> {
             if bin.op.str == "&&" {
                 self.temp_count += 1;
                 let t = Term::Temp(self.temp_count);
-                self.push_op(Op::UnOp { res: t.clone(), op: "!".to_string(), term: lhs.clone() }, bin.op.pos_id);
+                self.push_op(Op::UnOp { res: t.clone(), op: "!".to_string(), term: lhs.clone(), size }, bin.op.pos_id);
                 self.push_op(Op::CondJump { label: l, cond: t }, bin.op.pos_id);
             } else if bin.op.str == "||" {
                 self.push_op(Op::CondJump { label: l, cond: lhs.clone() }, bin.op.pos_id);
@@ -464,11 +471,11 @@ impl<'a> Lower<'a> {
                         bin.op.pos_id
                     );
                 }
-            } else if let Type::Pointer(_) = bin.rhs.ty {
+            } else if let Type::Pointer(_) = bin.lhs.ty {
                 if bin.op.str == "=" {
-                    self.push_op(Op::BinOp { res: Some(lhs), lhs: rhs, op: "+".to_string(), rhs: Term::IntLit(0) }, bin.op.pos_id);
+                    self.push_op(Op::BinOp { res: Some(lhs), lhs: rhs, op: "+".to_string(), rhs: Term::IntLit(0), size }, bin.op.pos_id);
                 } else {
-                    self.push_op(Op::BinOp { res: Some(lhs.clone()), lhs, op: bin.op.str.strip_suffix("=").unwrap().to_string(), rhs }, bin.op.pos_id);
+                    self.push_op(Op::BinOp { res: Some(lhs.clone()), lhs, op: bin.op.str.strip_suffix("=").unwrap().to_string(), rhs, size }, bin.op.pos_id);
                 }
             } else {
                 self.push_op(
@@ -485,12 +492,13 @@ impl<'a> Lower<'a> {
             }
         } else {
             let is_stack = if let Term::Stack(_) = lhs { true } else { false };
+            let size = if bin.is_cmp() { bin.lhs.ty.size() } else { size };
             if bin.lhs.ty.salloc() && is_stack {
                 self.push_op(
                     Op::UnOp {
                         res: Term::Temp(self.temp_count),
                         op: "&".to_string(),
-                        term: lhs,
+                        term: lhs, size
                     },
                     bin.op.pos_id
                 );
@@ -500,7 +508,7 @@ impl<'a> Lower<'a> {
                         res: Some(Term::Temp(self.temp_count)),
                         lhs: Term::Temp(self.temp_count - 1),
                         op: bin.op.str.clone(),
-                        rhs
+                        rhs, size
                     },
                     bin.op.pos_id,
                 );
@@ -510,7 +518,7 @@ impl<'a> Lower<'a> {
                         res: Some(Term::Temp(self.temp_count)),
                         lhs,
                         op: bin.op.str.clone(),
-                        rhs
+                        rhs, size
                     },
                     bin.op.pos_id,
                 );
@@ -531,7 +539,7 @@ impl<'a> Lower<'a> {
             } else if size > 8 {
                 self.double_count += 1;
                 let d = Term::Double(self.double_count);
-                self.push_op(Op::Read { res: d.clone(), ptr: term, offset: 0 }, un.op.pos_id);
+                self.push_op(Op::Read { res: d.clone(), ptr: term, offset: 0, size }, un.op.pos_id);
                 return d;
             }
         }
@@ -540,7 +548,7 @@ impl<'a> Lower<'a> {
             Op::UnOp {
                 res: Term::Temp(self.temp_count),
                 op: un.op.str.clone(),
-                term,
+                term, size
             },
             un.op.pos_id,
         );
@@ -567,7 +575,7 @@ impl<'a> Lower<'a> {
         self.push_op(Op::BeginCall, call.name.pos_id);
         if let Some(r) = &res {
             self.temp_count += 1;
-            self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone() }, call.name.pos_id);
+            self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone(), size: 8 }, call.name.pos_id);
             params.push(Term::Temp(self.temp_count));
         }
         for arg in call.args.iter() {
@@ -579,26 +587,26 @@ impl<'a> Lower<'a> {
                         self.temp_count += 1;
                         self.push_op(Op::Decl { term: Term::Stack(self.stack_count), size: arg.ty.aligned_size() }, call.name.pos_id);
                         self.push_op(Op::Copy { from: r.clone(), to: Term::Stack(self.stack_count), size: arg.ty.aligned_size() }, call.name.pos_id);
-                        self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: Term::Stack(self.stack_count) }, call.name.pos_id);
+                        self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: Term::Stack(self.stack_count), size: 8 }, call.name.pos_id);
                     } else {
                         self.temp_count += 1;
-                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r.clone(), offset: 0 }, call.name.pos_id);
+                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r.clone(), offset: 0, size: arg.ty.size() }, call.name.pos_id);
                         if arg.ty.size() > 8 {
                             self.temp_count += 1;
-                            self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8 }, call.name.pos_id);
+                            self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8, size: arg.ty.size() - 8 }, call.name.pos_id);
                             params.push(Term::Temp(self.temp_count - 1));
                         }
                     }
                 } else {
                     if arg.ty.size() > 16 {
                         self.temp_count += 1;
-                        self.push_op(Op::UnOp {res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone() }, call.name.pos_id);
+                        self.push_op(Op::UnOp {res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone(), size: 8 }, call.name.pos_id);
                     } else {
                         self.temp_count += 1;
-                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r.clone(), offset: 0 }, call.name.pos_id);
+                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r.clone(), offset: 0, size: arg.ty.size() }, call.name.pos_id);
                         if arg.ty.size() > 8 {
                             self.temp_count += 1;
-                            self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8 }, call.name.pos_id);
+                            self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8, size: arg.ty.size() - 8 }, call.name.pos_id);
                             params.push(Term::Temp(self.temp_count - 1));
                         }
                     }
@@ -657,10 +665,11 @@ impl<'a> Lower<'a> {
         self.loop_exit.push(e);
         self.push_op(Op::Jump { label: c }, r#while.pos_id);
         self.push_op(Op::Label { label: s }, r#while.pos_id);
-        self.push_op(Op::BeginLoop, 0);
+        self.push_op(Op::BeginLoop, r#while.pos_id);
         self.scope(&r#while.scope);
-        self.push_op(Op::EndLoop, 0);
+        self.push_op(Op::EndLoop, r#while.pos_id);
         self.push_op(Op::Label { label: c }, r#while.pos_id);
+        self.push_op(Op::BeginScope, r#while.pos_id);
         let cond = self.expr(&r#while.expr);
         self.push_op(
             Op::CondJump {
@@ -691,6 +700,7 @@ impl<'a> Lower<'a> {
         self.push_op(Op::EndLoop, 0);
         self.push_op(Op::Label { label: c }, r#for.pos_id);
         self.push_op(Op::NaturalFlow, r#for.pos_id);
+        self.push_op(Op::BeginScope, r#for.pos_id);
         self.expr(&r#for.incr);
         let cond = self.expr(&r#for.cond);
         self.push_op(
@@ -709,6 +719,7 @@ impl<'a> Lower<'a> {
     fn type_cast(&mut self, cast: &node::TypeCast, to: &Type) -> Term {
         let r = self.expr(&cast.expr);
         let id = cast.expr.span.end;
+        let size = to.size();
         let res;
         match (&cast.expr.ty, to) {
             (Type::Array { inner: _, length }, Type::TaggedArray { inner: _ }) => {
@@ -717,13 +728,13 @@ impl<'a> Lower<'a> {
                 self.temp_count += 1;
                 self.push_op(Op::Decl { term: s.clone(), size: 16 }, id);
                 self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 0, op: "=".to_string(), term: Term::IntLit(*length as i64), size: to.size() }, id);
-                self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r }, id);
+                self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r, size }, id);
                 self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: Term::Temp(self.temp_count), size: to.size() }, id);
                 res = s;
             }
             (Type::String, Type::Pointer(inner)) if matches!(**inner, Type::Char) => {
                 self.temp_count += 1;
-                self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8 }, id);
+                self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8, size }, id);
                 res = Term::Temp(self.temp_count);
             }
             (Type::Struct(s1), Type::Struct(s2)) => {
@@ -753,13 +764,13 @@ impl<'a> Lower<'a> {
                             unreachable!();
                         };
                         self.temp_count += 1;
-                        self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone() }, id);
+                        self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone(), size: 8 }, id);
                         self.temp_count += 1;
-                        self.push_op(Op::BinOp { res: Some(Term::Temp(self.temp_count)), lhs: Term::Temp(self.temp_count - 1), op: "+".to_string(), rhs: Term::IntLit(*o1 as i64) }, id);
+                        self.push_op(Op::BinOp { res: Some(Term::Temp(self.temp_count)), lhs: Term::Temp(self.temp_count - 1), op: "+".to_string(), rhs: Term::IntLit(*o1 as i64), size: 8 }, id);
                         self.temp_count += 1;
-                        self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: s.clone() }, id);
+                        self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: s.clone(), size: 8 }, id);
                         self.temp_count += 1;
-                        self.push_op(Op::BinOp { res: Some(Term::Temp(self.temp_count)), lhs: Term::Temp(self.temp_count - 1), op: "+".to_string(), rhs: Term::IntLit(*o2 as i64) }, id);
+                        self.push_op(Op::BinOp { res: Some(Term::Temp(self.temp_count)), lhs: Term::Temp(self.temp_count - 1), op: "+".to_string(), rhs: Term::IntLit(*o2 as i64), size: 8 }, id);
                     
                         self.push_op(Op::Copy { from: Term::Temp(self.temp_count-2), to: Term::Temp(self.temp_count), size: t2.size() }, id);
                     }

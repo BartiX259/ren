@@ -103,6 +103,9 @@ impl<'a> Gen<'a> {
             self.buf.push_line("");
             self.buf.push_line("_start:");
             self.buf.indent();
+            self.buf.push_line("mov rdi, [rsp]");
+            self.buf.push_line("mov rsi, rsp");
+            self.buf.push_line("add rsi, 8");
             self.buf.push_line("call main");
             self.buf.push_line("mov rdi, rax");
             self.buf.push_line("mov rax, 60");
@@ -164,10 +167,10 @@ impl<'a> Gen<'a> {
             self.last_loc = locs.next().unwrap().clone();
             let op_clone = op.clone();
             match op {
-                ir::Op::BinOp { lhs, rhs, op, res } => self.binop(lhs, rhs, op, res)?,
-                ir::Op::UnOp { term, op, res } => self.unop(term, op, res)?,
+                ir::Op::BinOp { lhs, rhs, op, res, size } => self.binop(lhs, rhs, op, res, size)?,
+                ir::Op::UnOp { term, op, res, size } => self.unop(term, op, res, size)?,
                 ir::Op::Store { term, op, ptr, offset, res, size } => self.store(term, op, ptr, offset, res, size)?,
-                ir::Op::Read { ptr, offset, res } => self.read(ptr, offset, res)?,
+                ir::Op::Read { ptr, offset, res, size } => self.read(ptr, offset, res, size)?,
                 ir::Op::Copy { from, to, size } => {
                     if let Term::Stack(_) = from {
                         self.free_reg(&"rsi".to_string())?;
@@ -198,6 +201,7 @@ impl<'a> Gen<'a> {
                 }
                 ir::Op::Let { term, res } => {
                     let r = self.eval_term(term, true)?;
+                    self.save_reg(&r, &res);
                     self.store_term(res, r);
                 }
                 ir::Op::Decl { term, size } => {
@@ -587,32 +591,32 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    fn binop(&mut self, lhs: Term, rhs: Term, op: String, res: Option<Term>) -> Result<(), GenError> {
+    fn binop(&mut self, lhs: Term, rhs: Term, op: String, res: Option<Term>, size: u32) -> Result<(), GenError> {
         //println!("tac {:?} {:?} {:?}={:?}", lhs, op_opt, rhs_opt, res);
         let mut r1 = self.eval_term(lhs.clone(), false)?;
         self.lock_reg(&r1, true);
         let mut r2;
         r2 = self.eval_term(rhs.clone(), !["*", "/", "%"].contains(&op.as_str()))?;
         match op.as_str() {
-            "+" => self.bin("add", &r1, &r2),
-            "-" => self.bin("sub", &r1, &r2),
-            "*" => self.bin_rax("mul", &mut r1, &mut r2)?,
-            "/" => self.bin_rax("div", &mut r1, &mut r2)?,
+            "+" => self.bin("add", &r1, &r2, size),
+            "-" => self.bin("sub", &r1, &r2, size),
+            "*" => self.bin_rax("mul", &mut r1, &mut r2, size)?,
+            "/" => self.bin_rax("div", &mut r1, &mut r2, size)?,
             "%" => {
-                self.bin_rax("div", &mut r1, &mut r2)?;
+                self.bin_rax("div", &mut r1, &mut r2, size)?;
                 r1 = "rdx".to_string();
             },
-            ">" => self.cond("setg", &r1, &r2),
-            "<" => self.cond("setl", &r1, &r2),
-            ">=" => self.cond("setge", &r1, &r2),
-            "<=" => self.cond("setle", &r1, &r2),
-            "==" => self.cond("sete", &r1, &r2),
-            "!=" => self.cond("setne", &r1, &r2),
-            "|" => self.bin("or", &r1, &r2),
-            "&" => self.bin("and", &r1, &r2),
-            "^" => self.bin("xor", &r1, &r2),
-            ">>" => self.bin_cl("shr", &mut r1, &mut r2),
-            "<<" => self.bin_cl("shl", &mut r1, &mut r2),
+            ">" => self.cond("setg", &r1, &r2, size),
+            "<" => self.cond("setl", &r1, &r2, size),
+            ">=" => self.cond("setge", &r1, &r2, size),
+            "<=" => self.cond("setle", &r1, &r2, size),
+            "==" => self.cond("sete", &r1, &r2, size),
+            "!=" => self.cond("setne", &r1, &r2, size),
+            "|" => self.bin("or", &r1, &r2, size),
+            "&" => self.bin("and", &r1, &r2, size),
+            "^" => self.bin("xor", &r1, &r2, size),
+            ">>" => self.bin_cl("shr", &mut r1, &mut r2, size),
+            "<<" => self.bin_cl("shl", &mut r1, &mut r2, size),
             _ => todo!(),
         }
         self.save_reg(&r1, &lhs);
@@ -633,7 +637,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    fn unop(&mut self, term: Term, op: String, res: Term) -> Result<(), GenError> {
+    fn unop(&mut self, term: Term, op: String, res: Term, size: u32) -> Result<(), GenError> {
         match op.as_str() {
             "&" => {
                 let loc = self.locs.get(&term).expect(format!("Couldn't find {:?}", term).as_str());
@@ -649,12 +653,18 @@ impl<'a> Gen<'a> {
             _ => (),
         }
         let r = self.eval_term(term, false)?;
+        let d = Self::reg_name(&r, size);
         match op.as_str() {
-            "-" => self.buf.push_line(format!("neg {}", r)),
-            "*" => self.buf.push_line(format!("mov {}, [{}]", r, r)),
+            "-" => self.buf.push_line(format!("neg {}", d)),
+            "*" => { 
+                self.buf.push_line(format!("mov {}, [{}]", d, r));
+                if d != r {
+                    self.buf.push_line(format!("movzx {}, {}", r, d));
+                }
+            }
             "!" => {
-                self.buf.push_line(format!("test {}, {}", r, r));
-                self.buf.push_line(format!("sete {}", Self::reg_8bit(&r)));
+                self.buf.push_line(format!("test {}, {}", d, d));
+                self.buf.push_line(format!("sete {}", Self::reg_name(&r, 1)));
             }
             _ => unreachable!(),
         }
@@ -702,24 +712,24 @@ impl<'a> Gen<'a> {
             "*=" => {
                 let mut free = self.get_free_reg()?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
-                self.bin_rax("mul", &mut free, &mut t)?;
+                self.bin_rax("mul", &mut free, &mut t, size)?;
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
             "/=" => {
                 let mut free = self.get_free_reg()?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
-                self.bin_rax("div", &mut free, &mut t)?;
+                self.bin_rax("div", &mut free, &mut t, size)?;
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
             "%=" => {
                 let mut free = self.get_free_reg()?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
-                self.bin_rax("div", &mut free, &mut t)?;
+                self.bin_rax("div", &mut free, &mut t, size)?;
                 self.buf.push_line("xchg rax, rdx");
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
-            ">>=" => self.bin_cl(format!("shr {s}").as_str(), &mut format!("[{}{}]", p, o), &mut t),
-            "<<=" => self.bin_cl(format!("shl {s}").as_str(), &mut format!("[{}{}]", p, o), &mut t),
+            ">>=" => self.bin_cl(format!("shr {s}").as_str(), &mut format!("[{}{}]", p, o), &mut t, size),
+            "<<=" => self.bin_cl(format!("shl {s}").as_str(), &mut format!("[{}{}]", p, o), &mut t, size),
             _ => unreachable!(),
         }
         if let Some(r) = res {
@@ -740,7 +750,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    fn read(&mut self, ptr: Term, mut offset: i64, res: Term) -> Result<(), GenError> {
+    fn read(&mut self, ptr: Term, mut offset: i64, res: Term, size: u32) -> Result<(), GenError> {
         let r;
         if let Term::Stack(_) = ptr {
             r = "rsp".to_string();
@@ -763,26 +773,31 @@ impl<'a> Gen<'a> {
         }
         let o = self.fmt_offset(offset);
         if let Term::Stack(_) = ptr {
-            println!("eval {:?}", res);
             let res_reg = self.get_free_reg()?;
-            println!("at {}",  res_reg);
-            self.buf.push_line(format!("mov {}, [{}{}]", res_reg, r, o));
+            let d = Self::reg_name(&res_reg, size);
+            self.buf.push_line(format!("mov {}, [{}{}]", d, r, o));
+            if d != res_reg {
+                self.buf.push_line(format!("movzx {}, {}", res_reg, d));
+            }
             self.save_reg(&res_reg, &res);
             self.lock_reg(&res_reg, true);
         } else {
-            println!("r {}", r);
-            self.buf.push_line(format!("mov {}, [{}{}]", r, r, o));
+            let d = Self::reg_name(&r, size);
+            self.buf.push_line(format!("mov {}, [{}{}]", d, r, o));
+            if d != r {
+                self.buf.push_line(format!("movzx {}, {}", r, d));
+            }
             self.save_reg(&r, &res);
             self.lock_reg(&r, true);
         }
         Ok(())
     }
 
-    fn bin(&mut self, op: &str, r1: &String, r2: &String) {
-        self.buf.push_line(format!("{} {}, {}", op, r1, r2));
+    fn bin(&mut self, op: &str, r1: &String, r2: &String, size: u32) {
+        self.buf.push_line(format!("{} {}, {}", op, Self::reg_name(r1, size), Self::reg_name(r2, size)));
     }
 
-    fn bin_rax(&mut self, op: &str, r1: &mut String, r2: &mut String) -> Result<(), GenError> {
+    fn bin_rax(&mut self, op: &str, r1: &mut String, r2: &mut String, size: u32) -> Result<(), GenError> {
         self.swap_regs(r1.to_string(), "rax".to_string());
         if r2 == "rax" {
             *r2 = r1.to_string();
@@ -794,12 +809,12 @@ impl<'a> Gen<'a> {
             self.free_reg(&"rdx".to_string())?;
             self.buf.push_line("xor rdx, rdx");
         }
-        self.buf.push_line(format!("{} {}", op, r2));
+        self.buf.push_line(format!("{} {}", op, Self::reg_name(r2, size)));
         Ok(())
     }
-    fn bin_cl(&mut self, op: &str, r1: &mut String, r2: &mut String) {
+    fn bin_cl(&mut self, op: &str, r1: &mut String, r2: &mut String, size: u32) {
         if r2.parse::<i64>().is_ok() {
-            self.buf.push_line(format!("{} {}, {}", op, r1, r2));
+            self.buf.push_line(format!("{} {}, {}", op, Self::reg_name(r1, size), r2));
             return;
         }
         self.swap_regs(r2.to_string(), "rcx".to_string());
@@ -809,29 +824,19 @@ impl<'a> Gen<'a> {
             *r1 = "rcx".to_string();
         }
         *r2 = "rcx".to_string();
-        self.buf.push_line(format!("{} {}, {}", op, r1, Self::reg_8bit(r2)));
+        self.buf.push_line(format!("{} {}, {}", op, Self::reg_name(r1, size), Self::reg_name(r2, 1)));
     }
 
-    fn cond(&mut self, cond: &str, r1: &String, r2: &String) {
-        if r2 != "0" {
-            self.buf.push_line(format!("sub {}, {}", r1, r2));
-        }
+    fn cond(&mut self, cond: &str, r1: &String, r2: &String, size: u32) {
+        // if r2 != "0" {
+        //     self.buf.push_line(format!("sub {}, {}", Self::reg_name(r1, size), Self::reg_name(r2, size)));
+        // }
+        self.buf.push_line(format!("cmp {}, {}", Self::reg_name(r1, size), Self::reg_name(r2, size)));
         self.buf.push(cond);
-        self.buf.push_line(format!(" {}", Self::reg_8bit(r1)));
-        self.buf.push_line(format!("movzx {}, {}", r1, Self::reg_8bit(r1)));
+        self.buf.push_line(format!(" {}", Self::reg_name(r1, 1)));
+        // self.buf.push_line(format!("movzx {}, {}", Self::reg_name(r1, size), Self::reg_name(r1, 1)));
     }
 
-    fn reg_8bit(reg: &String) -> String {
-        match reg.as_str() {
-            "rax" => "al".to_string(),
-            "rbx" => "bl".to_string(),
-            "rcx" => "cl".to_string(),
-            "rdx" => "dl".to_string(),
-            "rsi" => "sil".to_string(),
-            "rdi" => "dil".to_string(),
-            _ => panic!("No 8 bit counterpart"),
-        }
-    }
     fn word_size_name(size: u32) -> &'static str {
         match size {
             1 => "byte",

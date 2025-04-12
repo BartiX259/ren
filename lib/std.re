@@ -1,33 +1,43 @@
 syscall 1: write(int, *char, int);
 
-fn int2str(x_: int, buf_: *char) -> *char {
-    if x_ < 10 {
-        *buf_ = '0' + x_;
-        return buf_ + 1;
+fn int2str(x: int, buf: *char) -> *char {
+    if x < 10 {
+        *buf = '0' + x;
+        return buf + 1;
     }
-    buf_ = int2str(x_ / 10, buf_);
-    *buf_ = '0' + (x_ % 10);
-    return buf_ + 1;
+    buf = int2str(x / 10, buf);
+    *buf = '0' + (x % 10);
+    return buf + 1;
 }
 
-fn print(x_: int) {
+fn print(x: int) {
     decl buf: char[32];
-    let end = int2str(x_, &buf);
+    let end = int2str(x, &buf);
     write(1, &buf, end - &buf);
 }
 
-fn print(x_: str) {
-    write(1, x_ as *char, x_ as int);
+fn print(x: str) {
+    write(1, x as *char, x as int);
 }
 
-fn print(x_: bool) {
-    if (x_) {
+fn print(x: bool) {
+    if (x) {
         print("true");
     } else {
         print("false");
     }
 }
 
-fn print(x_: char) {
-    write(1, &x_, 1);
+fn print(x: char) {
+    write(1, &x, 1);
+}
+
+fn print(x: *char) {
+    let original_x = x;
+    let len = 0;
+    while *x != 0 {
+        len += 1;
+        x += 1;
+    }
+    write(1, original_x, len);
 }

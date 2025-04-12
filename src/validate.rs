@@ -309,7 +309,11 @@ impl Validate {
             node::ExprKind::Call(call) => self.call(call),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.span),
-            node::ExprKind::TypeCast(cast) => self.type_cast(cast, expr.span),
+            node::ExprKind::TypeCast(cast) => {
+                let from = self.expr(&mut cast.expr)?;
+                let to = self.r#type(&cast.r#type)?;
+                Self::type_cast(from, to, expr.span)
+            }
         };
         if let Ok(ty) = &res {
             expr.ty = ty.clone();
@@ -516,18 +520,16 @@ impl Validate {
             "&&" | "||" => {
                 // Logical operators
                 Ok(Type::Bool)
-                // if ty1 == Type::Bool && ty2 == Type::Bool {
-                //     Ok(Type::Bool)
-                // } else {
-                //     Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
-                // }
             }
             "==" | "!=" | "<" | ">" | "<=" | ">=" => {
                 // Comparison operators
-                if ty1 == ty2 || (ty1 == Type::Int && ty2 == Type::Float) || (ty1 == Type::Float && ty2 == Type::Int) {
+                if ty1 == ty2 {
                     Ok(Type::Bool)
-                } else {
-                    Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
+                } else { 
+                    match (&ty1, &ty2) {
+                        (Type::Int, Type::Char) | (Type::Char, Type::Int) => Ok(Type::Bool),
+                        _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
+                    }
                 }
             }
             "=" => {
@@ -646,7 +648,30 @@ impl Validate {
                 }
             }
             if !found {
-                return Err(SemanticError::NoFnSig(call.name.clone(), arg_types));
+                if sigs.len() == 1 { // Implicit casting
+                    let tys = sigs.get(0).unwrap().0.iter();
+                    let id = sigs.get(0).unwrap().1;
+                    if arg_types.len() == tys.len() {
+                        for (i, (ty1, ty2)) in arg_types.iter_mut().zip(tys).enumerate() {
+                            if ty1 != ty2 {
+                                Self::type_cast(ty1.clone(), ty2.clone(), *arg_spans.get(i).unwrap())?;
+                                let e = call.args.get(i).unwrap().clone();
+                                call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
+                                    kind: node::TypeKind::Word("void".to_string()), span: e.span },
+                                    expr: Box::new(e)
+                                });
+                                call.args.get_mut(i).unwrap().ty = ty2.clone();
+                                found = true;
+                                *ty1 = ty2.clone();
+                            }
+                        }
+                        s = format!("{}.{}", s, id);
+                        call.name.str = s.clone();
+                    }
+                }
+                if !found {
+                    return Err(SemanticError::NoFnSig(call.name.clone(), arg_types));
+                }
             }
         }
         let ty;
@@ -751,9 +776,7 @@ impl Validate {
         }
     }
 
-    fn type_cast(&mut self, cast: &mut node::TypeCast, span: Span) -> Result<Type, SemanticError> {
-        let from = self.expr(&mut cast.expr)?;
-        let to = self.r#type(&cast.r#type)?;
+    fn type_cast(from: Type, to: Type, span: Span) -> Result<Type, SemanticError> {
         match (&from, &to) {
             (Type::String, Type::Pointer(inner)) if matches!(**inner, Type::Char) => (),
             (Type::String, Type::Int) => (),
@@ -771,6 +794,30 @@ impl Validate {
                 let mut tys2: Vec<_> = s.iter().collect();
                 tys2.sort_by_key(|(_, (_, offset))| *offset);
                 if *tys1 != tys2.iter().map(|(_, (ty, _))| ty.clone()).collect::<Vec<Type>>() {
+                    return Err(SemanticError::InvalidCast(span, from, to));
+                }
+            }
+            (Type::Struct(s), other) => {
+                let first = s.iter().find(|(_, (_, offset))| *offset == 0);
+                let mut ok = false;
+                if let Some((_, (ty, _))) = first {
+                    if ty == other {
+                        ok = true;
+                    }
+                }
+                if !ok {
+                    return Err(SemanticError::InvalidCast(span, from, to));
+                }
+            }
+            (Type::Tuple(tys), other) => {
+                let first = tys.get(0);
+                let mut ok = false;
+                if let Some(ty) = first {
+                    if ty == other {
+                        ok = true;
+                    }
+                }
+                if !ok {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
