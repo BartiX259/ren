@@ -296,7 +296,7 @@ impl<'a> Lower<'a> {
                 let id = self.pointer_count;
                 self.var_map.insert(s.str.clone(), Term::Pointer(id));
                 self.push_op(Op::Arg { term: Term::Pointer(id), double: false }, s.pos_id);
-            } else if let Some(p) = ty.dereference() {
+            } else if let Some(_) = ty.dereference() {
                 self.pointer_count += 1;
                 let id = self.pointer_count;
                 self.var_map.insert(s.str.clone(), Term::Pointer(id));

@@ -1,11 +1,10 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::env;
 use std::path::Path;
 use std::process::Command;
 use std::process::ExitCode;
-
-use node::Root;
 
 mod error;
 mod gen;
@@ -30,6 +29,7 @@ fn main() -> ExitCode {
     
     let mut import = node::Import { path: file_path.clone(), parent: None, pos_id: usize::MAX  };
     let mut modules = Vec::new();
+    let mut import_names: Vec<Vec<String>> = Vec::new();
     let mut cur_imports = Vec::new();
     let mut handled_imports = HashSet::new();
 
@@ -38,6 +38,7 @@ fn main() -> ExitCode {
             Ok(res) => res,
             Err(e) => return e
         };
+        import_names.push(imports.iter().map(|i| get_path(&import.path, &i.path)).collect());
         modules.push(node::Module { stmts: module, path: import.path });
         for i in imports {
             if !handled_imports.contains(&i.path) {
@@ -47,59 +48,94 @@ fn main() -> ExitCode {
         }
         if let Some(mut i) = cur_imports.pop() {
             let cur = i.parent.clone().unwrap();
-            let parent = Path::new(&cur)
-                .parent()
-                .unwrap_or_else(|| Path::new("."));
-            i.path = parent.join(i.path).with_extension("re").display().to_string().replace('\\', "/");
+            i.path = get_path(&cur, &i.path);
             import = i;
         } else {
             break;
         }
     }
-    println!("{:?}", modules);
-    
-    let mut root = Root(modules);
+    println!("{:?}", import_names);
 
-    let mut ir = match validate::validate(&mut root) {
-        Ok(res) => res,
-        Err((module, e)) => {
-            error::sematic_err(&module, e);
-            return ExitCode::from(1);
+    let mut public_map = HashMap::new();
+    for module in modules.iter_mut() {
+        match validate::hoist_public(module, &public_map) {
+            Ok(res) => { 
+                let binding = module.path.clone();
+                public_map.insert(binding, res);
+            }
+            Err(e) => {
+                error::sematic_err(&module.path, e);
+                return ExitCode::from(1);
+            }
         }
-    };
+    }
 
-    let processed_stmts = process::process(root);
+    println!("{:?}", public_map);
 
-    // println!("Processed statements:\n{:?}\n", processed_stmts);
+    let mut files = Vec::new();
 
-    lower::lower(processed_stmts, &mut ir);
-
-    println!("IR:\n{:?}\n", ir);
-
-    // // optimize::optimize(&mut ir);
-
-    // // println!("Optimized IR:\n{:?}\n", ir);
-
-    let result = match gen::gen(&mut ir) {
-        Ok(res) => res,
-        Err((module, e)) => {
-            error::gen_err(&module, e);
-            return ExitCode::from(1);
+    for (mut module, imports) in modules.into_iter().zip(import_names.into_iter()) {
+        let path = Path::new(&module.path);
+        let stem = path.file_stem().unwrap(); // gets the name without extension
+        let res_file = format!("{}.S", stem.to_string_lossy());
+        let mut pub_symbols = Vec::new();
+        for path in imports {
+            if let Some(symbols) = public_map.get(&path) {
+                pub_symbols.push(symbols);
+            }
         }
-    };
-    fs::write("out.S", result).expect("Unable to write file");
+        let mut ir = match validate::validate(&mut module, pub_symbols) {
+            Ok(res) => res,
+            Err(e) => {
+                error::sematic_err(&module.path, e);
+                return ExitCode::from(1);
+            }
+        };
 
-    println!("nasm: {:?}", Command::new("nasm").args(["-felf64", "out.S", "-o", "out.o"]).output());
-    // println!("nasm std: {:?}", Command::new("nasm").args(["-felf64", "lib/std.S", "-o", "std.o"]).output());
-    println!(
-        "ld:   {:?}",
-        Command::new("ld")
-            .args([
-                "-o", "out",
-                "out.o"//, "std.o" //, "-lc", "--dynamic-linker", "/lib64/ld-linux-x86-64.so.2"
-            ])
-            .output()
-    );
+        let processed_stmts = process::process(module);
+
+        // println!("Processed statements:\n{:?}\n", processed_stmts);
+
+        lower::lower(processed_stmts, &mut ir);
+
+        println!("IR:\n{:?}\n", ir);
+
+        // optimize::optimize(&mut ir);
+
+        // println!("Optimized IR:\n{:?}\n", ir);
+
+        let result = match gen::gen(&mut ir) {
+            Ok(res) => res,
+            Err((module, e)) => {
+                error::gen_err(&module, e);
+                return ExitCode::from(1);
+            }
+        };
+        fs::write(&res_file, result).expect("Unable to write file");
+        files.push(res_file);
+
+        // println!("nasm: {:?}", Command::new("nasm").args(["-felf64", "out.S", "-o", "out.o"]).output());
+        // // println!("nasm std: {:?}", Command::new("nasm").args(["-felf64", "lib/std.S", "-o", "std.o"]).output());
+        // println!(
+        //     "ld:   {:?}",
+        //     Command::new("ld")
+        //         .args([
+        //             "-o", "out",
+        //             "out.o"//, "std.o" //, "-lc", "--dynamic-linker", "/lib64/ld-linux-x86-64.so.2"
+        //         ])
+        //         .output()
+        // );
+    }
+    let mut obj_files = Vec::new();
+    for file in files {
+        let path = Path::new(&file);
+        let stem = path.file_stem().unwrap(); // gets the name without extension
+        let obj = format!("{}.o", stem.to_string_lossy());
+        println!("nasm {}: {:?}", file, Command::new("nasm").args(["-felf64", &file, "-o", &obj]).output());
+        obj_files.push(obj);
+    }
+    println!("ld: {:?}", Command::new("ld").args(obj_files).args(["-o", "out"]).output());
+
     ExitCode::from(0)
 }
 
@@ -127,4 +163,11 @@ fn parse_module(import: &node::Import) -> Result<(Vec<node::Stmt>, Vec<node::Imp
             Err(ExitCode::from(1))
         }
     }
+}
+
+fn get_path(parent: &String, s: &String) -> String {
+    let parent = Path::new(&parent)
+                .parent()
+                .unwrap_or_else(|| Path::new("."));
+    return parent.join(s).with_extension("re").display().to_string().replace('\\', "/");
 }

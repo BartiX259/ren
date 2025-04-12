@@ -2,10 +2,10 @@ use crate::node;
 use crate::types::Type;
 
 /// Modify the ast to express syntax sugar with simpler statements
-pub fn process(root: node::Root) -> Vec<node::Stmt> {
+pub fn process(module: node::Module) -> Vec<node::Stmt> {
     let mut res = Vec::new();
     let mut l = Process::new();
-    for s in root.into_iter() {
+    for s in module.stmts.into_iter() {
         let new_stmt = l.stmt(s);
         res.push(new_stmt);
     }

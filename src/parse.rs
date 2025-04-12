@@ -343,47 +343,6 @@ fn parse_scope(tokens: &mut VecIter<Token>) -> Result<Vec<node::Stmt>, ParseErro
     Ok(res)
 }
 
-fn parse_map_args(tokens: &mut VecIter<Token>, closing: Token) -> Result<(Vec<PosStr>, Vec<node::Expr>), ParseError> {
-    let mut names = Vec::new();
-    let mut exprs = Vec::new();
-    let close_str = format!("'{}'", closing.to_string());
-    if tokens.peek().is_none() {
-        return Err(ParseError::UnexpectedEndOfInput(close_str));
-    }
-    if let Some(t) = tokens.peek() {
-        if *t == closing {
-            tokens.next();
-            return Ok((names, exprs));
-        }
-    }
-    loop {
-        let name = check_none(tokens, "an identifier")?;
-        if let Token::Word { value } = name {
-            names.push(PosStr {
-                str: value,
-                pos_id: tokens.prev_index(),
-            });
-        } else {
-            return Err(unexp(name, tokens.prev_index(), "an identifier"));
-        }
-        let tok = check_none(tokens, "':'")?;
-        if let Token::Colon = tok {
-            exprs.push(parse_expr(tokens, 0)?);
-        } else {
-            return Err(unexp(tok, tokens.prev_index(), "':'"));
-        }
-        let tok = check_none(tokens, &close_str)?;
-        if closing == tok {
-            break;
-        } else if let Token::Comma = tok {
-            continue;
-        } else {
-            return Err(unexp(tok, tokens.prev_index(), &close_str));
-        }
-    }
-    Ok((names, exprs))
-}
-
 fn parse_types_list(tokens: &mut VecIter<Token>, closing: Token) -> Result<Vec<node::Type>, ParseError> {
     let mut types = Vec::new();
     let close_str = format!("'{}'", closing.to_string());

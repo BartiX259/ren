@@ -5,28 +5,51 @@ use std::collections::HashMap;
 
 
 /// Validate the ast, return a symbol table if successful
-pub fn validate(root: &mut node::Root) -> Result<HashMap<String, Symbol>, (String, SemanticError)> {
+pub fn validate(module: &mut node::Module, public: Vec<&PublicSymbols>) -> Result<HashMap<String, Symbol>, SemanticError> {
     let mut val = Validate::new();
-    for (module, stmt) in root.iter() {
-        if module != val.cur_module {
-            val.cur_module = module.to_string();
-        }
-        val.hoist_type(stmt).map_err(|e| (module.to_string(), e))?;
+    for syms in public {
+        val.symbol_table.extend(syms.symbol_table.clone());
+        val.fn_map.extend(syms.fn_map.clone());
     }
-    for (module, stmt) in root.iter_mut() {
-        if module != val.cur_module {
-            val.cur_module = module.to_string();
-        }
-        val.hoist_func(stmt).map_err(|e| (module.to_string(), e))?;
+    println!("===========PUBLIC==========\n{:?}\n------------------\n{:?}\n===================", val.symbol_table, val.fn_map);
+    for stmt in module.stmts.iter() {
+        val.hoist_type(stmt, false)?;
     }
-    println!("{:?}", val.symbol_table);
-    for (module, stmt) in root.iter_mut() {
-        if module != val.cur_module {
-            val.cur_module = module.to_string();
-        }
-        val.stmt(stmt).map_err(|e| (module.to_string(), e))?;
+    for stmt in module.stmts.iter_mut() {
+        val.hoist_func(stmt, false)?;
+    }
+    println!("===========HOISTED==========\n{:?}\n------------------\n{:?}\n===================", val.symbol_table, val.fn_map);
+    for stmt in module.stmts.iter_mut() {
+        val.stmt(stmt)?;
     }
     Ok(val.symbol_table)
+}
+
+pub fn hoist_public(module: &mut node::Module, public: &HashMap<String, PublicSymbols>) -> Result<PublicSymbols, SemanticError> {
+    let mut val = Validate::new();
+    for (_, syms) in public {
+        val.fn_map.extend(syms.fn_map.clone());
+    }
+    for stmt in module.stmts.iter_mut() {
+        val.hoist_type(stmt, true)?;
+        val.hoist_func(stmt, true)?;
+    }
+    for (_, syms) in public {
+        for (name, sigs) in &syms.fn_map {
+            if val.fn_map.get(name).unwrap().len() == sigs.len() {
+                val.fn_map.remove(name);
+            } else {
+                todo!("Function overloading across files");
+            }
+        }
+    }
+    Ok(PublicSymbols { symbol_table: val.symbol_table, fn_map: val.fn_map })
+}
+
+#[derive(Debug)]
+pub struct PublicSymbols {
+    symbol_table: HashMap<String, Symbol>,
+    fn_map: HashMap<String, Vec<(Vec<Type>, usize)>>
 }
 
 pub enum SemanticError {
@@ -55,10 +78,10 @@ pub enum SemanticError {
     InvalidCast(Span, Type, Type)
 }
 
-pub struct Validate {
-    pub symbol_table: HashMap<String, Symbol>,
+struct Validate {
+    symbol_table: HashMap<String, Symbol>,
+    fn_map: HashMap<String, Vec<(Vec<Type>, usize)>>,
     cur_module: String,
-    fn_map: HashMap<String, Vec<Vec<Type>>>,
     fn_symbols: Vec<Vec<(String, Symbol)>>,
     symbol_stack: Vec<usize>,
     cur_func: Option<String>,
@@ -71,8 +94,8 @@ impl Validate {
     pub fn new() -> Self {
         Self {
             symbol_table: HashMap::new(),
-            cur_module: String::new(),
             fn_map: HashMap::new(),
+            cur_module: String::new(),
             fn_symbols: Vec::new(),
             symbol_stack: Vec::new(),
             cur_func: None,
@@ -98,7 +121,7 @@ impl Validate {
         self.scope_symbols().push((name.clone(), sym.clone()));
     }
 
-    fn hoist_type(&mut self, stmt: &node::Stmt) -> Result<(), SemanticError> {
+    fn hoist_type(&mut self, stmt: &node::Stmt, public: bool) -> Result<(), SemanticError> {
         if let node::Stmt::TypeDecl(decl) = stmt {
             if self.symbol_table.contains_key(&decl.name.str) {
                 return Err(SemanticError::SymbolExists(decl.name.clone()));
@@ -109,7 +132,7 @@ impl Validate {
         Ok(())
     }
 
-    fn hoist_func(&mut self, stmt: &mut node::Stmt) -> Result<(), SemanticError> {
+    fn hoist_func(&mut self, stmt: &mut node::Stmt, public: bool) -> Result<(), SemanticError> {
         if let node::Stmt::Fn(decl) = stmt {
             let ty;
             if let Some(t) = &decl.decl_type {
@@ -133,32 +156,58 @@ impl Validate {
                 let sym = Symbol::Var { ty };
                 arg_symbols.push((arg.0.str.clone(), sym.clone()));
             }
-            let s;
-            if decl.name.str == "main" {
-                if self.symbol_table.contains_key("main") {
-                    return Err(SemanticError::SymbolExists(decl.name.clone()));
-                }
-                s = "main".to_string();
-            } else {
-                let len;
-                if let Some(sigs) = self.fn_map.get_mut(&decl.name.str) {
-                    if sigs.contains(&types) {
+            if public {
+                let s;
+                if decl.name.str == "main" {
+                    if self.symbol_table.contains_key("main") {
                         return Err(SemanticError::SymbolExists(decl.name.clone()));
                     }
-                    sigs.push(types);
-                    len = sigs.len();
+                    s = "main".to_string();
                 } else {
-                    self.fn_map.insert(decl.name.str.clone(), vec![types]);
-                    len = 1;
+                    let len;
+                    if let Some(sigs) = self.fn_map.get_mut(&decl.name.str) {
+                        if sigs.iter().any(|(tys, _)| *tys == types) {
+                            return Err(SemanticError::SymbolExists(decl.name.clone()));
+                        }
+                        len = sigs.len() + 1;
+                        sigs.push((types, len));
+                    } else {
+                        self.fn_map.insert(decl.name.str.clone(), vec![(types, 1)]);
+                        len = 1;
+                    }
+                    s = format!("{}.{}", decl.name.str, len);
+                    decl.name.str = s.clone();
                 }
-                s = format!("{}.{}", decl.name.str, len);
-                decl.name.str = s.clone();
+                self.symbol_table.insert(s, Symbol::ExternFunc { 
+                    ty,
+                    args: arg_symbols.iter().map(|(_, sym)| { let Symbol::Var { ty } = sym.clone() else { unreachable!() }; ty }).collect()
+                }); 
+            } else {
+                let split: Vec<&str> = decl.name.str.split('.').collect();
+                if split.len() < 2 {
+                    self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
+                        ty, module: self.cur_module.clone(),
+                        block: Block::new(),
+                        symbols: vec![arg_symbols],
+                    });
+                } else {
+                    let id = split.last().unwrap().parse::<usize>().unwrap();
+                    let name = split[..split.len() - 1].join(".");
+                    if let Some(sigs) = self.fn_map.get_mut(&name) {
+                        if sigs.iter().any(|(tys, _)| *tys == types) {
+                            return Err(SemanticError::SymbolExists(decl.name.clone()));
+                        }
+                        sigs.push((types, id));
+                    } else {
+                        self.fn_map.insert(name, vec![(types, id)]);
+                    }
+                    self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
+                        ty, module: self.cur_module.clone(),
+                        block: Block::new(),
+                        symbols: vec![arg_symbols],
+                    });
+                }
             }
-            self.symbol_table.insert(s, Symbol::Func { 
-                ty, module: self.cur_module.clone(),
-                block: Block::new(),
-                symbols: vec![arg_symbols],
-            });
         } else if let node::Stmt::Syscall(decl) = stmt {
             let ty;
             if let Some(t) = &decl.decl_type {
@@ -171,28 +220,47 @@ impl Validate {
                 let ty = self.r#type(arg)?;
                 types.push(ty.clone());
             }
-            let s;
-            if decl.name.str == "main" {
-                if self.symbol_table.contains_key("main") {
-                    return Err(SemanticError::SymbolExists(decl.name.clone()));
-                }
-                s = "main".to_string();
-            } else {
-                let len;
-                if let Some(sigs) = self.fn_map.get_mut(&decl.name.str) {
-                    if sigs.contains(&types) {
+            if public {
+                let s;
+                if decl.name.str == "main" {
+                    if self.symbol_table.contains_key("main") {
                         return Err(SemanticError::SymbolExists(decl.name.clone()));
                     }
-                    sigs.push(types.clone());
-                    len = sigs.len();
+                    s = "main".to_string();
                 } else {
-                    self.fn_map.insert(decl.name.str.clone(), vec![types.clone()]);
-                    len = 1;
+                    let len;
+                    if let Some(sigs) = self.fn_map.get_mut(&decl.name.str) {
+                        if sigs.iter().any(|(tys, _)| *tys == types) {
+                            return Err(SemanticError::SymbolExists(decl.name.clone()));
+                        }
+                        len = sigs.len() + 1;
+                        sigs.push((types.clone(), len));
+                    } else {
+                        self.fn_map.insert(decl.name.str.clone(), vec![(types.clone(), 1)]);
+                        len = 1;
+                    }
+                    s = format!("{}.{}", decl.name.str, len);
+                    decl.name.str = s.clone();
                 }
-                s = format!("{}.{}", decl.name.str, len);
-                decl.name.str = s.clone();
+                self.symbol_table.insert(s, Symbol::Syscall { id: decl.id, ty, args: types });
+            } else {
+                let split: Vec<&str> = decl.name.str.split('.').collect();
+                if split.len() < 2 {
+                    self.symbol_table.insert(decl.name.str.clone(), Symbol::Syscall { id: decl.id, ty, args: types });
+                } else {
+                    let id = split.last().unwrap().parse::<usize>().unwrap();
+                    let name = split[..split.len() - 1].join(".");
+                    if let Some(sigs) = self.fn_map.get_mut(&name) {
+                        if sigs.iter().any(|(tys, _)| *tys == types) {
+                            return Err(SemanticError::SymbolExists(decl.name.clone()));
+                        }
+                        sigs.push((types.clone(), id));
+                    } else {
+                        self.fn_map.insert(name, vec![(types.clone(), id)]);
+                    }
+                    self.symbol_table.insert(decl.name.str.clone(), Symbol::Syscall { id: decl.id, ty, args: types });
+                }
             }
-            self.symbol_table.insert(s, Symbol::Syscall { id: decl.id, ty, args: types });
         }
         Ok(())
     }
@@ -569,9 +637,9 @@ impl Validate {
         let mut s = call.name.str.clone();
         if let Some(sigs) = self.fn_map.get(&call.name.str) {
             let mut found = false;
-            for (i, sig) in sigs.iter().enumerate() {
-                if *sig == arg_types {
-                    s = format!("{}.{}", s, i + 1);
+            for sig in sigs.iter() {
+                if *sig.0 == arg_types {
+                    s = format!("{}.{}", s, sig.1);
                     call.name.str = s.clone();
                     found = true;
                     break;

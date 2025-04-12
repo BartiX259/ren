@@ -89,25 +89,25 @@ impl<'a> Gen<'a> {
         for (name, sym) in self.symbol_table.iter() {
             if let Symbol::ExternFunc { .. } = sym {
                 self.buf.push_line(format!("extern {}", name));
+            } else if let Symbol::Func { .. } = sym {
+                self.buf.push_line(format!("global {}", name));
             }
         }
         // _start function
         if let Some(_) = self.symbol_table.get("_start") {
             return Err(GenError::ReservedSymbol(OpLoc { start_id: 0, end_id: 0 }));
         }
-        self.buf.push_line("global _start");
-        self.buf.dedent();
-        self.buf.push_line("");
-        self.buf.push_line("_start:");
-        self.buf.indent();
-        let main = self.symbol_table.get("main");
-        let Some(Symbol::Func { .. } ) = main else {
-            return Err(GenError::NoMainFn);
-        };
-        self.buf.push_line("call main");
-        self.buf.push_line("mov rdi, rax");
-        self.buf.push_line("mov rax, 60");
-        self.buf.push_line("syscall");
+        if let Some(Symbol::Func { .. }) = self.symbol_table.get("main") {
+            self.buf.push_line("global _start");
+            self.buf.dedent();
+            self.buf.push_line("");
+            self.buf.push_line("_start:");
+            self.buf.indent();
+            self.buf.push_line("call main");
+            self.buf.push_line("mov rdi, rax");
+            self.buf.push_line("mov rax, 60");
+            self.buf.push_line("syscall");
+        }
         self.buf.dedent();
         // Other functions
         self.functions()?;

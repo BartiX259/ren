@@ -1,3 +1,5 @@
+import lib/std
+
 fn fib(n: int) -> int {
     if n == 0 {
       return 0;
@@ -7,6 +9,4 @@ fn fib(n: int) -> int {
     }
     return fib(n-1) + fib(n-2);
 }
-fn main() {
-    print(fib(8));
-}
+
