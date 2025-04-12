@@ -102,7 +102,7 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::TypeMismatch(pos_str, ty1, ty2) => {
-            eprintln!("Type mismatch: can't use '{}' with {:?} and {:?}", pos_str.str, ty1, ty2);
+            eprintln!("Type mismatch: can't use '{}' with {} and {}", pos_str.str, ty1, ty2);
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::InvalidReturn(pos_id) => {
@@ -126,7 +126,7 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::InvalidDereference(pos_str, ty) => {
-            eprintln!("Invalid dereference: can't dereference {:?}", ty);
+            eprintln!("Invalid dereference: can't dereference {}", ty);
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::StructDereference(span) => {
@@ -146,13 +146,13 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::ArgTypeMismatch(span, ty1, ty2) => {
-            eprintln!("Argument type mismatch: expected {:?} but got {:?}", ty1, ty2);
+            eprintln!("Argument type mismatch: expected {} but got {}", ty1, ty2);
             print_module_err_span(path, span);
         }
         SemanticError::NoFnSig(pos_str, tys) => {
             let ty_list = tys
                 .iter()
-                .map(|ty| format!("{:?}", ty))
+                .map(|ty| format!("{}", ty))
                 .collect::<Vec<_>>()
                 .join(", ");
             eprintln!("Function '{}' doesn't accept ({}).", pos_str.str, ty_list);
@@ -167,7 +167,7 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::StructTypeMismatch(pos_str, ty1, ty2) => {
-            eprintln!("Struct type mismatch: expected {:?} but got {:?}.", ty1, ty2);
+            eprintln!("Struct type mismatch: expected {} but got {}.", ty1, ty2);
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::InvalidMemberAccess(span) => {
@@ -179,11 +179,11 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             print_module_err_span(path, span);
         }
         SemanticError::ArrayTypeMismatch(span, ty1, ty2) => {
-            eprintln!("Array type mismatch: expected {:?} but got {:?}.", ty1, ty2);
+            eprintln!("Array type mismatch: expected {} but got {}.", ty1, ty2);
             print_module_err_span(path, span);
         }
         SemanticError::InvalidCast(span, ty1, ty2) => {
-            eprintln!("Can't cast from {:?} into {:?}.", ty1, ty2);
+            eprintln!("Can't cast from {} into {}.", ty1, ty2);
             print_module_err_span(path, span);
         }
     }

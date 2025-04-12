@@ -1,5 +1,5 @@
-- Peephole optimization
 - Arg parsing?
+- Peephole optimization
 - Heap
 - String interpolation
 - Lists

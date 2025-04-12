@@ -1,15 +1,14 @@
 import lib/std
-import fib
 
 type x = (x: str, y: int)
 type res = int
 
 fn main() {
-    let z = (x: "asd", y: 69);
+    let z = ("asd", 69) as x;
     b(z);
-    print(fib(40));
 }
 
 fn b(z: x) {
+    print(z.y);
     print(z.x);
 }

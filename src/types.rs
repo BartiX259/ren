@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -48,6 +48,50 @@ impl Type {
         match self {
             Type::Array { .. } | Type::Struct(_) | Type::String | Type::Tuple(_) | Type::TaggedArray { .. } => true,
             _ => false
+        }
+    }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Void => write!(f, "void"),
+            Type::Int => write!(f, "int"),
+            Type::Float => write!(f, "float"),
+            Type::Bool => write!(f, "bool"),
+            Type::Char => write!(f, "char"),
+            Type::String => write!(f, "str"),
+            Type::Pointer(p) => write!(f, "*{p}"),
+            Type::Array { inner, length } => write!(f, "{inner}[{length}]"),
+            Type::TaggedArray { inner } => write!(f, "{inner}[]"),
+            Type::Struct(s) => {
+                let mut sorted: Vec<_> = s.iter().collect();
+                sorted.sort_by_key(|(_, (_, offset))| *offset);
+                write!(f, "(")?;
+                let mut start = true;
+                for (name, (ty, _)) in sorted {
+                    if !start {
+                       write!(f, ", ")?; 
+                    } else {
+                        start = false;
+                    }
+                    write!(f, "{name}: {ty}")?;
+                }
+                write!(f, ")")
+            }
+            Type::Tuple(tys) => {
+                write!(f, "(")?;
+                let mut start = true;
+                for ty in tys {
+                    if !start {
+                       write!(f, ", ")?; 
+                    } else {
+                        start = false;
+                    }
+                    write!(f, "{ty}")?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }

@@ -767,6 +767,13 @@ impl Validate {
                     }
                 }
             }
+            (Type::Tuple(tys1), Type::Struct(s)) => {
+                let mut tys2: Vec<_> = s.iter().collect();
+                tys2.sort_by_key(|(_, (_, offset))| *offset);
+                if *tys1 != tys2.iter().map(|(_, (ty, _))| ty.clone()).collect::<Vec<Type>>() {
+                    return Err(SemanticError::InvalidCast(span, from, to));
+                }
+            }
             _ => return Err(SemanticError::InvalidCast(span, from, to))
         }
         Ok(to)
