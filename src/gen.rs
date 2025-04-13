@@ -204,6 +204,7 @@ impl<'a> Gen<'a> {
                 ir::Op::Let { term, res } => {
                     let r = self.eval_term(term, Some(res.clone()), true)?;
                     self.save_reg(&r, &res);
+                    self.lock_reg(&r, false);
                     self.store_term(res, r);
                 }
                 ir::Op::Decl { term, size } => {
@@ -871,9 +872,10 @@ impl<'a> Gen<'a> {
         //     self.buf.push_line(format!("sub {}, {}", Self::reg_name(r1, size), Self::reg_name(r2, size)));
         // }
         self.buf.push_line(format!("cmp {}, {}", Self::reg_name(r1, size), Self::reg_name(r2, size)));
-        self.buf.push(cond);
-        self.buf.push_line(format!(" {}", Self::reg_name(r1, 1)));
-        // self.buf.push_line(format!("movzx {}, {}", Self::reg_name(r1, size), Self::reg_name(r1, 1)));
+        self.buf.push_line(format!("{} {}", cond, Self::reg_name(r1, 1)));
+        if size > 1 {
+            self.buf.push_line(format!("movzx {}, {}", Self::reg_name(r1, size), Self::reg_name(r1, 1)));
+        }
     }
 
     fn word_size_name(size: u32) -> &'static str {

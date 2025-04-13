@@ -12,7 +12,13 @@ fn int2str(x: int, buf: *char) -> *char {
 
 fn print(x: int) {
     decl buf: char[32];
-    let end = int2str(x, &buf);
+    let ptr = &buf;
+    if x < 0 {
+        *ptr = '-';
+        ptr += 1;
+        x = -x;
+    }
+    let end = int2str(x, ptr);
     write(1, &buf, end - &buf);
 }
 

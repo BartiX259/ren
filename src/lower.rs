@@ -269,6 +269,17 @@ impl<'a> Lower<'a> {
             self.var_map.insert(decl.name.str.clone(), Term::Stack(id));
             self.push_op(Op::Decl { term: Term::Stack(id), size: 16 }, decl.name.pos_id);
             self.push_op(Op::Store { res: None, ptr: Term::Stack(id), offset: 0, op: "=".to_string(), term: r, size: 16 }, decl.name.pos_id);
+        } else if let Type::Pointer(_) = decl.expr.ty {
+            self.pointer_count += 1;
+            let id = self.pointer_count;
+            self.var_map.insert(decl.name.str.clone(), Term::Pointer(id));
+            self.push_op(
+                Op::Let {
+                    term: r,
+                    res: Term::Pointer(id),
+                },
+                decl.name.pos_id,
+            );
         } else {
             self.stack_count += 1;
             let id = self.stack_count;

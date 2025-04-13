@@ -10,3 +10,6 @@ fn fib(n: int) -> int {
     return fib(n-1) + fib(n-2);
 }
 
+fn main() {
+  print(fib(40));
+}
