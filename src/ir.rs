@@ -21,6 +21,8 @@ pub enum Term {
     Stack(usize),
     /// Pointer living on the stack
     Pointer(usize),
+    /// Used instead of Pointer to do arithmetic
+    PointerArithmetic(usize),
     /// Data from symbol table
     Data(String),
     /// Simple integer
@@ -51,8 +53,7 @@ pub enum Op {
     Arg { term: Term, double: bool },
     Param { term: Term },
     Call { res: Option<Term>, func: String },
-    BeginCall,
-    EndCall,
+    BeginCall { params: Vec<Term> },
     Label { label: u16 },
     Jump { label: u16 },
     CondJump { label: u16, cond: Term },
@@ -78,6 +79,7 @@ impl fmt::Debug for Term {
             Term::Double(id) => write!(f, "d{}", id),
             Term::Stack(id) => write!(f, "s{}", id),
             Term::Pointer(id) => write!(f, "p{}", id),
+            Term::PointerArithmetic(id) => write!(f, "pa{}", id),
             Term::Data(s) => write!(f, "{}", s),
             Term::IntLit(value) => write!(f, "{}", value),
         }
@@ -86,8 +88,15 @@ impl fmt::Debug for Term {
 impl Term {
     pub fn is_stack(&self) -> bool {
         match self {
-            Term::Pointer(_) | Term::Stack(_) => true,
+            Term::Pointer(_) | Term::Stack(_) | Term::PointerArithmetic(_) => true,
             _ => false
+        }
+    }
+    pub fn stack_arithmetic(&self) -> Option<Term> {
+        match self {
+           Term::Stack(s) => Some(Term::Stack(*s)),
+           Term::PointerArithmetic(p) => Some(Term::Pointer(*p)),
+            _ => None
         }
     }
 }
@@ -115,8 +124,7 @@ impl fmt::Debug for Op {
             Op::Decl { term, size } => write!(f, "decl {:?} (size {})", term, size),
             Op::Arg { term, double } => write!(f, "arg {:?}{}", term, if *double { " (double)" } else { "" }),
             Op::Param { term } => write!(f, "param {:?}", term),
-            Op::BeginCall => write!(f, "begin call"),
-            Op::EndCall => write!(f, "end call"),
+            Op::BeginCall { params: args } => write!(f, "begin call {:?}", args),
             Op::Call { res, func } => write!(f, "{}call {:?}", fmt_opt(res), func),
             Op::Label { label } => write!(f, "L{}", label),
             Op::Jump { label } => write!(f, "jump L{}", label),

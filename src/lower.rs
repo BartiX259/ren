@@ -83,9 +83,22 @@ impl<'a> Lower<'a> {
         }
     }
 
+    fn clear_res(&mut self) {
+        match self.cur_block.as_mut().unwrap().ops.last_mut() {
+            Some(Op::BinOp { res, .. }) | Some(Op::Store { res, .. }) | Some(Op::Call { res, .. }) => {
+                *res = None;
+            }
+            _ => ()
+        }
+        println!("CLEAR RES {:?}", self.cur_block.as_ref().unwrap().ops.last());
+    }
+
     fn stmt(&mut self, stmt: &node::Stmt) {
         match stmt {
-            node::Stmt::Expr(expr) => { self.expr(expr); }
+            node::Stmt::Expr(expr) => { 
+                self.expr(expr);
+                self.clear_res();
+            }
             node::Stmt::Let(decl) => self.r#let(decl),
             node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
@@ -471,12 +484,18 @@ impl<'a> Lower<'a> {
                         bin.op.pos_id
                     );
                 }
-            } else if let Type::Pointer(_) = bin.lhs.ty {
-                if bin.op.str == "=" {
-                    self.push_op(Op::BinOp { res: Some(lhs), lhs: rhs, op: "+".to_string(), rhs: Term::IntLit(0), size }, bin.op.pos_id);
-                } else {
-                    self.push_op(Op::BinOp { res: Some(lhs.clone()), lhs, op: bin.op.str.strip_suffix("=").unwrap().to_string(), rhs, size }, bin.op.pos_id);
-                }
+            } else if let Term::Pointer(p) = lhs {
+                self.push_op(
+                    Op::Store { 
+                        res: Some(Term::Temp(self.temp_count)),
+                        ptr: Term::PointerArithmetic(p),
+                        offset: 0,
+                        op: bin.op.str.clone(),
+                        term: rhs,
+                        size
+                    },
+                    bin.op.pos_id
+                );
             } else {
                 self.push_op(
                     Op::Store { 
@@ -572,7 +591,8 @@ impl<'a> Lower<'a> {
             }
             _ => ()
         }
-        self.push_op(Op::BeginCall, call.name.pos_id);
+        let idx = self.cur_block.as_ref().unwrap().ops.len();
+        self.push_op(Op::BeginCall { params: vec![] }, call.name.pos_id);
         if let Some(r) = &res {
             self.temp_count += 1;
             self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone(), size: 8 }, call.name.pos_id);
@@ -616,8 +636,13 @@ impl<'a> Lower<'a> {
                 params.push(r);
             }
         }
-        for p in params {
-            self.push_op(Op::Param { term: p }, call.name.pos_id);
+        for p in params.iter() {
+            self.push_op(Op::Param { term: p.clone() }, call.name.pos_id);
+        }
+        if let Op::BeginCall { params: ps } = &mut self.cur_block.as_mut().unwrap().ops[idx] {
+            *ps = params;
+        } else {
+            unreachable!("Expected BeginCall at index {}", idx);
         }
         if let Some(r) = res.clone() {
             self.stack_return = Some(r);
@@ -637,7 +662,6 @@ impl<'a> Lower<'a> {
             },
             call.name.pos_id,
         );
-        self.push_op(Op::EndCall, call.name.pos_id);
         res
     }
 
@@ -702,6 +726,7 @@ impl<'a> Lower<'a> {
         self.push_op(Op::NaturalFlow, r#for.pos_id);
         self.push_op(Op::BeginScope, r#for.pos_id);
         self.expr(&r#for.incr);
+        self.clear_res();
         let cond = self.expr(&r#for.cond);
         self.push_op(
             Op::CondJump {

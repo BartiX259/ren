@@ -49,6 +49,7 @@ struct Gen<'a> {
     reg_states: Vec<Vec<Reg>>,
     saved_states: Vec<ProgState>,
     saved_sps: Vec<i64>,
+    params: Vec<Vec<Term>>,
     param_index: usize,
     arg_index: usize,
     calling: bool,
@@ -70,6 +71,7 @@ impl<'a> Gen<'a> {
             reg_states: Vec::new(),
             saved_states: Vec::new(),
             saved_sps: Vec::new(),
+            params: Vec::new(),
             param_index: 0,
             arg_index: 0,
             calling: false,
@@ -172,10 +174,10 @@ impl<'a> Gen<'a> {
                 ir::Op::Store { term, op, ptr, offset, res, size } => self.store(term, op, ptr, offset, res, size)?,
                 ir::Op::Read { ptr, offset, res, size } => self.read(ptr, offset, res, size)?,
                 ir::Op::Copy { from, to, size } => {
-                    if let Term::Stack(_) = from {
+                    if let Some(t) = from.stack_arithmetic() {
                         self.free_reg(&"rsi".to_string())?;
                         self.buf.push_line("mov rsi, rsp");
-                        if let Some(x) = self.locs.get(&from) {
+                        if let Some(x) = self.locs.get(&t) {
                             if *x != self.sp {
                                 self.buf.push_line(format!("add rsi, {}", self.sp - x));
                             }
@@ -183,10 +185,10 @@ impl<'a> Gen<'a> {
                     } else {
                         self.force_term_at(&from, &"rsi".to_string())?;
                     }
-                    if let Term::Stack(_) = to {
+                    if let Some(t) = to.stack_arithmetic() {
                         self.free_reg(&"rdi".to_string())?;
                         self.buf.push_line("mov rdi, rsp");
-                        if let Some(x) = self.locs.get(&to) {
+                        if let Some(x) = self.locs.get(&t) {
                             if *x != self.sp {
                                 self.buf.push_line(format!("add rdi, {}", self.sp - x));
                             }
@@ -200,7 +202,7 @@ impl<'a> Gen<'a> {
                     self.clear_reg(&"rdi".to_string());
                 }
                 ir::Op::Let { term, res } => {
-                    let r = self.eval_term(term, true)?;
+                    let r = self.eval_term(term, Some(res.clone()), true)?;
                     self.save_reg(&r, &res);
                     self.store_term(res, r);
                 }
@@ -231,7 +233,7 @@ impl<'a> Gen<'a> {
                         self.lock_reg(&reg.to_string(), true);
                     }
                 }
-                ir::Op::BeginCall => {
+                ir::Op::BeginCall { params: args } => {
                     let mut saved = Vec::new();
                     for r in self.regs.iter_mut() { // Save registers
                         if r.locked {
@@ -245,6 +247,7 @@ impl<'a> Gen<'a> {
                         r.locked = false;
                     }
                     self.saved_states.push(ProgState { regs: saved, param_index: self.param_index, sp: self.sp });
+                    self.params.push(args);
                     self.param_index = 0;
                 }
                 ir::Op::Param { term } => {
@@ -288,9 +291,9 @@ impl<'a> Gen<'a> {
                     for name in self.call_order.clone() {
                         self.clear_reg(&name.to_string());
                     }
-                }
-                ir::Op::EndCall => {
+                    // Restore
                     let state = self.saved_states.pop().unwrap();
+                    self.params.pop();
                     self.param_index = state.param_index;
                     if self.sp != state.sp {
                         self.buf.push_line(format!("add rsp, {}", self.sp - state.sp));
@@ -325,15 +328,15 @@ impl<'a> Gen<'a> {
                     self.buf.push_line(format!("jmp .L{}", label));
                 }
                 ir::Op::CondJump { cond, label } => {
-                    let r = self.eval_term(cond, false)?;
+                    let r = self.eval_term(cond, None, false)?;
                     self.buf.push_line(format!("test {}, {}", r, r));
                     self.clear_reg(&r);
                     self.restore_sp();
                     self.buf.push_line(format!("jnz .L{}", label));
                 }
                 ir::Op::BinJump { lhs, rhs, op, label } => {
-                    let r1 = self.eval_term(lhs, false)?;
-                    let r2 = self.eval_term(rhs, true)?;
+                    let r1 = self.eval_term(lhs, None, false)?;
+                    let r2 = self.eval_term(rhs, None, true)?;
                     self.buf.push_line(format!("cmp {}, {}", r1, r2));
                     let jmp_instr = match op.as_str() {
                         ">" => "jg",
@@ -374,7 +377,7 @@ impl<'a> Gen<'a> {
                 ir::Op::EndScope => self.restore_sp(),
             }
             match op_clone {
-                ir::Op::BeginLoop | ir::Op::EndLoop | ir::Op::Arg { .. } | ir::Op::Param { .. } | ir::Op::Call { .. } | ir::Op::BeginCall | ir::Op::EndCall | ir::Op::BeginScope | ir::Op::EndScope => (),
+                ir::Op::BeginLoop | ir::Op::EndLoop | ir::Op::Arg { .. } | ir::Op::Param { .. } | ir::Op::Call { .. } | ir::Op::BeginCall { .. } | ir::Op::BeginScope | ir::Op::EndScope | ir::Op::NaturalFlow => (),
                 _ => self.buf.comment(format!("{:?}", op_clone)),
             }
         }
@@ -497,8 +500,14 @@ impl<'a> Gen<'a> {
             self.buf.push_line(format!("mov {}, {}", target, i));
             return;
         }
+        let t;
+        if let Term::PointerArithmetic(p) = term {
+            t = Term::Pointer(*p);
+        } else {
+            t = term.clone();
+        }
         for r in self.regs.iter_mut() {
-            if r.term == Some(term.clone()) {
+            if r.term == Some(t.clone()) {
                 if r.name != *target {
                     self.buf.push_line(format!("mov {}, {}", target, r.name));
                     r.term = None;
@@ -507,7 +516,7 @@ impl<'a> Gen<'a> {
                 return;
             }
         }
-        if let Some(loc) = self.locs.get(term) {
+        if let Some(loc) = self.locs.get(&t) {
             self.buf.push(format!("mov {}, [rsp", target));
             if self.sp != *loc {
                 self.buf.push(" + ");
@@ -516,8 +525,8 @@ impl<'a> Gen<'a> {
             self.buf.push_line("]");
             return;
         }
-        if let Term::Data(s) = term {
-            if let Some(Symbol::StringLit { str: _ }) = self.symbol_table.get(s) {
+        if let Term::Data(s) = t {
+            if let Some(Symbol::StringLit { str: _ }) = self.symbol_table.get(&s) {
                 self.buf.push_line(format!("mov {}, {}", target, s));
                 return;
             }
@@ -525,7 +534,7 @@ impl<'a> Gen<'a> {
         panic!("Couldn't find {:?}", term);
     }
 
-    fn eval_term(&mut self, term: Term, allow_literals: bool) -> Result<String, GenError> {
+    fn eval_term(&mut self, term: Term, res: Option<Term>, allow_literals: bool) -> Result<String, GenError> {
         if allow_literals {
             if let Term::IntLit(i) = term {
                 return Ok(i.to_string());
@@ -534,6 +543,19 @@ impl<'a> Gen<'a> {
         for r in self.regs.iter() {
             if r.term == Some(term.clone()) {
                 return Ok(r.name.clone());
+            }
+        }
+        if let Some(r) = res {
+            if let Some(p) = self.params.last().cloned() {
+                for (i, t) in p.iter().enumerate() {
+                    if *t == r {
+                        let t = *self.call_order.get(i).ok_or(GenError::TooManyArguments(self.last_loc.clone()))?;
+                        let target = t.to_string();
+                        self.force_term_at(&term, &target)?;
+                        self.save_reg(&target, &term);
+                        return Ok(target);
+                    }
+                }
             }
         }
         let target = self.get_free_reg()?;
@@ -593,10 +615,17 @@ impl<'a> Gen<'a> {
 
     fn binop(&mut self, lhs: Term, rhs: Term, op: String, res: Option<Term>, size: u32) -> Result<(), GenError> {
         //println!("tac {:?} {:?} {:?}={:?}", lhs, op_opt, rhs_opt, res);
-        let mut r1 = self.eval_term(lhs.clone(), false)?;
-        self.lock_reg(&r1, true);
+        let mut r1;
         let mut r2;
-        r2 = self.eval_term(rhs.clone(), !["*", "/", "%"].contains(&op.as_str()))?;
+        if ["*", "/", "%"].contains(&op.as_str()) {
+            r1 = "rax".to_string();
+            self.force_term_at(&lhs, &"rax".to_string())?;
+            r2 = self.eval_term(rhs.clone(), None, false)?;
+        } else {
+            r1 = self.eval_term(lhs.clone(), res.clone(), false)?;
+            r2 = self.eval_term(rhs.clone(), None, true)?;
+        }
+        self.lock_reg(&r1, true);
         match op.as_str() {
             "+" => self.bin("add", &r1, &r2, size),
             "-" => self.bin("sub", &r1, &r2, size),
@@ -652,7 +681,7 @@ impl<'a> Gen<'a> {
             }
             _ => (),
         }
-        let r = self.eval_term(term, false)?;
+        let r = self.eval_term(term, Some(res.clone()), false)?;
         let d = Self::reg_name(&r, size);
         match op.as_str() {
             "-" => self.buf.push_line(format!("neg {}", d)),
@@ -685,11 +714,11 @@ impl<'a> Gen<'a> {
 
     fn store(&mut self, term: Term, op: String, ptr: Term, mut offset: i64, res: Option<Term>, size: u32) -> Result<(), GenError> {
         let p;
-        if let Term::Stack(_) = ptr {
+        if let Some(t) = ptr.stack_arithmetic() {
             p = "rsp".to_string();
-            offset += self.sp - self.locs.get(&ptr).unwrap();
+            offset += self.sp - self.locs.get(&t).unwrap();
         } else {
-            p = self.eval_term(ptr, false)?;
+            p = self.eval_term(ptr, res.clone(), false)?;
         }
         let s = Self::word_size_name(size);
         if let Some((t1, t2)) = self.doubles.get(&term).cloned() {
@@ -699,7 +728,7 @@ impl<'a> Gen<'a> {
             self.clear_reg(&t2);
             return Ok(());
         }
-        let mut t = self.eval_term(term, res.is_none() && op != "*=" && op != "/=" && op != "%=")?;
+        let mut t = self.eval_term(term, None, res.is_none() && op != "*=" && op != "/=" && op != "%=")?;
         let display_term = Self::reg_name(&t, size);
         let o = self.fmt_offset(offset);
         match op.as_str() {
@@ -752,12 +781,12 @@ impl<'a> Gen<'a> {
 
     fn read(&mut self, ptr: Term, mut offset: i64, res: Term, size: u32) -> Result<(), GenError> {
         let r;
-        if let Term::Stack(_) = ptr {
+        if let Some(t) = ptr.stack_arithmetic() {
             r = "rsp".to_string();
-            println!("sp {} loc {} offset {}", self.sp, self.locs.get(&ptr).unwrap(), offset);
-            offset += self.sp - self.locs.get(&ptr).unwrap();
+            println!("sp {} loc {} offset {}", self.sp, self.locs.get(&t).unwrap(), offset);
+            offset += self.sp - self.locs.get(&t).unwrap();
         } else {
-            r = self.eval_term(ptr.clone(), false)?
+            r = self.eval_term(ptr.clone(), Some(res.clone()), false)?
         }
         if let Term::Double(_) = res {
             let t1 = self.get_free_reg()?;
@@ -772,8 +801,18 @@ impl<'a> Gen<'a> {
             return Ok(());
         }
         let o = self.fmt_offset(offset);
-        if let Term::Stack(_) = ptr {
-            let res_reg = self.get_free_reg()?;
+        if let Some(_) = ptr.stack_arithmetic() {
+            let mut res_reg = self.get_free_reg()?;
+            if let Some(p) = self.params.last().cloned() {
+                for (i, t) in p.iter().enumerate() {
+                    if *t == res {
+                        let t = *self.call_order.get(i).ok_or(GenError::TooManyArguments(self.last_loc.clone()))?;
+                        res_reg = t.to_string();
+                        self.free_reg(&res_reg)?;
+                        break;
+                    }
+                }
+            }
             let d = Self::reg_name(&res_reg, size);
             self.buf.push_line(format!("mov {}, [{}{}]", d, r, o));
             if d != res_reg {
