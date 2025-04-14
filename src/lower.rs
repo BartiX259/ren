@@ -361,7 +361,10 @@ impl<'a> Lower<'a> {
             self.stmt(s);
         }
         self.unload_symbols(sc);
-        self.push_op(Op::EndScope, 0);
+        if let Some(Op::Return { .. }) = self.cur_block.as_ref().unwrap().ops.last() {
+        } else {
+            self.push_op(Op::EndScope, 0);
+        }
     }
 
     fn ret(&mut self, ret: &node::Ret) {
@@ -482,7 +485,14 @@ impl<'a> Lower<'a> {
         }
         let rhs = self.expr(&bin.rhs);
         self.temp_count += 1;
-        if bin.is_assign() {
+        if let Term::Double(_) = lhs {
+            self.stack_count += 1;
+            self.push_op(Op::Decl { term: Term::Stack(self.stack_count), size: 16 }, bin.op.pos_id);
+            self.push_op(Op::Store { res: None, ptr: Term::Stack(self.stack_count), offset: 0, size: 8, op: "=".to_string(), term: lhs.clone() }, bin.op.pos_id);
+            self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: Term::Stack(self.stack_count), size: 8 }, bin.op.pos_id);
+            self.temp_count += 1;
+            self.push_op(Op::BinOp { res: Some(Term::Temp(self.temp_count)), lhs: Term::Temp(self.temp_count-1), op: "+".to_string(), rhs, size }, bin.op.pos_id);
+        } else if bin.is_assign() {
             let is_stack = if let Term::Stack(_) = lhs { true } else { false };
             if bin.lhs.ty.salloc() && is_stack {
                 if lhs != rhs {

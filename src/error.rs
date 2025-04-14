@@ -133,6 +133,10 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Can't dereference struct. Use '.' directly with the pointer.");
             print_module_err_span(path, span);
         }
+        SemanticError::NoIndirection(span) => {
+            eprintln!("Indirection required.");
+            print_module_err_span(path, span);
+        }
         SemanticError::FuncInFunc(pos_str) => {
             eprintln!("Function inside another function.");
             print_module_err_id(path, pos_str.pos_id);
@@ -266,11 +270,22 @@ fn print_file_err(text: &String, module: &String, pos: &FilePos) {
                 let padstr = " ".repeat(padding as usize + 2);
                 eprintln!("\x1b[94m{}> {}\x1b[0m", padstr, module);
                 eprintln!("\x1b[94m{}|\x1b[0m", padstr);
-                eprintln!("\x1b[94m{} |\x1b[0m {}", line_nr, line);
-                eprint!("\x1b[94m{}|\x1b[0m", padstr);
-                for _ in 0..line_start {
-                    eprint!(" ");
+                eprint!("\x1b[94m{} |\x1b[0m {}", line_nr, line);
+                eprintln!();
+                let mut line_pad = String::new();
+                let mut one_tab = false;
+                for c in line.chars().take(line_start) {
+                    if c == '\t' {
+                        line_pad.push('\t');
+                        one_tab = true;
+                    } else {
+                        line_pad.push(' ');
+                    }
                 }
+                if one_tab {
+    line_pad.pop(); // removes the last char, which should be a space
+}
+                eprint!("\x1b[94m{}|\x1b[0m{}", padstr, line_pad);
                 eprint!("\x1b[91m");
                 let end;
                 if cur_pos > pos.end {

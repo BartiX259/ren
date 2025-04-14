@@ -79,7 +79,7 @@ impl<'a> Gen<'a> {
     }
     fn all(&mut self) -> Result<(), GenError> {
         // Data section
-        self.buf.push_line("section .data");
+        self.buf.push_line("section .rodata");
         self.buf.indent();
         self.data();
         self.buf.dedent();
@@ -786,6 +786,13 @@ impl<'a> Gen<'a> {
             r = "rsp".to_string();
             println!("sp {} loc {} offset {}", self.sp, self.locs.get(&t).unwrap(), offset);
             offset += self.sp - self.locs.get(&t).unwrap();
+        } else if let Term::Double(_) = ptr {
+            let (t1, t2) = self.doubles.get(&ptr).unwrap();
+            if offset <= 8 {
+                r = t1.to_string();
+            } else {
+                r = t2.to_string();
+            }
         } else {
             r = self.eval_term(ptr.clone(), Some(res.clone()), false)?
         }

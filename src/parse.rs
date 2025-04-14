@@ -511,7 +511,7 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
     let start = tokens.current_index();
     let tok = check_none(tokens, "a type")?;
     if let Token::Word { value } = &tok {
-        let ty = r#type(start, start + 1, node::TypeKind::Word(value.clone()));
+        let ty = r#type(start, start, node::TypeKind::Word(value.clone()));
         if let Some(Token::OpenSquare) = tokens.peek() {
             let mut len = None;
             tokens.next();

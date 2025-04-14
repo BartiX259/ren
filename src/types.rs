@@ -8,6 +8,7 @@ pub enum Type {
     Bool,
     Char,
     String,
+    Any,
     Pointer(Box<Type>),
     Array { inner: Box<Type>, length: usize },
     TaggedArray { inner: Box<Type> },
@@ -22,7 +23,7 @@ impl Type {
             Type::Array { inner, length } => *length as u32 * inner.size(),
             Type::Tuple(tys) => tys.iter().map(|ty| ty.size()).sum(),
             Type::String | Type::TaggedArray { .. } => 16,
-            Type::Char | Type::Bool => 1,
+            Type::Char | Type::Bool | Type::Any | Type::Void => 1,
             _ => 8
         }
     }
@@ -61,6 +62,7 @@ impl Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::Char => write!(f, "char"),
             Type::String => write!(f, "str"),
+            Type::Any => write!(f, "any"),
             Type::Pointer(p) => write!(f, "*{p}"),
             Type::Array { inner, length } => write!(f, "{inner}[{length}]"),
             Type::TaggedArray { inner } => write!(f, "{inner}[]"),

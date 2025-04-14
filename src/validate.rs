@@ -64,6 +64,7 @@ pub enum SemanticError {
     InvalidAddressOf(PosStr),
     InvalidDereference(PosStr, Type),
     StructDereference(Span),
+    NoIndirection(Span),
     FuncInFunc(PosStr),
     InvalidArgCount(PosStr, usize, usize),
     ArgTypeMismatch(Span, Type, Type),
@@ -126,7 +127,7 @@ impl Validate {
             if self.symbol_table.contains_key(&decl.name.str) {
                 return Err(SemanticError::SymbolExists(decl.name.clone()));
             }
-            let ty = self.r#type(&decl.r#type)?;
+            let ty = self.r#type(&decl.r#type, false)?;
             self.symbol_table.insert(decl.name.str.clone(), Symbol::Type { ty });
         }
         Ok(())
@@ -136,7 +137,7 @@ impl Validate {
         if let node::Stmt::Fn(decl) = stmt {
             let ty;
             if let Some(t) = &decl.decl_type {
-                ty = self.r#type(t)?;
+                ty = self.r#type(t, false)?;
             } else {
                 ty = Type::Void;
             }
@@ -151,7 +152,7 @@ impl Validate {
                         return Err(SemanticError::SymbolExists(arg.0.clone()));
                     }
                 }
-                let ty = self.r#type(arg.1)?;
+                let ty = self.r#type(arg.1, false)?;
                 types.push(ty.clone());
                 let sym = Symbol::Var { ty };
                 arg_symbols.push((arg.0.str.clone(), sym.clone()));
@@ -211,13 +212,13 @@ impl Validate {
         } else if let node::Stmt::Syscall(decl) = stmt {
             let ty;
             if let Some(t) = &decl.decl_type {
-                ty = self.r#type(t)?;
+                ty = self.r#type(t, false)?;
             } else {
                 ty = Type::Void;
             }
             let mut types = Vec::new();
             for arg in decl.types.iter() {
-                let ty = self.r#type(arg)?;
+                let ty = self.r#type(arg, false)?;
                 types.push(ty.clone());
             }
             if public {
@@ -311,7 +312,7 @@ impl Validate {
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.span),
             node::ExprKind::TypeCast(cast) => {
                 let from = self.expr(&mut cast.expr)?;
-                let to = self.r#type(&cast.r#type)?;
+                let to = self.r#type(&cast.r#type, false)?;
                 Self::type_cast(from, to, expr.span)
             }
         };
@@ -333,7 +334,7 @@ impl Validate {
         if self.symbol_table.contains_key(&decl.name.str) {
             return Err(SemanticError::SymbolExists(decl.name.clone()));
         }
-        let ty = self.r#type(&decl.r#type)?;
+        let ty = self.r#type(&decl.r#type, false)?;
         decl.ty = ty.clone();
         self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
         Ok(())
@@ -365,7 +366,7 @@ impl Validate {
         self.cur_ret = decl
             .decl_type
             .as_ref()
-            .map(|t| self.r#type(t))
+            .map(|t| self.r#type(t, false))
             .transpose()?
             .unwrap_or(Type::Void);
         
@@ -397,6 +398,10 @@ impl Validate {
         Ok(())
     }
 
+    fn node_type(span: Span) -> node::Type {
+        node::Type { kind: node::TypeKind::Word("".to_string()), span  }
+    }
+
     fn scope(&mut self, scope: &mut Vec<node::Stmt>) -> Result<(), SemanticError> {
         println!("scope {}, {:?}", self.scope_id, self.fn_symbols);
         self.symbol_stack.push(self.scope_id);
@@ -420,9 +425,11 @@ impl Validate {
             return Err(SemanticError::InvalidReturn(ret.pos_id));
         }
         if let Some(expr) = &mut ret.expr {
+            let span = expr.span;
             let ty = self.expr(expr)?;
             if self.cur_ret != ty {
-                return Err(SemanticError::InvalidReturn(ret.pos_id));
+                Self::type_cast(ty, self.cur_ret.clone(), span)?;
+                expr.kind = node::ExprKind::TypeCast(node::TypeCast { r#type: Self::node_type(span), expr: Box::new(expr.clone()) })
             }
         } else if self.cur_ret != Type::Void {
             return Err(SemanticError::InvalidReturn(ret.pos_id));   
@@ -648,6 +655,14 @@ impl Validate {
                 }
             }
             if !found {
+                for sig in sigs.iter() {
+                    if *sig.0 == arg_types {
+                        s = format!("{}.{}", s, sig.1);
+                        call.name.str = s.clone();
+                        found = true;
+                        break;
+                    }
+                }
                 if sigs.len() == 1 { // Implicit casting
                     let tys = sigs.get(0).unwrap().0.iter();
                     let id = sigs.get(0).unwrap().1;
@@ -728,7 +743,7 @@ impl Validate {
         Ok(res)
     }
 
-    fn r#type(&self, r#type: &node::Type) -> Result<Type, SemanticError> {
+    fn r#type(&self, r#type: &node::Type, indirection: bool) -> Result<Type, SemanticError> {
         match &r#type.kind {
             node::TypeKind::Word(word) => match word.as_str() {
                 "int" => Ok(Type::Int),
@@ -736,6 +751,13 @@ impl Validate {
                 "bool" => Ok(Type::Bool),
                 "str" => Ok(Type::String),
                 "char" => Ok(Type::Char),
+                "any" => {
+                    if indirection {
+                        Ok(Type::Any)
+                    } else {
+                        Err(SemanticError::NoIndirection(r#type.span))
+                    }
+                }
                 other => {
                     if let Some(t) = self.symbol_table.get(other) {
                         if let Symbol::Type { ty } = t {
@@ -745,16 +767,16 @@ impl Validate {
                     Err(SemanticError::InvalidType(r#type.span))
                 }
             }
-            node::TypeKind::Pointer(inner) => Ok(Type::Pointer(Box::new(self.r#type(&inner)?))),
+            node::TypeKind::Pointer(inner) => Ok(Type::Pointer(Box::new(self.r#type(&inner, true)?))),
             node::TypeKind::Array(inner, len_opt) => if let Some(len) = len_opt {
-                Ok(Type::Array { inner: Box::new(self.r#type(&inner)?), length: *len as usize })
+                Ok(Type::Array { inner: Box::new(self.r#type(&inner, false)?), length: *len as usize })
             } else {
-                Ok(Type::TaggedArray { inner: Box::new(self.r#type(&inner)?)})
+                Ok(Type::TaggedArray { inner: Box::new(self.r#type(&inner, true)?)})
             }
             node::TypeKind::Tuple(type_list) => {
                 let mut types = Vec::new();
                 for arg in type_list.iter() {
-                    let ty = self.r#type(arg)?;
+                    let ty = self.r#type(arg, false)?;
                     types.push(ty.clone());
                 }
                 Ok(Type::Tuple(types))
@@ -763,7 +785,7 @@ impl Validate {
                 let mut i = 0;
                 let mut map: HashMap<String, (Type, u32)> = HashMap::new();
                 for (node_name, node_ty) in node_names.iter().zip(node_types.iter()) {
-                    let ty = self.r#type(node_ty)?;
+                    let ty = self.r#type(node_ty, false)?;
                     if map.contains_key(&node_name.str) {
                         return Err(SemanticError::SymbolExists(node_name.clone()));
                     }
@@ -818,6 +840,11 @@ impl Validate {
                     }
                 }
                 if !ok {
+                    return Err(SemanticError::InvalidCast(span, from, to));
+                }
+            }
+            (Type::Pointer(p1), Type::Pointer(p2)) => {
+                if **p1 != Type::Any && **p2 != Type::Any  {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }

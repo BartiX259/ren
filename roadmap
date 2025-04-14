@@ -1,4 +1,7 @@
 - Arg parsing?
+- Generics
+- Slices
+- Iterators
 - Peephole optimization (temp stack variables)
 - Heap
 - String interpolation

@@ -1,9 +1,13 @@
 import lib/std
 
-fn double() -> (int, int) {
-    return (1, 2);
+fn t() -> (x: int, y: int) {
+	return (1, 2);
 }
 
-fn main(argc: int, argv: **char) {
-    print("a");
+fn test(x: any[]) {
+
+}
+
+fn main() -> int {
+	print(t().y);
 }
