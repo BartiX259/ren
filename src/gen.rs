@@ -79,7 +79,7 @@ impl<'a> Gen<'a> {
     }
     fn all(&mut self) -> Result<(), GenError> {
         // Data section
-        self.buf.push_line("section .rodata");
+        self.buf.push_line("section .data");
         self.buf.indent();
         self.data();
         self.buf.dedent();
@@ -122,8 +122,8 @@ impl<'a> Gen<'a> {
     fn data(&mut self) {
         for (name, sym) in self.symbol_table.iter() {
             match sym {
-                Symbol::StringLit { str } => {
-                    self.buf.push_line(format!("{} db {}", name, str));
+                Symbol::Data { str, .. } => {
+                    self.buf.push_line(format!("{} dq {}", name, str));
                 }
                 _ => ()
             }
@@ -271,6 +271,9 @@ impl<'a> Gen<'a> {
                 ir::Op::Call { func, res } => {
                     if let Some(Symbol::Syscall { id, .. }) = self.symbol_table.get(&func) {
                         self.force_term_at(&Term::IntLit(*id), &"rax".to_string())?;
+                        if self.get_reg(&"rcx".to_string()).unwrap().locked {
+                            self.swap_regs("rcx".to_string(), "r10".to_string());
+                        }
                         self.buf.push_line("syscall");
                     } else {
                         self.buf.push_line(format!("call {}", func));
@@ -527,7 +530,7 @@ impl<'a> Gen<'a> {
             return;
         }
         if let Term::Data(s) = t {
-            if let Some(Symbol::StringLit { str: _ }) = self.symbol_table.get(&s) {
+            if let Some(Symbol::Data { .. }) = self.symbol_table.get(&s) {
                 self.buf.push_line(format!("mov {}, {}", target, s));
                 return;
             }

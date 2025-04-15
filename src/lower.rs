@@ -61,7 +61,7 @@ impl<'a> Lower<'a> {
             block.ops.push(op);
             block.locs.push(OpLoc { start_id: pos_id, end_id: pos_id });
         } else {
-            panic!("No cur_block!");
+            // panic!("No cur_block!");
         }
     }
 
@@ -201,7 +201,7 @@ impl<'a> Lower<'a> {
                     self.string_id += 1;
                     let new_sym = format!("s.{}", self.string_id);
                     self.string_map.insert(lit.clone(), new_sym.clone());
-                    self.ir.insert(new_sym.clone(), Symbol::StringLit { str: lit.to_string() });
+                    self.ir.insert(new_sym.clone(), Symbol::Data { ty: Type::String, str: lit.to_string() });
                     self.push_op(
                         Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(new_sym), size: 8 }, expr.span.end
                     );
@@ -240,7 +240,11 @@ impl<'a> Lower<'a> {
                 ptr
             }
             node::ExprKind::Variable(pos_str) => {
-                self.var_map.get(&pos_str.str).unwrap().clone()
+                if let Some(var) = self.var_map.get(&pos_str.str) {
+                    var.clone()
+                } else {
+                    Term::Data(pos_str.str.clone())
+                }
             }
             node::ExprKind::Call(call) => self.call(call),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr, expr.ty.size()),
@@ -348,8 +352,9 @@ impl<'a> Lower<'a> {
         if let Some(Symbol::Func { block, .. }) = self.ir.get_mut(&decl.name.str) {
             *block = self.cur_block.clone().unwrap();
         } else {
-            panic!("Counldn't find {} symbol", decl.name.str);
+            panic!("Couldn't find {} symbol", decl.name.str);
         }
+        self.cur_block = None;
     }
 
     fn scope(&mut self, scope: &Vec<node::Stmt>) {

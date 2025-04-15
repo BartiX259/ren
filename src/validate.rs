@@ -12,7 +12,7 @@ pub fn validate(module: &mut node::Module, public: Vec<&PublicSymbols>) -> Resul
         val.fn_map.extend(syms.fn_map.clone());
     }
     println!("===========PUBLIC==========\n{:?}\n------------------\n{:?}\n===================", val.symbol_table, val.fn_map);
-    for stmt in module.stmts.iter() {
+    for stmt in module.stmts.iter_mut() {
         val.hoist_type(stmt, false)?;
     }
     for stmt in module.stmts.iter_mut() {
@@ -65,6 +65,7 @@ pub enum SemanticError {
     InvalidDereference(PosStr, Type),
     StructDereference(Span),
     NoIndirection(Span),
+    InvalidGlobal(Span),
     FuncInFunc(PosStr),
     InvalidArgCount(PosStr, usize, usize),
     ArgTypeMismatch(Span, Type, Type),
@@ -122,13 +123,30 @@ impl Validate {
         self.scope_symbols().push((name.clone(), sym.clone()));
     }
 
-    fn hoist_type(&mut self, stmt: &node::Stmt, public: bool) -> Result<(), SemanticError> {
-        if let node::Stmt::TypeDecl(decl) = stmt {
-            if self.symbol_table.contains_key(&decl.name.str) {
-                return Err(SemanticError::SymbolExists(decl.name.clone()));
+    fn hoist_type(&mut self, stmt: &mut node::Stmt, public: bool) -> Result<(), SemanticError> {
+        if !public {
+            if let node::Stmt::TypeDecl(decl) = stmt {
+                if self.symbol_table.contains_key(&decl.name.str) {
+                    return Err(SemanticError::SymbolExists(decl.name.clone()));
+                }
+                let ty = self.r#type(&decl.r#type, false)?;
+                self.symbol_table.insert(decl.name.str.clone(), Symbol::Type { ty });
+            } else if let node::Stmt::Let(decl) = stmt {
+                if self.symbol_table.contains_key(&decl.name.str) {
+                    return Err(SemanticError::SymbolExists(decl.name.clone()));
+                }
+                let str = self.const_expr(&decl.expr)?;
+                let ty = self.expr(&mut decl.expr)?;
+                self.symbol_table.insert(decl.name.str.clone(), Symbol::Data { ty, str });
+            } else if let node::Stmt::Decl(decl) = stmt {
+                if self.symbol_table.contains_key(&decl.name.str) {
+                    return Err(SemanticError::SymbolExists(decl.name.clone()));
+                }
+                let ty = self.r#type(&decl.r#type, false)?;
+                let size = ((ty.size() + 7) / 8) as usize;
+                let str = std::iter::repeat("0").take(size).collect::<Vec<_>>().join(", ");
+                self.symbol_table.insert(decl.name.str.clone(), Symbol::Data { ty, str });
             }
-            let ty = self.r#type(&decl.r#type, false)?;
-            self.symbol_table.insert(decl.name.str.clone(), Symbol::Type { ty });
         }
         Ok(())
     }
@@ -304,6 +322,7 @@ impl Validate {
                 .get(&pos_str.str)
                 .and_then(|symbol| match symbol {
                     Symbol::Var { ty } => Some(ty.clone()),
+                    Symbol::Data { ty, .. } => Some(Type::Pointer(Box::new(ty.clone()))),
                     _ => None,
                 })
                 .ok_or(SemanticError::UndeclaredSymbol(pos_str.clone())),
@@ -323,20 +342,24 @@ impl Validate {
     }
 
     fn r#let(&mut self, decl: &mut node::Let) -> Result<(), SemanticError> {
-        if self.symbol_table.contains_key(&decl.name.str) {
-            return Err(SemanticError::SymbolExists(decl.name.clone()));
+        if self.cur_func.is_some() {
+            if self.symbol_table.contains_key(&decl.name.str) {
+                return Err(SemanticError::SymbolExists(decl.name.clone()));
+            }
+            let ty = self.expr(&mut decl.expr)?;
+            self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
         }
-        let ty = self.expr(&mut decl.expr)?;
-        self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
         Ok(())
     }
     fn r#decl(&mut self, decl: &mut node::Decl) -> Result<(), SemanticError> {
-        if self.symbol_table.contains_key(&decl.name.str) {
-            return Err(SemanticError::SymbolExists(decl.name.clone()));
+        if self.cur_func.is_some() {
+            if self.symbol_table.contains_key(&decl.name.str) {
+                return Err(SemanticError::SymbolExists(decl.name.clone()));
+            }
+            let ty = self.r#type(&decl.r#type, false)?;
+            decl.ty = ty.clone();
+            self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
         }
-        let ty = self.r#type(&decl.r#type, false)?;
-        decl.ty = ty.clone();
-        self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
         Ok(())
     }
 
@@ -446,6 +469,31 @@ impl Validate {
             self.r#if(i)?;
         }
         Ok(())
+    }
+
+    fn const_expr(&self, expr: &node::Expr) -> Result<String, SemanticError> {
+        let join_exprs = |exprs: &Vec<node::Expr>| {
+            let mut str = String::new();
+            let mut start = true;
+            for e in exprs.iter() {
+                if !start {
+                    str.push_str(", ");
+                } else {
+                    start = false;
+                }
+                str.push_str(&self.const_expr(e)?);
+            }
+            Ok::<String, SemanticError>(str)
+        };
+        match &expr.kind {
+            ExprKind::IntLit(i) => Ok(i.to_string()),
+            ExprKind::CharLit(i) => Ok(i.to_string()),
+            ExprKind::ArrLit(arr_lit) => join_exprs(&arr_lit.exprs),
+            ExprKind::StructLit(struct_lit) => join_exprs(&struct_lit.field_exprs),
+            ExprKind::TupleLit(exprs) => join_exprs(exprs),
+            ExprKind::StringLit(string_lit) => Ok(format!("{string_lit}")),
+            _ => Err(SemanticError::InvalidGlobal(expr.span))
+        }
     }
 
     fn is_syntactic_lvalue(&self, expr: &node::Expr) -> bool {

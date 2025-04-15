@@ -8,7 +8,7 @@ pub enum Symbol {
     Func { ty: Type, block: Block, module: String, symbols: Vec<Vec<(String, Symbol)>> },
     ExternFunc { ty: Type, args: Vec<Type> },
     Syscall { id: i64, ty: Type, args: Vec<Type> },
-    StringLit { str: String }
+    Data { ty: Type, str: String }
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -182,7 +182,7 @@ impl fmt::Debug for Symbol {
             }
             Symbol::ExternFunc { ty, args } => writeln!(f, "extern func: {} -> {:?}\n", fmt_args(args), ty),
             Symbol::Syscall { id, ty, args } => writeln!(f, "syscall {}: {} -> {:?}\n", id, fmt_args(args), ty),
-            Symbol::StringLit { str } => writeln!(f, "str {}\n", str),
+            Symbol::Data { ty, str } => writeln!(f, "data {}: {}\n", str, ty),
         }
     }
 }

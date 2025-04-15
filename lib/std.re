@@ -47,3 +47,11 @@ fn print(x: *char) {
     }
     write(1, original_x, len);
 }
+
+syscall 9: mmap(int, int, int, int, int, int) -> *any;
+
+decl allocator: (base: *int, size: int, offset: int);
+
+fn alloc(size: int) -> *any {
+    return mmap(0, size, 3, 34, 0, 0);
+}

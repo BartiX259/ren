@@ -137,6 +137,10 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Indirection required.");
             print_module_err_span(path, span);
         }
+        SemanticError::InvalidGlobal(span) => {
+            eprintln!("Invalid global.");
+            print_module_err_span(path, span);
+        }
         SemanticError::FuncInFunc(pos_str) => {
             eprintln!("Function inside another function.");
             print_module_err_id(path, pos_str.pos_id);
