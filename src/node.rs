@@ -152,6 +152,8 @@ pub struct Expr {
 pub enum ExprKind {
     IntLit(i64),
     CharLit(u32),
+    BoolLit(bool),
+    Null,
     ArrLit(ArrLit),
     StructLit(StructLit),
     StringLit(StringLit),

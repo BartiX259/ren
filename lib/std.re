@@ -50,8 +50,15 @@ fn print(x: *char) {
 
 syscall 9: mmap(int, int, int, int, int, int) -> *any;
 
-decl allocator: (base: *int, size: int, offset: int);
+decl allocator: (base: *any, size: int, offset: int);
 
 fn alloc(size: int) -> *any {
-    return mmap(0, size, 3, 34, 0, 0);
+    if allocator.base == null {
+        allocator.base = mmap(0, size, 3, 34, 0, 0);
+        allocator.size = size;
+        allocator.offset = 0;
+    }
+    let res = allocator.base + allocator.offset;
+    allocator.offset += size;
+    return res;
 }

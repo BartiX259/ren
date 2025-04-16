@@ -116,12 +116,10 @@ impl<'a> Lower<'a> {
 
     fn expr(&mut self, expr: &node::Expr) -> Term {
         match &expr.kind {
-            node::ExprKind::IntLit(val) => {
-                Term::IntLit(*val)
-            }
-            node::ExprKind::CharLit(val) => {
-                Term::IntLit(*val as i64)
-            }
+            node::ExprKind::IntLit(val) => Term::IntLit(*val),
+            node::ExprKind::CharLit(val) => Term::IntLit(*val as i64),
+            node::ExprKind::BoolLit(val) => Term::IntLit(*val as i64),
+            node::ExprKind::Null => Term::IntLit(0),
             node::ExprKind::ArrLit(arr_lit) => {
                 let ptr;
                 let Some(inner) = expr.ty.dereference() else {
@@ -783,7 +781,7 @@ impl<'a> Lower<'a> {
                 self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: Term::Temp(self.temp_count), size: to.size() }, id);
                 res = s;
             }
-            (Type::String, Type::Pointer(inner)) if matches!(**inner, Type::Char) => {
+            (Type::String, Type::Pointer(_)) |  (Type::TaggedArray { .. }, Type::Pointer(_)) => {
                 self.temp_count += 1;
                 self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8, size }, id);
                 res = Term::Temp(self.temp_count);

@@ -1,8 +1,9 @@
-use crate::ir::{Block, Symbol};
+use crate::ir::Symbol;
 use crate::types::Type;
 use crate::node::{self, ExprKind, PosStr, Span};
 use std::collections::HashMap;
 
+mod hoist;
 
 /// Validate the ast, return a symbol table if successful
 pub fn validate(module: &mut node::Module, public: Vec<&PublicSymbols>) -> Result<HashMap<String, Symbol>, SemanticError> {
@@ -116,172 +117,11 @@ impl Validate {
             panic!("Pushed symbol outside of function!");
         }
     }
-    
+
     fn push_symbol(&mut self, name: String, sym: Symbol) {
         println!("push {}", name);
         self.symbol_table.insert(name.clone(), sym.clone());
         self.scope_symbols().push((name.clone(), sym.clone()));
-    }
-
-    fn hoist_type(&mut self, stmt: &mut node::Stmt, public: bool) -> Result<(), SemanticError> {
-        if !public {
-            if let node::Stmt::TypeDecl(decl) = stmt {
-                if self.symbol_table.contains_key(&decl.name.str) {
-                    return Err(SemanticError::SymbolExists(decl.name.clone()));
-                }
-                let ty = self.r#type(&decl.r#type, false)?;
-                self.symbol_table.insert(decl.name.str.clone(), Symbol::Type { ty });
-            } else if let node::Stmt::Let(decl) = stmt {
-                if self.symbol_table.contains_key(&decl.name.str) {
-                    return Err(SemanticError::SymbolExists(decl.name.clone()));
-                }
-                let str = self.const_expr(&decl.expr)?;
-                let ty = self.expr(&mut decl.expr)?;
-                self.symbol_table.insert(decl.name.str.clone(), Symbol::Data { ty, str });
-            } else if let node::Stmt::Decl(decl) = stmt {
-                if self.symbol_table.contains_key(&decl.name.str) {
-                    return Err(SemanticError::SymbolExists(decl.name.clone()));
-                }
-                let ty = self.r#type(&decl.r#type, false)?;
-                let size = ((ty.size() + 7) / 8) as usize;
-                let str = std::iter::repeat("0").take(size).collect::<Vec<_>>().join(", ");
-                self.symbol_table.insert(decl.name.str.clone(), Symbol::Data { ty, str });
-            }
-        }
-        Ok(())
-    }
-
-    fn hoist_func(&mut self, stmt: &mut node::Stmt, public: bool) -> Result<(), SemanticError> {
-        if let node::Stmt::Fn(decl) = stmt {
-            let ty;
-            if let Some(t) = &decl.decl_type {
-                ty = self.r#type(t, false)?;
-            } else {
-                ty = Type::Void;
-            }
-            let mut arg_symbols: Vec<(String, Symbol)> = Vec::new();
-            let mut types = Vec::new();
-            for arg in decl.arg_names.iter().zip(decl.arg_types.iter()) {
-                if self.symbol_table.contains_key(&arg.0.str) {
-                    return Err(SemanticError::SymbolExists(arg.0.clone()));
-                }
-                for existing in arg_symbols.iter() {
-                    if existing.0 == arg.0.str {
-                        return Err(SemanticError::SymbolExists(arg.0.clone()));
-                    }
-                }
-                let ty = self.r#type(arg.1, false)?;
-                types.push(ty.clone());
-                let sym = Symbol::Var { ty };
-                arg_symbols.push((arg.0.str.clone(), sym.clone()));
-            }
-            if public {
-                let s;
-                if decl.name.str == "main" {
-                    if self.symbol_table.contains_key("main") {
-                        return Err(SemanticError::SymbolExists(decl.name.clone()));
-                    }
-                    s = "main".to_string();
-                } else {
-                    let len;
-                    if let Some(sigs) = self.fn_map.get_mut(&decl.name.str) {
-                        if sigs.iter().any(|(tys, _)| *tys == types) {
-                            return Err(SemanticError::SymbolExists(decl.name.clone()));
-                        }
-                        len = sigs.len() + 1;
-                        sigs.push((types, len));
-                    } else {
-                        self.fn_map.insert(decl.name.str.clone(), vec![(types, 1)]);
-                        len = 1;
-                    }
-                    s = format!("{}.{}", decl.name.str, len);
-                    decl.name.str = s.clone();
-                }
-                self.symbol_table.insert(s, Symbol::ExternFunc { 
-                    ty,
-                    args: arg_symbols.iter().map(|(_, sym)| { let Symbol::Var { ty } = sym.clone() else { unreachable!() }; ty }).collect()
-                }); 
-            } else {
-                let split: Vec<&str> = decl.name.str.split('.').collect();
-                if split.len() < 2 {
-                    self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
-                        ty, module: self.cur_module.clone(),
-                        block: Block::new(),
-                        symbols: vec![arg_symbols],
-                    });
-                } else {
-                    let id = split.last().unwrap().parse::<usize>().unwrap();
-                    let name = split[..split.len() - 1].join(".");
-                    if let Some(sigs) = self.fn_map.get_mut(&name) {
-                        if sigs.iter().any(|(tys, _)| *tys == types) {
-                            return Err(SemanticError::SymbolExists(decl.name.clone()));
-                        }
-                        sigs.push((types, id));
-                    } else {
-                        self.fn_map.insert(name, vec![(types, id)]);
-                    }
-                    self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
-                        ty, module: self.cur_module.clone(),
-                        block: Block::new(),
-                        symbols: vec![arg_symbols],
-                    });
-                }
-            }
-        } else if let node::Stmt::Syscall(decl) = stmt {
-            let ty;
-            if let Some(t) = &decl.decl_type {
-                ty = self.r#type(t, false)?;
-            } else {
-                ty = Type::Void;
-            }
-            let mut types = Vec::new();
-            for arg in decl.types.iter() {
-                let ty = self.r#type(arg, false)?;
-                types.push(ty.clone());
-            }
-            if public {
-                let s;
-                if decl.name.str == "main" {
-                    if self.symbol_table.contains_key("main") {
-                        return Err(SemanticError::SymbolExists(decl.name.clone()));
-                    }
-                    s = "main".to_string();
-                } else {
-                    let len;
-                    if let Some(sigs) = self.fn_map.get_mut(&decl.name.str) {
-                        if sigs.iter().any(|(tys, _)| *tys == types) {
-                            return Err(SemanticError::SymbolExists(decl.name.clone()));
-                        }
-                        len = sigs.len() + 1;
-                        sigs.push((types.clone(), len));
-                    } else {
-                        self.fn_map.insert(decl.name.str.clone(), vec![(types.clone(), 1)]);
-                        len = 1;
-                    }
-                    s = format!("{}.{}", decl.name.str, len);
-                    decl.name.str = s.clone();
-                }
-                self.symbol_table.insert(s, Symbol::Syscall { id: decl.id, ty, args: types });
-            } else {
-                let split: Vec<&str> = decl.name.str.split('.').collect();
-                if split.len() < 2 {
-                    self.symbol_table.insert(decl.name.str.clone(), Symbol::Syscall { id: decl.id, ty, args: types });
-                } else {
-                    let id = split.last().unwrap().parse::<usize>().unwrap();
-                    let name = split[..split.len() - 1].join(".");
-                    if let Some(sigs) = self.fn_map.get_mut(&name) {
-                        if sigs.iter().any(|(tys, _)| *tys == types) {
-                            return Err(SemanticError::SymbolExists(decl.name.clone()));
-                        }
-                        sigs.push((types.clone(), id));
-                    } else {
-                        self.fn_map.insert(name, vec![(types.clone(), id)]);
-                    }
-                    self.symbol_table.insert(decl.name.str.clone(), Symbol::Syscall { id: decl.id, ty, args: types });
-                }
-            }
-        }
-        Ok(())
     }
     
     fn stmt(&mut self, stmt: &mut node::Stmt) -> Result<(), SemanticError> {
@@ -306,6 +146,8 @@ impl Validate {
         let res = match &mut expr.kind {
             node::ExprKind::IntLit(_) => Ok(Type::Int),
             node::ExprKind::CharLit(_) => Ok(Type::Char),
+            node::ExprKind::BoolLit(_) => Ok(Type::Bool),
+            node::ExprKind::Null => Ok(Type::Pointer(Box::new(Type::Any))),
             node::ExprKind::ArrLit(arr_lit) => self.expr_list(&mut arr_lit.exprs, arr_lit.pos_id)
             .map(|res| Type::Array { inner: Box::new(res.0), length: res.1 }),
             node::ExprKind::StructLit(struct_lit) => self.struct_lit(struct_lit),
@@ -580,11 +422,26 @@ impl Validate {
                 // Comparison operators
                 if ty1 == ty2 {
                     Ok(Type::Bool)
-                } else { 
-                    match (&ty1, &ty2) {
-                        (Type::Int, Type::Char) | (Type::Char, Type::Int) => Ok(Type::Bool),
-                        _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
+                } else {
+                    if let Ok(ty) = Self::type_cast(ty1.clone(), ty2.clone(), bin.lhs.span) {
+                        bin.lhs.kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
+                            kind: node::TypeKind::Word("void".to_string()), span: bin.lhs.span },
+                            expr: bin.lhs.clone()
+                        });
+                        return Ok(ty);
                     }
+                    if let Ok(ty) = Self::type_cast(ty2.clone(), ty1.clone(), bin.rhs.span) {
+                        bin.rhs.kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
+                            kind: node::TypeKind::Word("void".to_string()), span: bin.rhs.span },
+                            expr: bin.rhs.clone()
+                        });
+                        return Ok(ty);
+                    }
+                    // match (&ty1, &ty2) {
+                    //     (Type::Int, Type::Char) | (Type::Char, Type::Int) => Ok(Type::Bool),
+                    //     _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
+                    // }
+                    Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
                 }
             }
             "=" => {
@@ -592,6 +449,13 @@ impl Validate {
                 if ty1 == ty2 {
                     Ok(ty1)
                 } else {
+                    if let Ok(ty) = Self::type_cast(ty2.clone(), ty1.clone(), bin.rhs.span) {
+                        bin.rhs.kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
+                            kind: node::TypeKind::Word("void".to_string()), span: bin.rhs.span },
+                            expr: bin.rhs.clone()
+                        });
+                        return Ok(ty);
+                    }
                     Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
                 }
             }
@@ -703,38 +567,29 @@ impl Validate {
                 }
             }
             if !found {
-                for sig in sigs.iter() {
-                    if *sig.0 == arg_types {
-                        s = format!("{}.{}", s, sig.1);
-                        call.name.str = s.clone();
-                        found = true;
-                        break;
-                    }
-                }
-                if sigs.len() == 1 { // Implicit casting
-                    let tys = sigs.get(0).unwrap().0.iter();
-                    let id = sigs.get(0).unwrap().1;
-                    if arg_types.len() == tys.len() {
-                        for (i, (ty1, ty2)) in arg_types.iter_mut().zip(tys).enumerate() {
-                            if ty1 != ty2 {
-                                Self::type_cast(ty1.clone(), ty2.clone(), *arg_spans.get(i).unwrap())?;
-                                let e = call.args.get(i).unwrap().clone();
-                                call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
-                                    kind: node::TypeKind::Word("void".to_string()), span: e.span },
-                                    expr: Box::new(e)
-                                });
-                                call.args.get_mut(i).unwrap().ty = ty2.clone();
-                                found = true;
-                                *ty1 = ty2.clone();
-                            }
-                        }
-                        s = format!("{}.{}", s, id);
-                        call.name.str = s.clone();
-                    }
-                }
-                if !found {
+                if sigs.len() != 1 { 
                     return Err(SemanticError::NoFnSig(call.name.clone(), arg_types));
                 }
+                // Implicit casting
+                let tys = sigs.get(0).unwrap().0.iter();
+                let id = sigs.get(0).unwrap().1;
+                if arg_types.len() != tys.len() {
+                    return Err(SemanticError::NoFnSig(call.name.clone(), arg_types));
+                }
+                for (i, (ty1, ty2)) in arg_types.iter_mut().zip(tys).enumerate() {
+                    if ty1 != ty2 {
+                        Self::type_cast(ty1.clone(), ty2.clone(), *arg_spans.get(i).unwrap())?;
+                        let e = call.args.get(i).unwrap().clone();
+                        call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
+                            kind: node::TypeKind::Word("void".to_string()), span: e.span },
+                            expr: Box::new(e)
+                        });
+                        call.args.get_mut(i).unwrap().ty = ty2.clone();
+                        *ty1 = ty2.clone();
+                    }
+                }
+                s = format!("{}.{}", s, id);
+                call.name.str = s.clone();
             }
         }
         let ty;
@@ -850,6 +705,7 @@ impl Validate {
         match (&from, &to) {
             (Type::String, Type::Pointer(inner)) if matches!(**inner, Type::Char) => (),
             (Type::String, Type::Int) => (),
+            (Type::Int, Type::Char) | (Type::Char, Type::Int) => (),
             (Type::Struct(s1), Type::Struct(s2)) => {
                 for (n2, (t2, _)) in s2.iter() {
                     let Some((t1, _)) = s1.get(n2) else {
@@ -896,6 +752,12 @@ impl Validate {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
+            (Type::TaggedArray { inner }, Type::Pointer(p)) => {
+                if inner != p {
+                    return Err(SemanticError::InvalidCast(span, from, to));
+                }
+            }
+            (Type::TaggedArray { .. }, Type::Int) => (),
             _ => return Err(SemanticError::InvalidCast(span, from, to))
         }
         Ok(to)

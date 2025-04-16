@@ -575,22 +575,20 @@ impl<'a> Gen<'a> {
         if let Some(r) = self.get_reg(&target.to_string()) {
             if let Some(t) = &r.term {
                 if term != t {
-                    let binding = t.clone();
-                    r.term = None;
                     if r.locked {
-                        r.locked = false;
-                        free = Some((self.get_free_reg()?, binding));
+                        free = Some((t.clone(), self.get_free_reg()?));
                     }
                 } else {
                     return Ok(());
                 }
             }
         }
+        self.clear_reg(target);
         if let Some(f) = free {
-            println!("mov {}, {}", f.0, target);
-            self.buf.push_line(format!("mov {}, {}", f.0, target));
-            self.save_reg(&f.0, &f.1);
-            self.lock_reg(&f.0, true);
+            println!("move {}, {}", f.1, target);
+            self.buf.push_line(format!("mov {}, {}", f.1, target));
+            self.save_reg(&f.1, &f.0);
+            self.lock_reg(&f.1, true);
         }
         self.eval_term_at(&term, &target.to_string());
         self.save_reg(target, term);
@@ -630,6 +628,7 @@ impl<'a> Gen<'a> {
             r2 = self.eval_term(rhs.clone(), None, true)?;
         }
         self.lock_reg(&r1, true);
+        self.lock_reg(&r2, true);
         match op.as_str() {
             "+" => self.bin("add", &r1, &r2, size),
             "-" => self.bin("sub", &r1, &r2, size),
@@ -703,6 +702,7 @@ impl<'a> Gen<'a> {
         }
         self.save_reg(&r, &res);
         self.lock_reg(&r, true);
+        println!("SAVE {res:?} {r}");
         Ok(())
     }
 
@@ -787,7 +787,6 @@ impl<'a> Gen<'a> {
         let r;
         if let Some(t) = ptr.stack_arithmetic() {
             r = "rsp".to_string();
-            println!("sp {} loc {} offset {}", self.sp, self.locs.get(&t).unwrap(), offset);
             offset += self.sp - self.locs.get(&t).unwrap();
         } else if let Term::Double(_) = ptr {
             let (t1, t2) = self.doubles.get(&ptr).unwrap();
@@ -855,8 +854,8 @@ impl<'a> Gen<'a> {
             *r2 = "rax".to_string();
         }
         *r1 = "rax".to_string();
+        self.free_reg(&"rdx".to_string())?;
         if op == "div" {
-            self.free_reg(&"rdx".to_string())?;
             self.buf.push_line("xor rdx, rdx");
         }
         self.buf.push_line(format!("{} {}", op, Self::reg_name(r2, size)));

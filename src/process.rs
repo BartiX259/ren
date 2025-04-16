@@ -1,7 +1,7 @@
 use crate::node;
 use crate::types::Type;
 
-/// Modify the ast to express syntax sugar with simpler statements
+/// Modify the ast after validation to express syntax sugar with simpler statements
 pub fn process(module: node::Module) -> Vec<node::Stmt> {
     let mut res = Vec::new();
     let mut l = Process::new();
@@ -88,6 +88,11 @@ impl Process {
                 exprs: self.expr_list(arr_lit.exprs),
                 pos_id: arr_lit.pos_id
             }),
+            node::ExprKind::StructLit(lit) => node::ExprKind::StructLit(node::StructLit {
+                field_names: lit.field_names,
+                field_exprs: self.expr_list(lit.field_exprs)
+            }),
+            node::ExprKind::TupleLit(lit) => node::ExprKind::TupleLit(self.expr_list(lit)),
             node::ExprKind::BinExpr(bin) => self.bin_expr(bin),
             node::ExprKind::Call(call) => node::ExprKind::Call(node::Call {
                 name: call.name,
@@ -97,6 +102,7 @@ impl Process {
                 expr: Box::new(self.expr(*un.expr)),
                 op: un.op
             }),
+            node::ExprKind::TypeCast(cast) => node::ExprKind::TypeCast(node::TypeCast { r#type: cast.r#type, expr: Box::new(self.expr(*cast.expr)) }),
             _ => expr.kind
         };
         self.index += 1;

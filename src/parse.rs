@@ -153,6 +153,9 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
     match tok {
         Token::IntLit { value } => Ok(expr(start, start,  node::ExprKind::IntLit(value))),
         Token::CharLit { value } => Ok(expr(start, start,  node::ExprKind::CharLit(value))),
+        Token::True => Ok(expr(start, start, node::ExprKind::BoolLit(true))),
+        Token::False => Ok(expr(start, start, node::ExprKind::BoolLit(false))),
+        Token::Null => Ok(expr(start, start, node::ExprKind::Null)),
         Token::Word { value } => { // Term
             let pos_str = PosStr {
                 str: value,
@@ -456,9 +459,11 @@ fn parse_type_decl(tokens: &mut VecIter<Token>) -> Result<node::TypeDecl, ParseE
     if op != "=" {
         return Err(unexp(tok, tokens.prev_index(), "'='"));
     }
+    let r#type = parse_type(tokens)?;
+    check_semi(tokens)?;
     Ok(node::TypeDecl {
         name: PosStr { str: name, pos_id: name_pos },
-        r#type: parse_type(tokens)?
+        r#type
     })
 }
 
@@ -640,9 +645,9 @@ fn op_prec(op: &str) -> u8 {
         "/" => 11,
         "%" => 11,
         "!" => 12,
-        "as" => 12,
-        "." => 13,
-        "[]" => 13, // Highest precedence (done first)
+        "[]" => 13,
+        "." => 14,
+        "as" => 15, // Highest precedence (done first)
         _ => panic!("No precedence for operator {}", op),
     }
 }
