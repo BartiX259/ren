@@ -149,9 +149,9 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Type declaration inside a function.");
             print_module_err_id(path, pos_str.pos_id);
         }
-        SemanticError::InvalidArgCount(pos_str, exp, got) => {
+        SemanticError::InvalidArgCount(span, exp, got) => {
             eprintln!("Invalid argument count, expected {} arguments but got {}", exp, got);
-            print_module_err_id(path, pos_str.pos_id);
+            print_module_err_span(path, span);
         }
         SemanticError::ArgTypeMismatch(span, ty1, ty2) => {
             eprintln!("Argument type mismatch: expected {} but got {}", ty1, ty2);
@@ -192,6 +192,10 @@ pub fn sematic_err(path: &String, e: SemanticError) {
         }
         SemanticError::InvalidCast(span, ty1, ty2) => {
             eprintln!("Can't cast from {} into {}.", ty1, ty2);
+            print_module_err_span(path, span);
+        }
+        SemanticError::NoLen(span, ty) => {
+            eprintln!("Type {ty} has no length.");
             print_module_err_span(path, span);
         }
     }

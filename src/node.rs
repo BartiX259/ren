@@ -1,5 +1,4 @@
 use crate::types;
-use crate::helpers::StringLit;
 
 #[derive(Debug, Clone)]
 pub struct PosStr {
@@ -128,6 +127,11 @@ pub struct StructLit {
     pub field_names: Vec<PosStr>,
     pub field_exprs: Vec<Expr>,
 }
+#[derive(Debug, Clone)]
+pub enum StringFragment {
+    Lit(crate::helpers::StringLit),
+    Expr(Expr)
+}
 
 #[derive(Debug)]
 pub struct Syscall {
@@ -135,6 +139,17 @@ pub struct Syscall {
     pub name: PosStr,
     pub types: Vec<Type>,
     pub decl_type: Option<Type>,
+}
+#[derive(Debug, Clone)]
+pub enum BuiltInKind {
+    Len,
+    Copy,
+    StackPointer,
+}
+#[derive(Debug, Clone)]
+pub struct BuiltIn {
+    pub kind: BuiltInKind,
+    pub args: Vec<Expr>
 }
 #[derive(Debug, Clone)]
 pub struct TypeCast {
@@ -156,10 +171,11 @@ pub enum ExprKind {
     Null,
     ArrLit(ArrLit),
     StructLit(StructLit),
-    StringLit(StringLit),
+    StringLit(Vec<StringFragment>),
     TupleLit(Vec<Expr>),
     Variable(PosStr),
     Call(Call),
+    BuiltIn(BuiltIn),
     BinExpr(BinExpr),
     UnExpr(UnExpr),
     TypeCast(TypeCast)

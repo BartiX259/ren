@@ -23,7 +23,7 @@ fn print(x: int) {
 }
 
 fn print(x: str) {
-    write(1, x as *char, x as int);
+    write(1, x as *char, len(x));
 }
 
 fn print(x: bool) {
@@ -49,16 +49,65 @@ fn print(x: *char) {
 }
 
 syscall 9: mmap(int, int, int, int, int, int) -> *any;
+syscall 10: munmap(*any, int);
 
-decl allocator: (base: *any, size: int, offset: int);
+decl allocator: (base: *any, size: int, offset: int, stack: *any);
+let SPACE_SIZE = 16;
 
 fn alloc(size: int) -> *any {
     if allocator.base == null {
-        allocator.base = mmap(0, size, 3, 34, 0, 0);
-        allocator.size = size;
+        allocator.base = mmap(0, *SPACE_SIZE, 3, 34, 0, 0);
+        allocator.size = *SPACE_SIZE;
         allocator.offset = 0;
+        allocator.stack = sp() + 16;
+    }
+    let new_offset = allocator.offset + size + 8;
+    if new_offset > allocator.size {
+        collect();
+        new_offset = allocator.offset + size + 8;
+        if new_offset > allocator.size {
+            print("DOUBLE");
+            *SPACE_SIZE *= 2;
+            print('\n');
+            let to_space = mmap(0, *SPACE_SIZE, 3, 34, 0, 0);
+            copy(allocator.base, to_space, allocator.size);
+            munmap(allocator.base, allocator.size);
+            allocator.base = to_space;
+            allocator.size = *SPACE_SIZE;
+        }
     }
     let res = allocator.base + allocator.offset;
-    allocator.offset += size;
-    return res;
+    *(res as *int) = size + 8;
+    allocator.offset = new_offset;
+    return res + 8;
+}
+
+fn collect() {
+    print("gc");
+    print('\n');
+    print("base: {(allocator.base) as int}\n");
+
+    let stack_end = sp();
+    let stack_start = allocator.stack;
+    let to_space = mmap(0, *SPACE_SIZE, 3, 34, 0, 0);
+    let offset = 0;
+    while stack_start > stack_end {
+        stack_start -= 8;
+        let ptr = *(stack_start as **any) - 8;
+        if ptr >= allocator.base && ptr < allocator.base + allocator.size {
+            print("found: ");
+            print(ptr as int);
+            print('\n');
+            let size = *(ptr as *int);
+            print("size: ");
+            print(size);
+            print('\n');
+            copy(ptr, to_space + offset, size);
+            *(stack_start as **any) = to_space + offset + 8;
+            offset += size;
+        }
+    }
+    munmap(allocator.base, allocator.size);
+    allocator.base = to_space;
+    allocator.offset = 0;
 }

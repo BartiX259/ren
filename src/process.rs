@@ -103,6 +103,7 @@ impl Process {
                 op: un.op
             }),
             node::ExprKind::TypeCast(cast) => node::ExprKind::TypeCast(node::TypeCast { r#type: cast.r#type, expr: Box::new(self.expr(*cast.expr)) }),
+            node::ExprKind::BuiltIn(built_in) => node::ExprKind::BuiltIn(node::BuiltIn { kind: built_in.kind, args: self.expr_list(built_in.args) }),
             _ => expr.kind
         };
         self.index += 1;

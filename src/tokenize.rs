@@ -8,9 +8,28 @@ pub fn tokenize(input: &String) -> Result<(Vec<Token>, Vec<FilePos>), TokenizeEr
     let mut info = Vec::new();
     let mut iter = VecIter::new(input.chars().collect());
     let mut start;
+    let mut interps = Vec::new();
     while let Some(ch) = iter.next() {
         start = iter.current_index();
         if let Some(ch_tok) = Token::from_char(ch) {
+            if let Token::OpenCurly = ch_tok {
+                if let Some(i) = interps.last_mut() {
+                    *i += 1;
+                }
+            } else if let Token::CloseCurly = ch_tok {
+                if let Some(i) = interps.last_mut() {
+                    *i -= 1;
+                    if *i == 0 {
+                        interps.pop();
+                        let (tok, interp) = tok_str(ch, &mut iter)?;
+                        tokens.push(tok);
+                        if interp {
+                            tokens.push(Token::StringInterpolation);
+                            interps.push(1);
+                        }
+                    }
+                }
+            }
             tokens.push(ch_tok);
         } else if ch.is_alphabetic() {
             tokens.push(tok_word(ch, &mut iter)?);
@@ -19,7 +38,12 @@ pub fn tokenize(input: &String) -> Result<(Vec<Token>, Vec<FilePos>), TokenizeEr
         } else if is_operator(ch) {
             tokens.push(tok_op(ch, &mut iter));
         } else if ch == '"' {
-            tokens.push(tok_str(ch, &mut iter)?);
+            let (tok, interp) = tok_str(ch, &mut iter)?;
+            tokens.push(tok);
+            if interp {
+                tokens.push(Token::StringInterpolation);
+                interps.push(1);
+            }
         } else if ch == '\'' {
             tokens.push(tok_char(ch, &mut iter)?);
         } else if ch.is_whitespace() {
@@ -83,6 +107,7 @@ pub enum Token {
     CloseSquare,
     Comma,
     Dot,
+    StringInterpolation
 }
 
 impl Token {
@@ -121,6 +146,7 @@ impl Token {
             Token::CloseSquare => "]".to_string(),
             Token::Comma => ",".to_string(),
             Token::Dot => ".".to_string(),
+            Token::StringInterpolation => "interp".to_string()
         }
     }
 
@@ -239,14 +265,19 @@ fn tok_op(start: char, iter: &mut VecIter<char>) -> Token {
 }
 
 /// Builds a string literal until `start` appears
-fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError> {
+fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<(Token, bool), TokenizeError> {
     let mut res = Vec::new();
     let mut str = String::new();
     let start_pos = iter.prev_index();
     let mut closed = false;
+    let mut interp = false;
     while let Some(next_ch) = iter.next() {
         if next_ch == start {
             closed = true;
+            break;
+        } else if next_ch == '{' {
+            closed = true;
+            interp = true;
             break;
         } else if next_ch == '\\' {
             res.push(StringFragment::String(str));
@@ -272,7 +303,7 @@ fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError
             res.push(StringFragment::String(str));
         }
         res.push(StringFragment::Char(0));
-        Ok(Token::StringLit { value: StringLit { frags: res } })
+        Ok((Token::StringLit { value: StringLit { frags: res } }, interp))
     }
 }
 

@@ -196,7 +196,14 @@ impl<'a> Gen<'a> {
                     } else {
                         self.force_term_at(&to, &"rdi".to_string())?;
                     }
-                    self.force_term_at(&Term::IntLit((size >> 3) as i64), &"rcx".to_string())?;
+                    if let Term::IntLit(s) = size {
+                        self.force_term_at(&Term::IntLit(s >> 3), &"rcx".to_string())?;
+                    } else {
+                        let mut r1 = self.eval_term(size.clone(), None, false)?;
+                        let mut r2 = "3".to_string();
+                        self.bin_cl("shr", &mut r1, &mut r2, 8);
+                        self.force_term_at(&size, &"rcx".to_string())?;
+                    }
                     self.buf.push_line("rep movsq");
                     self.clear_reg(&"rsi".to_string());
                     self.clear_reg(&"rdi".to_string());
@@ -333,9 +340,9 @@ impl<'a> Gen<'a> {
                 }
                 ir::Op::CondJump { cond, label } => {
                     let r = self.eval_term(cond, None, false)?;
+                    self.restore_sp();
                     self.buf.push_line(format!("test {}, {}", r, r));
                     self.clear_reg(&r);
-                    self.restore_sp();
                     self.buf.push_line(format!("jnz .L{}", label));
                 }
                 ir::Op::BinJump { lhs, rhs, op, label } => {
@@ -373,6 +380,12 @@ impl<'a> Gen<'a> {
                     self.buf.push_line("ret");
                     self.clear_reg(&"rax".to_string());
                     self.clear_reg(&"rdx".to_string());
+                }
+                ir::Op::StackPointer { res } => {
+                    let t = self.get_free_reg()?;
+                    self.buf.push_line(format!("mov {t}, rsp"));
+                    self.save_reg(&t, &res);
+                    self.lock_reg(&t, true);
                 }
                 ir::Op::NaturalFlow => (),
                 ir::Op::BeginLoop => self.reg_states.push(self.regs.to_vec()),
@@ -717,12 +730,12 @@ impl<'a> Gen<'a> {
     }
 
     fn store(&mut self, term: Term, op: String, ptr: Term, mut offset: i64, res: Option<Term>, size: u32) -> Result<(), GenError> {
-        let p;
+        let mut p;
         if let Some(t) = ptr.stack_arithmetic() {
             p = "rsp".to_string();
             offset += self.sp - self.locs.get(&t).unwrap();
         } else {
-            p = self.eval_term(ptr, res.clone(), false)?;
+            p = self.eval_term(ptr.clone(), res.clone(), false)?;
         }
         let s = Self::word_size_name(size);
         if let Some((t1, t2)) = self.doubles.get(&term).cloned() {
@@ -732,7 +745,12 @@ impl<'a> Gen<'a> {
             self.clear_reg(&t2);
             return Ok(());
         }
-        let mut t = self.eval_term(term, None, res.is_none() && op != "*=" && op != "/=" && op != "%=")?;
+        let mut t;
+        if ["*=", "/=", "%="].contains(&op.as_str()) {
+            t = self.eval_term(term.clone(), None, false)?;
+        } else {
+            t = self.eval_term(term.clone(), None, res.is_none())?;
+        }
         let display_term = Self::reg_name(&t, size);
         let o = self.fmt_offset(offset);
         match op.as_str() {
@@ -743,22 +761,37 @@ impl<'a> Gen<'a> {
             "^=" => self.buf.push_line(format!("xor {s} [{}{}], {}", p, o, display_term)),
             "&=" => self.buf.push_line(format!("and {s} [{}{}], {}", p, o, display_term)),
             "*=" => {
-                let mut free = self.get_free_reg()?;
+                let mut free = "rax".to_string();
+                self.free_reg(&free)?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
                 self.bin_rax("mul", &mut free, &mut t, size)?;
+                self.save_reg(&free, &term);
+                self.lock_reg(&free, true);
+                p = self.eval_term(ptr, None, false)?;
+                self.clear_reg(&free);
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
             "/=" => {
-                let mut free = self.get_free_reg()?;
+                let mut free = "rax".to_string();
+                self.free_reg(&free)?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
                 self.bin_rax("div", &mut free, &mut t, size)?;
+                self.save_reg(&free, &term);
+                self.lock_reg(&free, true);
+                p = self.eval_term(ptr, None, false)?;
+                self.clear_reg(&free);
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
             "%=" => {
-                let mut free = self.get_free_reg()?;
+                let mut free = "rax".to_string();
+                self.free_reg(&free)?;
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
                 self.bin_rax("div", &mut free, &mut t, size)?;
-                self.buf.push_line("xchg rax, rdx");
+                self.buf.push_line("mov rax, rdx");
+                self.save_reg(&free, &term);
+                self.lock_reg(&free, true);
+                p = self.eval_term(ptr, None, false)?;
+                self.clear_reg(&free);
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
             ">>=" => self.bin_cl(format!("shr {s}").as_str(), &mut format!("[{}{}]", p, o), &mut t, size),

@@ -68,7 +68,7 @@ pub enum SemanticError {
     NoIndirection(Span),
     InvalidGlobal(Span),
     FuncInFunc(PosStr),
-    InvalidArgCount(PosStr, usize, usize),
+    InvalidArgCount(Span, usize, usize),
     ArgTypeMismatch(Span, Type, Type),
     NoFnSig(PosStr, Vec<Type>),
     TypeInFunc(PosStr),
@@ -78,7 +78,8 @@ pub enum SemanticError {
     InvalidMemberAccess(Span),
     EmptyArray(Span),
     ArrayTypeMismatch(Span, Type, Type),
-    InvalidCast(Span, Type, Type)
+    InvalidCast(Span, Type, Type),
+    NoLen(Span, Type)
 }
 
 struct Validate {
@@ -151,7 +152,14 @@ impl Validate {
             node::ExprKind::ArrLit(arr_lit) => self.expr_list(&mut arr_lit.exprs, arr_lit.pos_id)
             .map(|res| Type::Array { inner: Box::new(res.0), length: res.1 }),
             node::ExprKind::StructLit(struct_lit) => self.struct_lit(struct_lit),
-            node::ExprKind::StringLit(_) => Ok(Type::String),
+            node::ExprKind::StringLit(lit) => {
+                for s in lit {
+                    if let node::StringFragment::Expr(e) = s {
+                        self.expr(e)?;
+                    }
+                }
+                Ok(Type::String)
+            }
             node::ExprKind::TupleLit(exprs) => {
                 let types = exprs
                     .iter_mut()
@@ -168,7 +176,8 @@ impl Validate {
                     _ => None,
                 })
                 .ok_or(SemanticError::UndeclaredSymbol(pos_str.clone())),
-            node::ExprKind::Call(call) => self.call(call),
+            node::ExprKind::Call(call) => self.call(call, expr.span),
+            node::ExprKind::BuiltIn(built_in) => self.built_in(built_in, expr.span),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.span),
             node::ExprKind::TypeCast(cast) => {
@@ -333,7 +342,14 @@ impl Validate {
             ExprKind::ArrLit(arr_lit) => join_exprs(&arr_lit.exprs),
             ExprKind::StructLit(struct_lit) => join_exprs(&struct_lit.field_exprs),
             ExprKind::TupleLit(exprs) => join_exprs(exprs),
-            ExprKind::StringLit(string_lit) => Ok(format!("{string_lit}")),
+            ExprKind::StringLit(string_lit) => {
+                if string_lit.len() == 1 {
+                    if let Some(node::StringFragment::Lit(lit)) = string_lit.get(0) {
+                        return Ok(format!("{lit}"));
+                    }
+                }
+                Err(SemanticError::InvalidGlobal(expr.span))
+            }
             _ => Err(SemanticError::InvalidGlobal(expr.span))
         }
     }
@@ -548,7 +564,7 @@ impl Validate {
         return Ok((cur_type, exprs.len()));
     }
 
-    fn call(&mut self, call: &mut node::Call) -> Result<Type, SemanticError> {
+    fn call(&mut self, call: &mut node::Call, span: Span) -> Result<Type, SemanticError> {
         let mut arg_types = Vec::new();
         let mut arg_spans = Vec::new();
         for s in call.args.iter_mut() {
@@ -630,7 +646,7 @@ impl Validate {
         }
         // let mut insert = None;
         if expected_types.len() != arg_types.len() {
-            return Err(SemanticError::InvalidArgCount(call.name.clone(), expected_types.len(), arg_types.len()));
+            return Err(SemanticError::InvalidArgCount(span, expected_types.len(), arg_types.len()));
         }
         for ((ty1, ty2), span) in expected_types.into_iter().zip(arg_types.iter()).zip(arg_spans.iter()) {
             if ty1 != ty2 {
@@ -644,6 +660,43 @@ impl Validate {
         //     self.symbol_table.insert(name, sym);
         // }
         Ok(res)
+    }
+
+    fn built_in(&mut self, built_in: &mut node::BuiltIn, span: Span) -> Result<Type, SemanticError> {
+        match built_in.kind {
+            node::BuiltInKind::Len => {
+                if built_in.args.len() != 1 {
+                    return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 1));
+                }
+                let ty = self.expr(built_in.args.get_mut(0).unwrap())?;
+                match ty {
+                    Type::Array { .. } | Type::TaggedArray { .. } | Type::String => Ok(()),
+                    _ => Err(SemanticError::NoLen(span, ty))
+                }?;
+                Ok(Type::Int)
+            }
+            node::BuiltInKind::Copy => {
+                let [a, b, c] = &mut built_in.args[..] else {
+                    return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 3));
+                };
+                let Type::Pointer(_) = self.expr(a)? else {
+                    return Err(SemanticError::ArgTypeMismatch(a.span, Type::Pointer(Box::new(Type::Any)), a.ty.clone()));
+                };
+                let Type::Pointer(_) = self.expr(b)? else {
+                    return Err(SemanticError::ArgTypeMismatch(b.span, Type::Pointer(Box::new(Type::Any)), b.ty.clone()));
+                };
+                let Type::Int = self.expr(c)? else {
+                    return Err(SemanticError::ArgTypeMismatch(a.span, Type::Int, c.ty.clone()));
+                };
+                Ok(Type::Void)
+            }
+            node::BuiltInKind::StackPointer => {
+                if built_in.args.len() != 0 {
+                    return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 0));
+                }
+                Ok(Type::Pointer(Box::new(Type::Any)))
+            }
+        }
     }
 
     fn r#type(&self, r#type: &node::Type, indirection: bool) -> Result<Type, SemanticError> {
@@ -704,7 +757,6 @@ impl Validate {
     fn type_cast(from: Type, to: Type, span: Span) -> Result<Type, SemanticError> {
         match (&from, &to) {
             (Type::String, Type::Pointer(inner)) if matches!(**inner, Type::Char) => (),
-            (Type::String, Type::Int) => (),
             (Type::Int, Type::Char) | (Type::Char, Type::Int) => (),
             (Type::Struct(s1), Type::Struct(s2)) => {
                 for (n2, (t2, _)) in s2.iter() {
@@ -757,7 +809,7 @@ impl Validate {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
-            (Type::TaggedArray { .. }, Type::Int) => (),
+            (Type::Pointer(_), Type::Int) => (),
             _ => return Err(SemanticError::InvalidCast(span, from, to))
         }
         Ok(to)

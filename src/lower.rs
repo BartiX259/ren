@@ -245,6 +245,7 @@ impl<'a> Lower<'a> {
                 }
             }
             node::ExprKind::Call(call) => self.call(call),
+            node::ExprKind::BuiltIn(built_in) => self.built_in(built_in, expr.span.end),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr, expr.ty.size()),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.ty.size()),
             node::ExprKind::TypeCast(cast) => self.type_cast(cast, &expr.ty)
@@ -380,7 +381,7 @@ impl<'a> Lower<'a> {
                 }
                 if from.is_stack() {
                     if from != r {
-                        self.push_op(Op::Copy { from, to: r.clone(), size: ret.expr.as_ref().unwrap().ty.aligned_size() }, ret.pos_id);
+                        self.push_op(Op::Copy { from, to: r.clone(), size: Term::IntLit(ret.expr.as_ref().unwrap().ty.aligned_size() as i64) }, ret.pos_id);
                     }
                 }
                 self.push_op(Op::Return { term: Some(r) }, ret.pos_id);
@@ -476,10 +477,10 @@ impl<'a> Lower<'a> {
             if bin.op.str == "&&" {
                 self.temp_count += 1;
                 let t = Term::Temp(self.temp_count);
-                self.push_op(Op::UnOp { res: t.clone(), op: "!".to_string(), term: lhs.clone(), size }, bin.op.pos_id);
+                self.push_op(Op::UnOp { res: t.clone(), op: "!".to_string(), term: s.clone(), size }, bin.op.pos_id);
                 self.push_op(Op::CondJump { label: l, cond: t }, bin.op.pos_id);
             } else if bin.op.str == "||" {
-                self.push_op(Op::CondJump { label: l, cond: lhs.clone() }, bin.op.pos_id);
+                self.push_op(Op::CondJump { label: l, cond: s.clone() }, bin.op.pos_id);
             }
             let r = self.expr(&bin.rhs);
             self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 0, op: "=".to_string(), term: r, size: 1 }, bin.op.pos_id);
@@ -503,7 +504,7 @@ impl<'a> Lower<'a> {
                         Op::Copy { 
                             from: rhs,
                             to: lhs,
-                            size: bin.lhs.ty.aligned_size()
+                            size: Term::IntLit(bin.lhs.ty.aligned_size() as i64)
                         },
                         bin.op.pos_id
                     );
@@ -577,7 +578,7 @@ impl<'a> Lower<'a> {
                 self.stack_count += 1;
                 let s = Term::Stack(self.stack_count);
                 self.push_op(Op::Decl { term: s.clone(), size }, un.op.pos_id);
-                self.push_op(Op::Copy { from: term, to: s.clone(), size }, un.op.pos_id);
+                self.push_op(Op::Copy { from: term, to: s.clone(), size: Term::IntLit(size as i64) }, un.op.pos_id);
                 return s;
             } else if size > 8 {
                 self.double_count += 1;
@@ -630,7 +631,7 @@ impl<'a> Lower<'a> {
                         self.stack_count += 1;
                         self.temp_count += 1;
                         self.push_op(Op::Decl { term: Term::Stack(self.stack_count), size: arg.ty.aligned_size() }, call.name.pos_id);
-                        self.push_op(Op::Copy { from: r.clone(), to: Term::Stack(self.stack_count), size: arg.ty.aligned_size() }, call.name.pos_id);
+                        self.push_op(Op::Copy { from: r.clone(), to: Term::Stack(self.stack_count), size: Term::IntLit(arg.ty.aligned_size() as i64) }, call.name.pos_id);
                         self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: Term::Stack(self.stack_count), size: 8 }, call.name.pos_id);
                     } else {
                         self.temp_count += 1;
@@ -687,6 +688,31 @@ impl<'a> Lower<'a> {
             call.name.pos_id,
         );
         res
+    }
+
+    fn built_in(&mut self, built_in: &node::BuiltIn, pos_id: usize) -> Term {
+        match built_in.kind {
+            node::BuiltInKind::Len => {
+                let expr = built_in.args.get(0).unwrap();
+                if let Type::Array { length, .. } = expr.ty {
+                    Term::IntLit(length as i64)
+                } else {
+                    self.expr(expr)
+                }
+            }
+            node::BuiltInKind::Copy => {
+                let from = self.expr(built_in.args.get(0).unwrap());
+                let to = self.expr(built_in.args.get(1).unwrap());
+                let size = self.expr(built_in.args.get(2).unwrap());
+                self.push_op(Op::Copy { from, to, size }, pos_id);
+                Term::IntLit(0)
+            }
+            node::BuiltInKind::StackPointer => {
+                self.temp_count += 1;
+                self.push_op(Op::StackPointer { res: Term::Temp(self.temp_count) }, pos_id);
+                Term::Temp(self.temp_count)
+            }
+        }
     }
 
     fn r#loop(&mut self, r#loop: &node::Loop) {
@@ -821,7 +847,7 @@ impl<'a> Lower<'a> {
                         self.temp_count += 1;
                         self.push_op(Op::BinOp { res: Some(Term::Temp(self.temp_count)), lhs: Term::Temp(self.temp_count - 1), op: "+".to_string(), rhs: Term::IntLit(*o2 as i64), size: 8 }, id);
                     
-                        self.push_op(Op::Copy { from: Term::Temp(self.temp_count-2), to: Term::Temp(self.temp_count), size: t2.size() }, id);
+                        self.push_op(Op::Copy { from: Term::Temp(self.temp_count-2), to: Term::Temp(self.temp_count), size: Term::IntLit(t2.size() as i64) }, id);
                     }
                     res = s;
                 }

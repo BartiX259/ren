@@ -158,15 +158,29 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
         Token::Null => Ok(expr(start, start, node::ExprKind::Null)),
         Token::Word { value } => { // Term
             let pos_str = PosStr {
-                str: value,
+                str: value.clone(),
                 pos_id: tokens.prev_index(),
             };
             if let Some(Token::OpenParen) = tokens.peek() {
                 tokens.next();
-                let kind = node::ExprKind::Call(node::Call {
-                    name: pos_str,
-                    args: parse_args(tokens)?,
-                });
+                let kind = match value.as_str() {
+                    "len" | "sp" | "copy" => {
+                        let args = parse_args(tokens)?;
+                        node::ExprKind::BuiltIn(node::BuiltIn { 
+                            kind: match value.as_str() {
+                                "len" => node::BuiltInKind::Len,
+                                "sp" => node::BuiltInKind::StackPointer,
+                                "copy" => node::BuiltInKind::Copy,
+                                _ => unreachable!()
+                            },
+                            args
+                        })
+                    }
+                    _ => node::ExprKind::Call(node::Call {
+                        name: pos_str,
+                        args: parse_args(tokens)?,
+                    })
+                };
                 return Ok(expr(start, tokens.prev_index(), kind));
             }
             return Ok(expr(start, start, node::ExprKind::Variable(pos_str)));
@@ -248,10 +262,21 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                 exprs, pos_id
             })))
         }
-        Token::StringLit { value } => Ok(expr(start, tokens.prev_index(), node::ExprKind::StringLit(value))),
-        // Token::DoubleQuote => { // String literal
-        //     let pos_id = tokens.current_index();
-        // }
+        Token::StringLit { value } => {
+            let mut res = vec![node::StringFragment::Lit(value)];
+            while let Some(Token::StringInterpolation) = tokens.peek() {
+                tokens.next();
+                res.push(node::StringFragment::Expr(parse_expr(tokens, 0)?));
+                let tok = check_none(tokens, "'}'")?;
+                let Token::StringInterpolation = tok else {
+                    return Err(unexp(tok, tokens.prev_index(), "'}'"));
+                };
+                if let Some(Token::StringLit { value }) = tokens.peek() {
+                    res.push(node::StringFragment::Lit(value.clone()));
+                }
+            }
+            Ok(expr(start, tokens.prev_index(), node::ExprKind::StringLit(res)))
+        }
         _ => Err(unexp(tok, tokens.prev_index(), "a term")),
     }
 }
