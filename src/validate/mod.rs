@@ -70,7 +70,7 @@ pub enum SemanticError {
     FuncInFunc(PosStr),
     InvalidArgCount(Span, usize, usize),
     ArgTypeMismatch(Span, Type, Type),
-    NoFnSig(PosStr, Vec<Type>),
+    NoFnSig(String, Span, Vec<Type>),
     TypeInFunc(PosStr),
     InvalidStructKey(PosStr, PosStr),
     MissingStructKey(PosStr, String),
@@ -154,8 +154,36 @@ impl Validate {
             node::ExprKind::StructLit(struct_lit) => self.struct_lit(struct_lit),
             node::ExprKind::StringLit(lit) => {
                 for s in lit {
-                    if let node::StringFragment::Expr(e) = s {
-                        self.expr(e)?;
+                    if let node::StringFragment::Expr { expr, len_fn, str_fn } = s {
+                        let ty = self.expr(expr)?;
+                        let mut expected_sig = vec![ty];
+                        let mut found = false;
+                        if let Some(sigs) = self.fn_map.get("strlen") {
+                            for (sig, id) in sigs {
+                                if *sig == expected_sig {
+                                    *len_fn = format!("strlen.{id}");
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if !found {
+                            return Err(SemanticError::NoFnSig("strlen".to_string(), expr.span, expected_sig))
+                        }
+                        found = false;
+                        expected_sig.push(Type::Pointer(Box::new(Type::Char)));
+                        if let Some(sigs) = self.fn_map.get("str") {
+                            for (sig, id) in sigs {
+                                if *sig == expected_sig {
+                                    *len_fn = format!("str.{id}");
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if !found {
+                            return Err(SemanticError::NoFnSig("str".to_string(), expr.span, expected_sig))
+                        }
                     }
                 }
                 Ok(Type::String)
@@ -584,13 +612,13 @@ impl Validate {
             }
             if !found {
                 if sigs.len() != 1 { 
-                    return Err(SemanticError::NoFnSig(call.name.clone(), arg_types));
+                    return Err(SemanticError::NoFnSig(call.name.str.clone(), span, arg_types));
                 }
                 // Implicit casting
                 let tys = sigs.get(0).unwrap().0.iter();
                 let id = sigs.get(0).unwrap().1;
                 if arg_types.len() != tys.len() {
-                    return Err(SemanticError::NoFnSig(call.name.clone(), arg_types));
+                    return Err(SemanticError::NoFnSig(call.name.str.clone(), span, arg_types));
                 }
                 for (i, (ty1, ty2)) in arg_types.iter_mut().zip(tys).enumerate() {
                     if ty1 != ty2 {

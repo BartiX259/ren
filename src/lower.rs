@@ -176,40 +176,67 @@ impl<'a> Lower<'a> {
                 }
                 ptr
             }
-            node::ExprKind::StringLit(lit) => {
-                let ptr;
-                let mut is_salloc = true;
-                if let Some(p) = &self.cur_salloc {
-                    ptr = p.clone();
-                    is_salloc = false;
+            node::ExprKind::StringLit(frags) => {
+                if frags.len() != 1 {
+                    let mut len = 0;
+                    for f in frags {
+                        match f {
+                            node::StringFragment::Lit(string_lit) => {
+                                len += string_lit.len();
+                            }
+                            node::StringFragment::Expr { expr, len_fn, str_fn } => {
+                                let idx = self.cur_block.as_ref().unwrap().ops.len();
+                                self.push_op(Op::BeginCall { params: vec![] }, expr.span.end);
+                                let r = self.expr(expr);
+                                self.push_op(Op::Param { term: r.clone() }, expr.span.end);
+                                self.temp_count += 1;
+                                self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: len_fn.to_string() }, expr.span.end);
+                                if let Op::BeginCall { params: ps } = &mut self.cur_block.as_mut().unwrap().ops[idx] {
+                                    *ps = vec![r];
+                                } else {
+                                    unreachable!("Expected BeginCall at index {}", idx);
+                                }
+                            }
+                        }
+                    }
+                    Term::Temp(self.temp_count)
+                } else if let Some(node::StringFragment::Lit(lit)) = frags.get(0) {
+                    let ptr;
+                    let mut is_salloc = true;
+                    if let Some(p) = &self.cur_salloc {
+                        ptr = p.clone();
+                        is_salloc = false;
+                    } else {
+                        self.stack_count += 1;
+                        ptr = Term::Stack(self.stack_count);
+                        self.cur_salloc = Some(ptr.clone());
+                        self.push_op(Op::Decl { term: ptr.clone(), size: types::Type::String.aligned_size()}, expr.span.end);
+                    }
+                    self.temp_count += 1;
+                    self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::IntLit(lit.len() as i64), size: 8 }, expr.span.end);
+                    self.salloc_offset += 8;
+                    if let Some(sym) = self.string_map.get(lit) {
+                        self.push_op(
+                            Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(sym.clone()), size: 8 }, expr.span.end
+                        );
+                    } else {
+                        self.string_id += 1;
+                        let new_sym = format!("s.{}", self.string_id);
+                        self.string_map.insert(lit.clone(), new_sym.clone());
+                        self.ir.insert(new_sym.clone(), Symbol::Data { ty: Type::String, str: lit.to_string() });
+                        self.push_op(
+                            Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(new_sym), size: 8 }, expr.span.end
+                        );
+                    }
+                    self.salloc_offset += 8;
+                    if is_salloc {
+                        self.cur_salloc = None;
+                        self.salloc_offset = 0;
+                    }
+                    ptr
                 } else {
-                    self.stack_count += 1;
-                    ptr = Term::Stack(self.stack_count);
-                    self.cur_salloc = Some(ptr.clone());
-                    self.push_op(Op::Decl { term: ptr.clone(), size: types::Type::String.aligned_size()}, expr.span.end);
+                    panic!("len == 1, not lit");
                 }
-                self.temp_count += 1;
-                self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::IntLit(lit.len() as i64), size: 8 }, expr.span.end);
-                self.salloc_offset += 8;
-                if let Some(sym) = self.string_map.get(lit) {
-                    self.push_op(
-                        Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(sym.clone()), size: 8 }, expr.span.end
-                    );
-                } else {
-                    self.string_id += 1;
-                    let new_sym = format!("s.{}", self.string_id);
-                    self.string_map.insert(lit.clone(), new_sym.clone());
-                    self.ir.insert(new_sym.clone(), Symbol::Data { ty: Type::String, str: lit.to_string() });
-                    self.push_op(
-                        Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(new_sym), size: 8 }, expr.span.end
-                    );
-                }
-                self.salloc_offset += 8;
-                if is_salloc {
-                    self.cur_salloc = None;
-                    self.salloc_offset = 0;
-                }
-                ptr
             }
             node::ExprKind::TupleLit(exprs) => {
                 let ptr;

@@ -130,7 +130,7 @@ pub struct StructLit {
 #[derive(Debug, Clone)]
 pub enum StringFragment {
     Lit(crate::helpers::StringLit),
-    Expr(Expr)
+    Expr { expr: Expr, len_fn: String, str_fn: String }
 }
 
 #[derive(Debug)]

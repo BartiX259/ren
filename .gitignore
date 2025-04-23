@@ -2,3 +2,5 @@
 *.S
 *.o
 out
+test
+
