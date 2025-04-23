@@ -152,12 +152,26 @@ impl Validate {
             node::ExprKind::ArrLit(arr_lit) => self.expr_list(&mut arr_lit.exprs, arr_lit.pos_id)
             .map(|res| Type::Array { inner: Box::new(res.0), length: res.1 }),
             node::ExprKind::StructLit(struct_lit) => self.struct_lit(struct_lit),
-            node::ExprKind::StringLit(lit) => {
+            node::ExprKind::StringLit(lit, alloc_fn) => {
+                let mut expected_sig = vec![Type::Int];
+                let mut found = false;
+                if let Some(sigs) = self.fn_map.get("alloc") {
+                    for (sig, id) in sigs {
+                        if *sig == expected_sig {
+                            *alloc_fn = format!("alloc.{id}");
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if !found {
+                    return Err(SemanticError::NoFnSig("alloc".to_string(), expr.span, expected_sig))
+                }
                 for s in lit {
                     if let node::StringFragment::Expr { expr, len_fn, str_fn } = s {
                         let ty = self.expr(expr)?;
-                        let mut expected_sig = vec![ty];
-                        let mut found = false;
+                        expected_sig = vec![ty];
+                        found = false;
                         if let Some(sigs) = self.fn_map.get("strlen") {
                             for (sig, id) in sigs {
                                 if *sig == expected_sig {
@@ -175,7 +189,7 @@ impl Validate {
                         if let Some(sigs) = self.fn_map.get("str") {
                             for (sig, id) in sigs {
                                 if *sig == expected_sig {
-                                    *len_fn = format!("str.{id}");
+                                    *str_fn = format!("str.{id}");
                                     found = true;
                                     break;
                                 }
@@ -370,7 +384,7 @@ impl Validate {
             ExprKind::ArrLit(arr_lit) => join_exprs(&arr_lit.exprs),
             ExprKind::StructLit(struct_lit) => join_exprs(&struct_lit.field_exprs),
             ExprKind::TupleLit(exprs) => join_exprs(exprs),
-            ExprKind::StringLit(string_lit) => {
+            ExprKind::StringLit(string_lit, _) => {
                 if string_lit.len() == 1 {
                     if let Some(node::StringFragment::Lit(lit)) = string_lit.get(0) {
                         return Ok(format!("{lit}"));

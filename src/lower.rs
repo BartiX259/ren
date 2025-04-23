@@ -176,30 +176,94 @@ impl<'a> Lower<'a> {
                 }
                 ptr
             }
-            node::ExprKind::StringLit(frags) => {
+            node::ExprKind::StringLit(frags, alloc_fn) => {
                 if frags.len() != 1 {
+                    self.stack_count += 1;
+                    let ptr = Term::Stack(self.stack_count);
+                    self.push_op(Op::Decl { term: ptr.clone(), size: 16 }, expr.span.end);
+                    self.push_op(Op::BeginScope, expr.span.end);
                     let mut len = 0;
+                    let mut terms = vec![];
                     for f in frags {
                         match f {
                             node::StringFragment::Lit(string_lit) => {
                                 len += string_lit.len();
                             }
-                            node::StringFragment::Expr { expr, len_fn, str_fn } => {
-                                let idx = self.cur_block.as_ref().unwrap().ops.len();
-                                self.push_op(Op::BeginCall { params: vec![] }, expr.span.end);
+                            node::StringFragment::Expr { expr, .. } => {
                                 let r = self.expr(expr);
-                                self.push_op(Op::Param { term: r.clone() }, expr.span.end);
-                                self.temp_count += 1;
-                                self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: len_fn.to_string() }, expr.span.end);
-                                if let Op::BeginCall { params: ps } = &mut self.cur_block.as_mut().unwrap().ops[idx] {
-                                    *ps = vec![r];
+                                if r.is_stack() {
+                                    terms.push(r);
                                 } else {
-                                    unreachable!("Expected BeginCall at index {}", idx);
+                                    self.stack_count += 1;
+                                    self.push_op(Op::Let { res: Term::Stack(self.stack_count), term: r }, expr.span.end);
+                                    terms.push(Term::Stack(self.stack_count));
                                 }
                             }
                         }
                     }
-                    Term::Temp(self.temp_count)
+                    self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: 0, op: "=".to_string(), term: Term::IntLit(len as i64), size: 8 }, expr.span.end);
+                    let mut i = 0;
+                    for f in frags {
+                        if let node::StringFragment::Expr { expr, len_fn, .. } = f {
+                            let term = terms.get(i).unwrap();
+                            i += 1;
+                            self.push_op(Op::BeginCall { params: vec![] }, expr.span.end);
+                            for p in self.param(term.clone(), expr.ty.size(), expr.ty.aligned_size(), expr.span.end) {
+                                self.push_op(Op::Param { term: p }, expr.span.end);
+                            }
+                            self.temp_count += 1;
+                            self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: len_fn.to_string() }, expr.span.end);
+                            self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: 0, op: "+=".to_string(), term: Term::Temp(self.temp_count), size: 8 }, expr.span.end);
+                        }
+                    }
+                    self.temp_count += 1;
+                    self.push_op(Op::BeginCall { params: vec![Term::Temp(self.temp_count)] }, expr.span.end);
+                    self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: ptr.clone(), offset: 0, size: 8 }, expr.span.end);
+                    self.push_op(Op::Param { term: Term::Temp(self.temp_count) }, expr.span.end);
+                    self.temp_count += 1;
+                    self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: alloc_fn.to_string() }, expr.span.end);
+                    self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: 8, op: "=".to_string(), term: Term::Temp(self.temp_count), size: 8 }, expr.span.end);
+                    self.pointer_count += 1;
+                    let temp_ptr = Term::Pointer(self.pointer_count);
+                    let temp_pa = Term::PointerArithmetic(self.pointer_count);
+                    self.temp_count += 1;
+                    self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: ptr.clone(), offset: 8, size: 8 }, expr.span.end);
+                    self.push_op(Op::Let { res: temp_ptr.clone(), term: Term::Temp(self.temp_count) }, expr.span.end);
+                    i = 0;
+                    for f in frags {
+                        match f {
+                            node::StringFragment::Lit(lit) => {
+                                if let Some(sym) = self.string_map.get(lit) {
+                                    self.push_op(
+                                        Op::Copy { from: Term::Data(sym.clone()), to: temp_ptr.clone(), size: Term::IntLit(lit.len() as i64) }, expr.span.end
+                                    );
+                                } else {
+                                    self.string_id += 1;
+                                    let new_sym = format!("s.{}", self.string_id);
+                                    self.string_map.insert(lit.clone(), new_sym.clone());
+                                    self.ir.insert(new_sym.clone(), Symbol::Data { ty: Type::String, str: lit.to_string() });
+                                    self.push_op(
+                                        Op::Copy { from: Term::Data(new_sym), to: temp_ptr.clone(), size: Term::IntLit(lit.len() as i64) }, expr.span.end
+                                    );
+                                }
+                                self.push_op(Op::Store { res: None, ptr: temp_pa.clone(), offset: 0, op: "+=".to_string(), term: Term::IntLit(lit.len() as i64), size: 8 }, expr.span.end);
+                            }
+                            node::StringFragment::Expr { expr, str_fn, .. } => {
+                                let term = terms.get(i).unwrap();
+                                i += 1;
+                                self.push_op(Op::BeginCall { params: vec![] }, expr.span.end);
+                                for p in self.param(term.clone(), expr.ty.size(), expr.ty.aligned_size(), expr.span.end) {
+                                    self.push_op(Op::Param { term: p }, expr.span.end);
+                                }
+                                self.push_op(Op::Param { term: temp_ptr.clone() }, expr.span.end);
+                                self.temp_count += 1;
+                                self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: str_fn.to_string() }, expr.span.end);
+                                self.push_op(Op::Store { res: None, ptr: temp_pa.clone(), offset: 0, op: "=".to_string(), term: Term::Temp(self.temp_count), size: 8 }, expr.span.end);
+                            }
+                        }
+                    }
+                    self.push_op(Op::EndScope, expr.span.end);
+                    ptr
                 } else if let Some(node::StringFragment::Lit(lit)) = frags.get(0) {
                     let ptr;
                     let mut is_salloc = true;
@@ -210,7 +274,7 @@ impl<'a> Lower<'a> {
                         self.stack_count += 1;
                         ptr = Term::Stack(self.stack_count);
                         self.cur_salloc = Some(ptr.clone());
-                        self.push_op(Op::Decl { term: ptr.clone(), size: types::Type::String.aligned_size()}, expr.span.end);
+                        self.push_op(Op::Decl { term: ptr.clone(), size: 16}, expr.span.end);
                     }
                     self.temp_count += 1;
                     self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::IntLit(lit.len() as i64), size: 8 }, expr.span.end);
@@ -392,10 +456,10 @@ impl<'a> Lower<'a> {
             self.stmt(s);
         }
         self.unload_symbols(sc);
-        if let Some(Op::Return { .. }) = self.cur_block.as_ref().unwrap().ops.last() {
-        } else {
-            self.push_op(Op::EndScope, 0);
-        }
+        // if let Some(Op::Return { .. }) = self.cur_block.as_ref().unwrap().ops.last() {
+        // } else {
+        // }
+        self.push_op(Op::EndScope, 0);
     }
 
     fn ret(&mut self, ret: &node::Ret) {
@@ -626,6 +690,46 @@ impl<'a> Lower<'a> {
         Term::Temp(self.temp_count)
     }
 
+    fn param(&mut self, r: Term, size: u32, aligned: u32, pos_id: usize) -> Vec<Term> {
+        let mut params = vec![];
+        if let Term::Stack(_) = r {
+            if self.var_map.values().any(|v| *v == r) {
+                if size > 16 {
+                    self.stack_count += 1;
+                    self.temp_count += 1;
+                    self.push_op(Op::Decl { term: Term::Stack(self.stack_count), size: aligned }, pos_id);
+                    self.push_op(Op::Copy { from: r.clone(), to: Term::Stack(self.stack_count), size: Term::IntLit(aligned as i64) }, pos_id);
+                    self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: Term::Stack(self.stack_count), size: 8 }, pos_id);
+                } else {
+                    self.temp_count += 1;
+                    self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r.clone(), offset: 0, size: size }, pos_id);
+                    if size > 8 {
+                        self.temp_count += 1;
+                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8, size: size - 8 }, pos_id);
+                        params.push(Term::Temp(self.temp_count - 1));
+                    }
+                }
+            } else {
+                if size > 16 {
+                    self.temp_count += 1;
+                    self.push_op(Op::UnOp {res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone(), size: 8 }, pos_id);
+                } else {
+                    self.temp_count += 1;
+                    self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r.clone(), offset: 0, size: size }, pos_id);
+                    if size > 8 {
+                        self.temp_count += 1;
+                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8, size: size - 8 }, pos_id);
+                        params.push(Term::Temp(self.temp_count - 1));
+                    }
+                }
+            }
+            params.push(Term::Temp(self.temp_count));
+        } else {
+            params.push(r);
+        }
+        params
+    }
+
     fn call(&mut self, call: &node::Call) -> Term {
         let mut res = None;
         let mut is_double = false;
@@ -652,40 +756,8 @@ impl<'a> Lower<'a> {
         }
         for arg in call.args.iter() {
             let r = self.expr(arg);
-            if let Term::Stack(_) = r {
-                if self.var_map.values().any(|v| *v == r) {
-                    if arg.ty.size() > 16 {
-                        self.stack_count += 1;
-                        self.temp_count += 1;
-                        self.push_op(Op::Decl { term: Term::Stack(self.stack_count), size: arg.ty.aligned_size() }, call.name.pos_id);
-                        self.push_op(Op::Copy { from: r.clone(), to: Term::Stack(self.stack_count), size: Term::IntLit(arg.ty.aligned_size() as i64) }, call.name.pos_id);
-                        self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: Term::Stack(self.stack_count), size: 8 }, call.name.pos_id);
-                    } else {
-                        self.temp_count += 1;
-                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r.clone(), offset: 0, size: arg.ty.size() }, call.name.pos_id);
-                        if arg.ty.size() > 8 {
-                            self.temp_count += 1;
-                            self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8, size: arg.ty.size() - 8 }, call.name.pos_id);
-                            params.push(Term::Temp(self.temp_count - 1));
-                        }
-                    }
-                } else {
-                    if arg.ty.size() > 16 {
-                        self.temp_count += 1;
-                        self.push_op(Op::UnOp {res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone(), size: 8 }, call.name.pos_id);
-                    } else {
-                        self.temp_count += 1;
-                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r.clone(), offset: 0, size: arg.ty.size() }, call.name.pos_id);
-                        if arg.ty.size() > 8 {
-                            self.temp_count += 1;
-                            self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8, size: arg.ty.size() - 8 }, call.name.pos_id);
-                            params.push(Term::Temp(self.temp_count - 1));
-                        }
-                    }
-                }
-                params.push(Term::Temp(self.temp_count));
-            } else {
-                params.push(r);
+            for p in self.param(r, arg.ty.size(), arg.ty.aligned_size(), call.name.pos_id) {
+                params.push(p);
             }
         }
         for p in params.iter() {

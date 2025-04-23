@@ -122,8 +122,12 @@ impl<'a> Gen<'a> {
     fn data(&mut self) {
         for (name, sym) in self.symbol_table.iter() {
             match sym {
-                Symbol::Data { str, .. } => {
-                    self.buf.push_line(format!("{} dq {}", name, str));
+                Symbol::Data { ty, str } => {
+                    if let crate::types::Type::String = ty {
+                        self.buf.push_line(format!("{} db {}", name, str));
+                    } else {
+                        self.buf.push_line(format!("{} dq {}", name, str));
+                    }
                 }
                 _ => ()
             }
@@ -197,14 +201,20 @@ impl<'a> Gen<'a> {
                         self.force_term_at(&to, &"rdi".to_string())?;
                     }
                     if let Term::IntLit(s) = size {
-                        self.force_term_at(&Term::IntLit(s >> 3), &"rcx".to_string())?;
+                        if s < 8 {
+                            self.force_term_at(&Term::IntLit(s), &"rcx".to_string())?;
+                            self.buf.push_line("rep movsb");
+                        } else {
+                            self.force_term_at(&Term::IntLit(s >> 3), &"rcx".to_string())?;
+                            self.buf.push_line("rep movsq");
+                        }
                     } else {
                         let mut r1 = self.eval_term(size.clone(), None, false)?;
                         let mut r2 = "3".to_string();
                         self.bin_cl("shr", &mut r1, &mut r2, 8);
                         self.force_term_at(&size, &"rcx".to_string())?;
+                        self.buf.push_line("rep movsq");
                     }
-                    self.buf.push_line("rep movsq");
                     self.clear_reg(&"rsi".to_string());
                     self.clear_reg(&"rdi".to_string());
                 }
@@ -751,6 +761,8 @@ impl<'a> Gen<'a> {
         } else {
             t = self.eval_term(term.clone(), None, res.is_none())?;
         }
+        self.save_reg(&t, &term);
+        self.lock_reg(&t, true);
         let display_term = Self::reg_name(&t, size);
         let o = self.fmt_offset(offset);
         match op.as_str() {
@@ -774,11 +786,13 @@ impl<'a> Gen<'a> {
             "/=" => {
                 let mut free = "rax".to_string();
                 self.free_reg(&free)?;
+                if t == "rax" {
+                    t = self.eval_term(term.clone(), None, false)?;
+                }
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
                 self.bin_rax("div", &mut free, &mut t, size)?;
                 self.save_reg(&free, &term);
                 self.lock_reg(&free, true);
-                p = self.eval_term(ptr, None, false)?;
                 self.clear_reg(&free);
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }

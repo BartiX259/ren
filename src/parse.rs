@@ -264,18 +264,19 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
         }
         Token::StringLit { value } => {
             let mut res = vec![node::StringFragment::Lit(value)];
-            while let Some(Token::StringInterpolation) = tokens.peek() {
+            while let Some(Token::StringInterpolationStart) = tokens.peek() {
                 tokens.next();
                 res.push(node::StringFragment::Expr {expr: parse_expr(tokens, 0)?, len_fn: "".to_string(), str_fn: "".to_string() });
                 let tok = check_none(tokens, "'}'")?;
-                let Token::StringInterpolation = tok else {
+                let Token::StringInterpolationEnd = tok else {
                     return Err(unexp(tok, tokens.prev_index(), "'}'"));
                 };
                 if let Some(Token::StringLit { value }) = tokens.peek() {
                     res.push(node::StringFragment::Lit(value.clone()));
+                    tokens.next();
                 }
             }
-            Ok(expr(start, tokens.prev_index(), node::ExprKind::StringLit(res)))
+            Ok(expr(start, tokens.prev_index(), node::ExprKind::StringLit(res, "".to_string())))
         }
         _ => Err(unexp(tok, tokens.prev_index(), "a term")),
     }

@@ -14,23 +14,35 @@ pub fn tokenize(input: &String) -> Result<(Vec<Token>, Vec<FilePos>), TokenizeEr
         if let Some(ch_tok) = Token::from_char(ch) {
             if let Token::OpenCurly = ch_tok {
                 if let Some(i) = interps.last_mut() {
+                    tokens.push(Token::StringInterpolationStart);
                     *i += 1;
+                    continue;
+                } else {
+                    tokens.push(ch_tok);
                 }
             } else if let Token::CloseCurly = ch_tok {
                 if let Some(i) = interps.last_mut() {
                     *i -= 1;
                     if *i == 0 {
+                        tokens.push(Token::StringInterpolationEnd);
+                        info.push(FilePos { start, end: iter.current_index() });
                         interps.pop();
-                        let (tok, interp) = tok_str(ch, &mut iter)?;
+                        let (tok, interp) = tok_str('\"', &mut iter)?;
                         tokens.push(tok);
                         if interp {
-                            tokens.push(Token::StringInterpolation);
+                            tokens.push(Token::StringInterpolationStart);
+                            info.push(FilePos { start, end: iter.current_index() });
                             interps.push(1);
                         }
+                    } else {
+                        tokens.push(ch_tok);
                     }
+                } else {
+                    tokens.push(ch_tok);
                 }
+            } else {
+                tokens.push(ch_tok);
             }
-            tokens.push(ch_tok);
         } else if ch.is_alphabetic() {
             tokens.push(tok_word(ch, &mut iter)?);
         } else if ch.is_ascii_digit() {
@@ -41,7 +53,8 @@ pub fn tokenize(input: &String) -> Result<(Vec<Token>, Vec<FilePos>), TokenizeEr
             let (tok, interp) = tok_str(ch, &mut iter)?;
             tokens.push(tok);
             if interp {
-                tokens.push(Token::StringInterpolation);
+                tokens.push(Token::StringInterpolationStart);
+                info.push(FilePos { start, end: iter.current_index() });
                 interps.push(1);
             }
         } else if ch == '\'' {
@@ -107,7 +120,8 @@ pub enum Token {
     CloseSquare,
     Comma,
     Dot,
-    StringInterpolation
+    StringInterpolationStart,
+    StringInterpolationEnd
 }
 
 impl Token {
@@ -146,7 +160,8 @@ impl Token {
             Token::CloseSquare => "]".to_string(),
             Token::Comma => ",".to_string(),
             Token::Dot => ".".to_string(),
-            Token::StringInterpolation => "interp".to_string()
+            Token::StringInterpolationStart => "{".to_string(),
+            Token::StringInterpolationEnd => "}".to_string()
         }
     }
 

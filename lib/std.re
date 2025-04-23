@@ -10,6 +10,70 @@ fn int2str(x: int, buf: *char) -> *char {
     return buf + 1;
 }
 
+fn strlen(x: int) -> int {
+    if x == 0 {
+        return 1;
+    }
+    let count = 0;
+    decl n: int;
+    if x < 0 {
+        n = -x;
+    } else {
+        n = x;
+    }
+    while n > 0 {
+        count += 1;
+        n /= 10;
+    }
+    if x < 0 {
+        count += 1;
+    }
+    return count;
+}
+
+fn str(x: int, buffer: *char) -> *char {
+    let i = 0;
+    let is_negative = false;
+    if x == 0 {
+        buffer[i] = '0';
+        return buffer + 1;
+    }
+    if x < 0 {
+        is_negative = true;
+        x = -x;
+    }
+    while (x > 0) {
+        buffer[i] = (x % 10) + '0';
+        i += 1;
+        x /= 10;
+    }
+    if is_negative {
+        buffer[i] = '-';
+        i += 1;
+    }
+    let j = 0;
+    let k = i - 1;
+    while j < k {
+        let temp = buffer[j];
+        buffer[j] = buffer[k];
+        buffer[k] = temp;
+        j += 1;
+        k -= 1;
+    }
+    return buffer + i;
+}
+
+fn strlen(x: str) -> int {
+    return len(x);
+}
+
+fn str(x: str, buffer: *char) -> *char {
+    for let i = 0; i < len(x); i += 1 {
+        buffer[i] = (x as *char)[i];
+    }
+    return buffer + len(x);
+}
+
 fn print(x: int) {
     decl buf: char[32];
     let ptr = &buf;
@@ -52,7 +116,7 @@ syscall 9: mmap(int, int, int, int, int, int) -> *any;
 syscall 10: munmap(*any, int);
 
 decl allocator: (base: *any, size: int, offset: int, stack: *any);
-let SPACE_SIZE = 16;
+let SPACE_SIZE = 100;
 
 fn alloc(size: int) -> *any {
     if allocator.base == null {

@@ -171,7 +171,7 @@ pub enum ExprKind {
     Null,
     ArrLit(ArrLit),
     StructLit(StructLit),
-    StringLit(Vec<StringFragment>),
+    StringLit(Vec<StringFragment>, String),
     TupleLit(Vec<Expr>),
     Variable(PosStr),
     Call(Call),

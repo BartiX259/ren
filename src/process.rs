@@ -1,4 +1,4 @@
-use crate::node;
+use crate::node::{self, StringFragment};
 use crate::types::Type;
 
 /// Modify the ast after validation to express syntax sugar with simpler statements
@@ -88,6 +88,17 @@ impl Process {
                 exprs: self.expr_list(arr_lit.exprs),
                 pos_id: arr_lit.pos_id
             }),
+            node::ExprKind::StringLit(frags, alloc_fn) => {
+                let mut list = vec![];
+                for f in frags {
+                    if let StringFragment::Expr { expr, len_fn, str_fn } = f {
+                        list.push(StringFragment::Expr { expr: self.expr(expr), len_fn, str_fn });
+                    } else {
+                        list.push(f);
+                    }
+                }
+                node::ExprKind::StringLit(list, alloc_fn)
+            }
             node::ExprKind::StructLit(lit) => node::ExprKind::StructLit(node::StructLit {
                 field_names: lit.field_names,
                 field_exprs: self.expr_list(lit.field_exprs)
