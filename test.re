@@ -1,9 +1,16 @@
+import pubgen
 import lib/std
 
+fn add<A, B>(a: A, b: B) -> A {
+	return a + b;
+}
+
 fn main() -> int {
-	let x = (1, "asd {1+10}\n", 2);
-	print(x[0]);
-	print("{2+2} a asd {"{123}asd{99}"} zcx\n");
-	print(x[1]);
-	print(x[2]);
+	let x = t("asd");
+	print(x);
+	let z = t(5);
+	print(z);
+	test();
+	print('\n');
+	print(add('a', 5));
 }

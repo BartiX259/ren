@@ -149,6 +149,62 @@ impl<'a> Lower<'a> {
                 }
                 ptr
             }
+            node::ExprKind::ListLit(arr_lit, alloc_fn) => {
+                let ptr;
+                let Type::List { inner } = &expr.ty else {
+                    panic!("not a list");
+                };
+                let size = inner.size();
+                let inner_salloc = inner.salloc();
+                let len = arr_lit.exprs.len();
+                let mut is_salloc = true;
+                if let Some(p) = &self.cur_salloc {
+                    ptr = p.clone();
+                    is_salloc = false;
+                } else {
+                    self.stack_count += 1;
+                    ptr = Term::Stack(self.stack_count);
+                    self.push_op(Op::Decl { term: ptr.clone(), size: 24 }, expr.span.end);
+                }
+                let salloc_offset = self.salloc_offset;
+                self.push_op(Op::BeginScope, expr.span.end);
+                // len
+                self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: salloc_offset, op: "=".to_string(), term: Term::IntLit(len as i64), size: 8 }, expr.span.end);
+                // capacity
+                self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: salloc_offset + 8, op: "=".to_string(), term: Term::IntLit(len as i64), size: 8 }, expr.span.end);
+                // *any = alloc(len)
+                self.push_op(Op::BeginCall { params: vec![] }, expr.span.end);
+                self.push_op(Op::Param { term: Term::IntLit(Type::align(len as u32 * size) as i64) }, expr.span.end);
+                self.temp_count += 1;
+                self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: alloc_fn.to_string() }, expr.span.end);
+                self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: salloc_offset + 16, op: "=".to_string(), term: Term::Temp(self.temp_count), size: 8 }, expr.span.end);
+                // ptr = &*any
+                self.pointer_count += 1;
+                let temp_ptr = Term::Pointer(self.pointer_count);
+                self.temp_count += 1;
+                self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: ptr.clone(), offset: salloc_offset + 16, size: 8 }, expr.span.end);
+                self.push_op(Op::Let { res: temp_ptr.clone(), term: Term::Temp(self.temp_count) }, expr.span.end);
+                self.cur_salloc = Some(temp_ptr.clone());
+                self.salloc_offset = 0;
+                
+                for expr in &arr_lit.exprs {
+                    let r = self.expr(expr);
+                    if !inner_salloc {
+                        self.temp_count += 1;
+                        self.push_op(Op::Store { res: None, ptr: temp_ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r, size: expr.ty.size() }, arr_lit.pos_id);
+                        self.salloc_offset += size as i64;
+                    }
+                }
+                if is_salloc {
+                    self.cur_salloc = None;
+                    self.salloc_offset = 0;
+                } else {
+                    self.cur_salloc = Some(ptr.clone());
+                    self.salloc_offset = salloc_offset + 24;
+                }
+                self.push_op(Op::EndScope, expr.span.end);
+                ptr
+            }
             node::ExprKind::StructLit(lit) => {
                 let ptr;
                 let ty = &expr.ty;
@@ -187,7 +243,7 @@ impl<'a> Lower<'a> {
                     } else {
                         self.stack_count += 1;
                         ptr = Term::Stack(self.stack_count);
-                        self.push_op(Op::Decl { term: ptr.clone(), size: 16}, expr.span.end);
+                        self.push_op(Op::Decl { term: ptr.clone(), size: 16 }, expr.span.end);
                     }
                     let salloc_offset = self.salloc_offset;
                     self.push_op(Op::BeginScope, expr.span.end);
@@ -410,6 +466,16 @@ impl<'a> Lower<'a> {
         let id = self.stack_count;
         self.var_map.insert(decl.name.str.clone(), Term::Stack(id));
         self.push_op(Op::Decl { term: Term::Stack(id), size: decl.ty.aligned_size() }, decl.name.pos_id);
+        let zeroes = match &decl.ty {
+            Type::List { .. } => 3,
+            Type::String => 2,
+            _ => 0
+        };
+        let mut offset = 0;
+        for _ in 0..zeroes {
+            self.push_op(Op::Store { res: None, ptr: Term::Stack(id), offset, op: "=".to_string(), term: Term::IntLit(0), size: 8 },  decl.name.pos_id);
+            offset += 8;
+        }
     }
 
     fn r#fn(&mut self, decl: &node::Fn) {
@@ -827,6 +893,13 @@ impl<'a> Lower<'a> {
             node::BuiltInKind::StackPointer => {
                 self.temp_count += 1;
                 self.push_op(Op::StackPointer { res: Term::Temp(self.temp_count) }, pos_id);
+                Term::Temp(self.temp_count)
+            }
+            node::BuiltInKind::Cap => {
+                let expr = built_in.args.get(0).unwrap();
+                let s = self.expr(expr);
+                self.temp_count += 1;
+                self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: s, offset: 8, size: 8 }, pos_id);
                 Term::Temp(self.temp_count)
             }
         }

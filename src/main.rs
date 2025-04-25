@@ -73,59 +73,52 @@ fn main() -> ExitCode {
     println!("{:?}", public_map);
 
     let mut files = Vec::new();
+    let mut generic_calls = Vec::new();
+    let mut unresolved = Vec::new();
 
     for (mut module, imports) in modules.into_iter().zip(import_names.into_iter()) {
-        let path = Path::new(&module.path);
-        let stem = path.file_stem().unwrap(); // gets the name without extension
-        let res_file = format!("{}.S", stem.to_string_lossy());
         let mut pub_symbols = Vec::new();
         for path in imports {
             if let Some(symbols) = public_map.get(&path) {
                 pub_symbols.push(symbols);
             }
         }
-        let mut ir = match validate::validate(&mut module, pub_symbols) {
+        let (syms, gcalls, gfns) = match validate::validate(&mut module, pub_symbols, &generic_calls) {
             Ok(res) => res,
             Err(e) => {
                 error::sematic_err(&module.path, e);
                 return ExitCode::from(1);
             }
         };
+        generic_calls.extend(gcalls);
+        if gfns > 0 {
+            unresolved.push((module, syms));
+            continue;
+        }
 
-        let processed_stmts = process::process(module);
+        files.push(match gen_module(module, syms.symbol_table) {
+            Ok(f) => f,
+            Err(e) => return ExitCode::from(e),
+        });
+    }
 
-        // println!("Processed statements:\n{:?}\n", processed_stmts);
-
-        lower::lower(processed_stmts, &mut ir);
-
-        println!("IR:\n{:?}\n", ir);
-
-        // optimize::optimize(&mut ir);
-
-        // println!("Optimized IR:\n{:?}\n", ir);
-
-        let result = match gen::gen(&mut ir) {
+    println!("UNRESOLVED {}", unresolved.len());
+    println!("CALLS {:?}", generic_calls);
+    for (module, syms) in unresolved {
+        let path = module.path.clone();
+        let (ir, module) = match validate::resolve(module, syms, &generic_calls) {
             Ok(res) => res,
-            Err((module, e)) => {
-                error::gen_err(&module, e);
+            Err(e) => {
+                error::sematic_err(&path, e);
                 return ExitCode::from(1);
             }
         };
-        fs::write(&res_file, result).expect("Unable to write file");
-        files.push(res_file);
-
-        // println!("nasm: {:?}", Command::new("nasm").args(["-felf64", "out.S", "-o", "out.o"]).output());
-        // // println!("nasm std: {:?}", Command::new("nasm").args(["-felf64", "lib/std.S", "-o", "std.o"]).output());
-        // println!(
-        //     "ld:   {:?}",
-        //     Command::new("ld")
-        //         .args([
-        //             "-o", "out",
-        //             "out.o"//, "std.o" //, "-lc", "--dynamic-linker", "/lib64/ld-linux-x86-64.so.2"
-        //         ])
-        //         .output()
-        // );
+        files.push(match gen_module(module, ir) {
+            Ok(f) => f,
+            Err(e) => return ExitCode::from(e),
+        });
     }
+
     let mut obj_files = Vec::new();
     for file in files {
         let path = Path::new(&file);
@@ -166,9 +159,37 @@ fn parse_module(import: &node::Import) -> Result<(Vec<node::Stmt>, Vec<node::Imp
     }
 }
 
+fn gen_module(module: node::Module, mut ir: HashMap<String, ir::Symbol>) -> Result<String, u8> {
+    let path = Path::new(&module.path);
+    let stem = path.file_stem().unwrap(); // gets the name without extension
+    let res_file = format!("{}.S", stem.to_string_lossy());
+
+    let processed_stmts = process::process(module);
+
+    // println!("Processed statements:\n{:?}\n", processed_stmts);
+
+    lower::lower(processed_stmts, &mut ir);
+
+    println!("IR:\n{:?}\n", ir);
+
+    // optimize::optimize(&mut ir);
+
+    // println!("Optimized IR:\n{:?}\n", ir);
+
+    let result = match gen::gen(&mut ir) {
+        Ok(res) => res,
+        Err((module, e)) => {
+            error::gen_err(&module, e);
+            return Err(1);
+        }
+    };
+    fs::write(&res_file, result).expect("Unable to write file");
+    Ok(res_file)
+}
+
 fn get_path(parent: &String, s: &String) -> String {
     let parent = Path::new(&parent)
                 .parent()
                 .unwrap_or_else(|| Path::new("."));
-    return parent.join(s).with_extension("re").display().to_string().replace('\\', "/");
+    parent.join(s).with_extension("re").display().to_string().replace('\\', "/")
 }

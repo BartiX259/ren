@@ -15,18 +15,18 @@ impl Span {
         Span { start: self.start.min(other.start), end: self.end.max(other.end) }
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Let {
     pub name: PosStr,
     pub expr: Expr,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Decl {
     pub name: PosStr,
     pub r#type: Type,
     pub ty: types::Type
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeDecl {
     pub name: PosStr,
     pub r#type: Type
@@ -41,6 +41,7 @@ pub enum TypeKind {
     Word(String),
     Pointer(Box<Type>),
     Array(Box<Type>, Option<i64>),
+    List(Box<Type>),
     Tuple(Vec<Type>),
     Struct(Vec<PosStr>, Vec<Type>)
 }
@@ -49,12 +50,13 @@ pub struct Type {
     pub kind: TypeKind,
     pub span: Span
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Fn {
     pub name: PosStr,
     pub arg_names: Vec<PosStr>,
     pub arg_types: Vec<Type>,
     pub decl_type: Option<Type>,
+    pub generics: Vec<String>,
     pub scope: Vec<Stmt>,
 }
 #[derive(Debug, Clone)]
@@ -79,36 +81,36 @@ pub struct UnExpr {
     pub expr: Box<Expr>,
     pub op: PosStr,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Ret {
     pub pos_id: usize,
     pub expr: Option<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct If {
     pub pos_id: usize,
     pub expr: Option<Expr>,
     pub scope: Vec<Stmt>,
     pub els: Option<Box<If>>
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum LetOrExpr {
     Let(Let),
     Expr(Expr)
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Loop {
     pub pos_id: usize,
     pub scope: Vec<Stmt>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct While {
     pub pos_id: usize,
     pub expr: Expr,
     pub scope: Vec<Stmt>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct For {
     pub pos_id: usize,
     pub init: LetOrExpr,
@@ -133,7 +135,7 @@ pub enum StringFragment {
     Expr { expr: Expr, len_fn: String, str_fn: String }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Syscall {
     pub id: i64,
     pub name: PosStr,
@@ -145,6 +147,7 @@ pub enum BuiltInKind {
     Len,
     Copy,
     StackPointer,
+    Cap
 }
 #[derive(Debug, Clone)]
 pub struct BuiltIn {
@@ -170,6 +173,7 @@ pub enum ExprKind {
     BoolLit(bool),
     Null,
     ArrLit(ArrLit),
+    ListLit(ArrLit, String),
     StructLit(StructLit),
     StringLit(Vec<StringFragment>, String),
     TupleLit(Vec<Expr>),
@@ -180,7 +184,7 @@ pub enum ExprKind {
     UnExpr(UnExpr),
     TypeCast(TypeCast)
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Expr(Expr),
     Let(Let),

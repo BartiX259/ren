@@ -121,6 +121,10 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Invalid unary operator '{}'.", pos_str.str);
             print_module_err_id(path, pos_str.pos_id);
         }
+        SemanticError::UnaryTypeMismatch(span, str, ty) => {
+            eprintln!("Can't use '{}' with type {}.", str, ty);
+            print_module_err_span(path, span);
+        }
         SemanticError::InvalidAddressOf(pos_str) => {
             eprintln!("Invalid '&' use. Expected &symbol.");
             print_module_err_id(path, pos_str.pos_id);
@@ -194,8 +198,8 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Can't cast from {} into {}.", ty1, ty2);
             print_module_err_span(path, span);
         }
-        SemanticError::NoLen(span, ty) => {
-            eprintln!("Type {ty} has no length.");
+        SemanticError::NoBuiltIn(span, str, ty) => {
+            eprintln!("Type {ty} has no {str}.");
             print_module_err_span(path, span);
         }
     }

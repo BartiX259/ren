@@ -164,13 +164,14 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             if let Some(Token::OpenParen) = tokens.peek() {
                 tokens.next();
                 let kind = match value.as_str() {
-                    "len" | "sp" | "copy" => {
+                    "len" | "sp" | "copy" | "cap" => {
                         let args = parse_args(tokens)?;
                         node::ExprKind::BuiltIn(node::BuiltIn { 
                             kind: match value.as_str() {
                                 "len" => node::BuiltInKind::Len,
                                 "sp" => node::BuiltInKind::StackPointer,
                                 "copy" => node::BuiltInKind::Copy,
+                                "cap" => node::BuiltInKind::Cap,
                                 _ => unreachable!()
                             },
                             args
@@ -441,12 +442,37 @@ fn parse_type_args(tokens: &mut VecIter<Token>, closing: Token) -> Result<(Vec<P
 
 fn parse_fn_decl(tokens: &mut VecIter<Token>) -> Result<node::Fn, ParseError> {
     tokens.next();
-    let tok = check_none(tokens, "an identifier.")?;
+    let mut generics = vec![];
+    let tok = check_none(tokens, "an identifier")?;
     let Token::Word { value: name } = tok else {
         return Err(unexp(tok, tokens.prev_index(), "an identifier"));
     };
     let name_pos = tokens.prev_index();
-    let tok = check_none(tokens, "'('")?;
+    let mut tok = check_none(tokens, "'('")?;
+    if let Token::Op { value } = &tok {
+        if value == "<" {
+            loop {
+                tok = check_none(tokens, "a generic identifier")?;
+                let Token::Word { value } = tok else {
+                    return Err(unexp(tok, tokens.prev_index(), "a generic identifier"));
+                };
+                generics.push(value);
+                tok = check_none(tokens, "'>'")?;
+                if let Token::Comma = &tok {
+                    continue;
+                } else if let Token::Op { value } = &tok {
+                    if value == ">" {
+                        break;
+                    } else {
+                        return Err(unexp(tok, tokens.prev_index(), "'>'"));
+                    }
+                } else {
+                    return Err(unexp(tok, tokens.prev_index(), "'>'"));
+                }
+            }
+            tok = check_none(tokens, "'('")?;
+        }
+    }
     let Token::OpenParen = tok else {
         return Err(unexp(tok, tokens.prev_index(), "'('"));
     };
@@ -467,6 +493,7 @@ fn parse_fn_decl(tokens: &mut VecIter<Token>) -> Result<node::Fn, ParseError> {
         arg_names: type_args.0,
         arg_types: type_args.1,
         decl_type,
+        generics,
         scope: parse_scope(tokens)?,
     })
 }
@@ -573,6 +600,13 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
         }
         let list = parse_types_list(tokens, Token::CloseParen)?;
         Ok(r#type(start, tokens.prev_index(), node::TypeKind::Tuple(list)))
+    } else if let Token::OpenSquare = &tok {
+        let ty = parse_type(tokens)?;
+        let cl = check_none(tokens, "']'")?;
+        let Token::CloseSquare = cl else {
+            return Err(unexp(cl, tokens.prev_index(), "']'"));
+        };
+        Ok(r#type(start, tokens.prev_index(), node::TypeKind::List(Box::new(ty))))
     } else {
         Err(unexp(tok, tokens.prev_index(), "a type"))
     }

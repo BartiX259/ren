@@ -9,8 +9,10 @@ pub enum Type {
     Char,
     String,
     Any,
+    Generic(String),
     Pointer(Box<Type>),
     Array { inner: Box<Type>, length: usize },
+    List { inner: Box<Type> },
     TaggedArray { inner: Box<Type> },
     Struct(HashMap<String, (Type, u32)>),
     Tuple(Vec<Type>)
@@ -22,9 +24,11 @@ impl Type {
             Type::Struct(map) => map.iter().map(|(_, (ty, _))| ty.size()).sum(),
             Type::Array { inner, length } => *length as u32 * inner.size(),
             Type::Tuple(tys) => tys.iter().map(|ty| ty.size()).sum(),
+            Type::List { .. } => 24,
             Type::String | Type::TaggedArray { .. } => 16,
+            Type::Int | Type::Float | Type::Pointer(_) => 8,
             Type::Char | Type::Bool | Type::Any | Type::Void => 1,
-            _ => 8
+            Type::Generic(_) => panic!("Generic size called")
         }
     }
     pub fn aligned_size(&self) -> u32 {
@@ -47,7 +51,7 @@ impl Type {
     }
     pub fn salloc(&self) -> bool {
         match self {
-            Type::Array { .. } | Type::Struct(_) | Type::String | Type::Tuple(_) | Type::TaggedArray { .. } => true,
+            Type::Array { .. } | Type::Struct(_) | Type::String | Type::Tuple(_) | Type::TaggedArray { .. } | Type::List { .. } => true,
             _ => false
         }
     }
@@ -63,8 +67,10 @@ impl Display for Type {
             Type::Char => write!(f, "char"),
             Type::String => write!(f, "str"),
             Type::Any => write!(f, "any"),
+            Type::Generic(s) => write!(f, "{s}"),
             Type::Pointer(p) => write!(f, "*{p}"),
             Type::Array { inner, length } => write!(f, "{inner}[{length}]"),
+            Type::List { inner } => write!(f, "[{inner}]"),
             Type::TaggedArray { inner } => write!(f, "{inner}[]"),
             Type::Struct(s) => {
                 let mut sorted: Vec<_> = s.iter().collect();

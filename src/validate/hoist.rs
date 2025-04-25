@@ -32,6 +32,7 @@ impl Validate {
 
     pub fn hoist_func(&mut self, stmt: &mut node::Stmt, public: bool) -> Result<(), SemanticError> {
         if let node::Stmt::Fn(decl) = stmt {
+            decl.generics.clone_into(&mut self.cur_generics);
             let ty;
             if let Some(t) = &decl.decl_type {
                 ty = self.r#type(t, false)?;
@@ -54,57 +55,10 @@ impl Validate {
                 let sym = Symbol::Var { ty };
                 arg_symbols.push((arg.0.str.clone(), sym.clone()));
             }
-            if public {
-                let s;
-                if decl.name.str == "main" {
-                    if self.symbol_table.contains_key("main") {
-                        return Err(SemanticError::SymbolExists(decl.name.clone()));
-                    }
-                    s = "main".to_string();
-                } else {
-                    let len;
-                    if let Some(sigs) = self.fn_map.get_mut(&decl.name.str) {
-                        if sigs.iter().any(|(tys, _)| *tys == types) {
-                            return Err(SemanticError::SymbolExists(decl.name.clone()));
-                        }
-                        len = sigs.len() + 1;
-                        sigs.push((types, len));
-                    } else {
-                        self.fn_map.insert(decl.name.str.clone(), vec![(types, 1)]);
-                        len = 1;
-                    }
-                    s = format!("{}.{}", decl.name.str, len);
-                    decl.name.str = s.clone();
-                }
-                self.symbol_table.insert(s, Symbol::ExternFunc { 
-                    ty,
-                    args: arg_symbols.iter().map(|(_, sym)| { let Symbol::Var { ty } = sym.clone() else { unreachable!() }; ty }).collect()
-                }); 
-            } else {
-                let split: Vec<&str> = decl.name.str.split('.').collect();
-                if split.len() < 2 {
-                    self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
-                        ty, module: self.cur_module.clone(),
-                        block: Block::new(),
-                        symbols: vec![arg_symbols],
-                    });
-                } else {
-                    let id = split.last().unwrap().parse::<usize>().unwrap();
-                    let name = split[..split.len() - 1].join(".");
-                    if let Some(sigs) = self.fn_map.get_mut(&name) {
-                        if sigs.iter().any(|(tys, _)| *tys == types) {
-                            return Err(SemanticError::SymbolExists(decl.name.clone()));
-                        }
-                        sigs.push((types, id));
-                    } else {
-                        self.fn_map.insert(name, vec![(types, id)]);
-                    }
-                    self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
-                        ty, module: self.cur_module.clone(),
-                        block: Block::new(),
-                        symbols: vec![arg_symbols],
-                    });
-                }
+            self.hoist_func_with_types(decl, ty, arg_symbols, types, public)?;
+            if self.cur_generics.len() > 0 {
+                self.gfns.push(decl.name.str.clone());
+                self.cur_generics.clear();
             }
         } else if let node::Stmt::Syscall(decl) = stmt {
             let ty;
@@ -158,6 +112,62 @@ impl Validate {
                     }
                     self.symbol_table.insert(decl.name.str.clone(), Symbol::Syscall { id: decl.id, ty, args: types });
                 }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn hoist_func_with_types(&mut self, decl: &mut node::Fn, ty: Type, arg_symbols: Vec<(String, Symbol)>, types: Vec<Type>, public: bool) -> Result<(), SemanticError> {
+        if public {
+            let s;
+            if decl.name.str == "main" {
+                if self.symbol_table.contains_key("main") {
+                    return Err(SemanticError::SymbolExists(decl.name.clone()));
+                }
+                s = "main".to_string();
+            } else {
+                let len;
+                if let Some(sigs) = self.fn_map.get_mut(&decl.name.str) {
+                    if sigs.iter().any(|(tys, _)| *tys == types) {
+                        return Err(SemanticError::SymbolExists(decl.name.clone()));
+                    }
+                    len = sigs.len() + 1;
+                    sigs.push((types, len));
+                } else {
+                    self.fn_map.insert(decl.name.str.clone(), vec![(types, 1)]);
+                    len = 1;
+                }
+                s = format!("{}.{}", decl.name.str, len);
+                decl.name.str = s.clone();
+            }
+            self.symbol_table.insert(s, Symbol::ExternFunc { 
+                ty,
+                args: arg_symbols.iter().map(|(_, sym)| { let Symbol::Var { ty } = sym.clone() else { unreachable!() }; ty }).collect()
+            });
+        } else {
+            let split: Vec<&str> = decl.name.str.split('.').collect();
+            if split.len() < 2 {
+                self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
+                    ty, module: self.cur_module.clone(),
+                    block: Block::new(),
+                    symbols: vec![arg_symbols],
+                });
+            } else {
+                let id = split.get(1).unwrap().parse::<usize>().unwrap();
+                let name = split.first().unwrap().to_string();
+                if let Some(sigs) = self.fn_map.get_mut(&name) {
+                    if sigs.iter().any(|(tys, _)| *tys == types) {
+                        return Err(SemanticError::SymbolExists(decl.name.clone()));
+                    }
+                    sigs.push((types, id));
+                } else {
+                    self.fn_map.insert(name, vec![(types, id)]);
+                }
+                self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
+                    ty, module: self.cur_module.clone(),
+                    block: Block::new(),
+                    symbols: vec![arg_symbols],
+                });
             }
         }
         Ok(())

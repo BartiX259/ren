@@ -721,7 +721,7 @@ impl<'a> Gen<'a> {
                 self.buf.push_line(format!("test {}, {}", d, d));
                 self.buf.push_line(format!("sete {}", Self::reg_name(&r, 1)));
             }
-            _ => unreachable!(),
+            _ => unreachable!("Unknown unary op '{}'.", op),
         }
         self.save_reg(&r, &res);
         self.lock_reg(&r, true);

@@ -42,6 +42,7 @@ impl Process {
                 arg_names: decl.arg_names,
                 arg_types: decl.arg_types,
                 decl_type: decl.decl_type,
+                generics: vec![],
                 scope: self.scope(decl.scope),
             }),
             node::Stmt::Ret(ret) => node::Stmt::Ret(node::Ret { pos_id: ret.pos_id, expr: self.opt_expr(ret.expr) }),
@@ -88,6 +89,10 @@ impl Process {
                 exprs: self.expr_list(arr_lit.exprs),
                 pos_id: arr_lit.pos_id
             }),
+            node::ExprKind::ListLit(arr_lit, alloc_fn) => node::ExprKind::ListLit(node::ArrLit {
+                exprs: self.expr_list(arr_lit.exprs),
+                pos_id: arr_lit.pos_id
+            }, alloc_fn),
             node::ExprKind::StringLit(frags, alloc_fn) => {
                 let mut list = vec![];
                 for f in frags {
@@ -109,10 +114,7 @@ impl Process {
                 name: call.name,
                 args: self.expr_list(call.args)
             }),
-            node::ExprKind::UnExpr(un) => node::ExprKind::UnExpr(node::UnExpr {
-                expr: Box::new(self.expr(*un.expr)),
-                op: un.op
-            }),
+            node::ExprKind::UnExpr(un) => self.un_expr(un),
             node::ExprKind::TypeCast(cast) => node::ExprKind::TypeCast(node::TypeCast { r#type: cast.r#type, expr: Box::new(self.expr(*cast.expr)) }),
             node::ExprKind::BuiltIn(built_in) => node::ExprKind::BuiltIn(node::BuiltIn { kind: built_in.kind, args: self.expr_list(built_in.args) }),
             _ => expr.kind
@@ -255,11 +257,22 @@ impl Process {
                 temp.kind = node::ExprKind::IntLit(o as i64);
                 ptr = lhs;
                 offset = temp;
-            } else if let Type::TaggedArray { .. } = &lhs.ty {
+            } else if let Type::TaggedArray { inner } = &lhs.ty {
                 let mut temp = lhs.clone();
                 let mut add = lhs.clone();
                 let mut addtemp = lhs.clone();
+                temp.ty = Type::Pointer(inner.clone());
                 addtemp.kind = node::ExprKind::IntLit(8 as i64);
+                add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(lhs), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
+                temp.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
+                ptr = temp;
+                offset = rhs;
+            } else if let Type::List { inner } = &lhs.ty {
+                let mut temp = lhs.clone();
+                let mut add = lhs.clone();
+                let mut addtemp = lhs.clone();
+                temp.ty = Type::Pointer(inner.clone());
+                addtemp.kind = node::ExprKind::IntLit(16 as i64);
                 add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(lhs), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
                 temp.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
                 ptr = temp;
@@ -273,7 +286,7 @@ impl Process {
                 expr: Box::new(node::Expr { 
                     ty: ptr.ty.clone(),
                     span: ptr.span.add(offset.span),
-                    kind: self.calc_bin_expr(node::BinExpr {
+                    kind: self.bin_expr(node::BinExpr {
                         lhs: Box::new(ptr),
                         rhs: Box::new(offset),
                         op: self.pos_str("+".to_string())
@@ -287,4 +300,18 @@ impl Process {
             op: bin.op
         })
     }
+
+    fn un_expr(&mut self, un: node::UnExpr) -> node::ExprKind {
+        if un.op.str.starts_with("+") {
+            if let node::ExprKind::ArrLit(arr_lit) = un.expr.kind {
+                let alloc_fn = un.op.str.split("+").last().unwrap().to_string();
+                return node::ExprKind::ListLit(arr_lit, alloc_fn);
+            }
+        }
+        node::ExprKind::UnExpr(node::UnExpr {
+            expr: Box::new(self.expr(*un.expr)),
+            op: un.op
+        })
+    }
+
 }
