@@ -39,7 +39,7 @@ impl Type {
     }
     pub fn dereference(&self) -> Option<Type> {
         match self {
-            Type::Pointer(p) | Type::Array { inner: p, length: _ } => Some(*p.clone()),
+            Type::Pointer(p) | Type::Array { inner: p, .. } => Some(*p.clone()),
             _ => None
         }
     }
@@ -48,6 +48,23 @@ impl Type {
             Type::Array { inner: p, length: _ } => Some(*p.clone()),
             _ => None
         }
+    }
+    pub fn inner(&self) -> &Type {
+        match self {
+            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::TaggedArray { inner: p }  => p.inner(),
+            _ => self
+        }
+    }
+    pub fn inner_mut(&mut self) -> &mut Type {
+        match self {
+            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::TaggedArray { inner: p }  => p.inner_mut(),
+            _ => self
+        }
+    }
+    pub fn wrap(inner: &Type, outer: &Type) -> Type {
+        let mut new = outer.clone();
+        *new.inner_mut() = inner.clone();
+        new
     }
     pub fn salloc(&self) -> bool {
         match self {

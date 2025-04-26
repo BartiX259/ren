@@ -36,36 +36,47 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &Vec<(Strin
         if let node::Stmt::Fn(decl) = &stmt {
             if decl.generics.len() > 0 {
                 for (i, (name, map)) in gcalls.iter().enumerate() {
+                    val.cur_generics = map.keys().cloned().collect();
                     if *name == decl.name.str {
                         let mut ty = Type::Void;
                         let mut arg_symbols: Vec<(String, Symbol)> = Vec::new();
                         let mut types = Vec::new();
                         if let Some(decl_type) = &decl.decl_type {
-                            if let node::TypeKind::Word(w) = &decl_type.kind {
-                                if let Some(t) = map.get(w) {
-                                    ty = t.clone();
+                            ty = val.r#type(decl_type, false)?;
+                            if let Type::Generic(s) = &ty.inner() {
+                                if let Some(inner) = map.get(s) {
+                                    ty = Type::wrap(inner, &ty);
                                 }
-                            }
-                            if ty == Type::Void {
-                                ty = val.r#type(decl_type, false)?;
                             }
                         }
                         for (name, ty) in decl.arg_names.iter().zip(decl.arg_types.iter()) {
-                            if let node::TypeKind::Word(w) = &ty.kind {
-                                if let Some(ty) = map.get(w) {
-                                    types.push(ty.clone());
-                                    arg_symbols.push((name.str.clone(), Symbol::Var { ty: ty.clone() }));
+                            let mut ty = val.r#type(ty, false)?;
+                            if let Type::Generic(s) = &ty.inner() {
+                                if let Some(inner) = map.get(s) {
+                                    ty = Type::wrap(inner, &ty);
                                 }
                             }
+                            types.push(ty.clone());
+                            arg_symbols.push((name.str.clone(), Symbol::Var { ty: ty.clone() }));
                         }
                         let mut new_decl = decl.clone();
+                        for (k, v) in map {
+                            if val.symbol_table.contains_key(k) {
+                                return Err(SemanticError::SymbolExists(PosStr { str: k.clone(), pos_id: decl.name.pos_id }));
+                            }
+                            val.symbol_table.insert(k.clone(), Symbol::Type { ty: v.clone() });
+                        }
                         new_decl.generics.clear();
                         new_decl.name.str += format!(".{i}").as_str();
                         val.hoist_func_with_types(&mut new_decl, ty, arg_symbols, types, false)?;
                         val.r#fn(&mut new_decl)?;
+                        for k in map.keys() {
+                            val.symbol_table.remove(k);
+                        }
                         new_mod.stmts.push(node::Stmt::Fn(new_decl));
                     }
                 }
+                val.cur_generics = vec![];
                 val.symbol_table.remove(&decl.name.str);
             } else {
                 new_mod.stmts.push(stmt);
@@ -618,11 +629,11 @@ impl Validate {
                 }
             }
             "*" => {
-                if let Type::Pointer(t) = ty {
-                    if let Type::Struct(_) = *t {
-                        Err(SemanticError::StructDereference(span))
+                if let Type::Pointer(t) = &ty {
+                    if t.size() > 8 {
+                        Err(SemanticError::InvalidDereference(un.op.clone(), ty))
                     } else {
-                        Ok(*t)
+                        Ok(*t.clone())
                     }
                 } else {
                     Err(SemanticError::InvalidDereference(un.op.clone(), ty))
@@ -695,13 +706,16 @@ impl Validate {
                 }
                 for (i, (ty1, ty2)) in arg_types.iter_mut().zip(tys).enumerate() {
                     if ty1 != ty2 {
-                        if let Type::Generic(s) = ty2 {
+                        if let Type::Generic(s) = ty2.inner() {
                             if let Some(ty) = generics.get(s) {
-                                if ty != ty1 {
-                                    todo!("Generic type mismatch");
+                                if Type::wrap(ty, ty2) != *ty1 {
+                                    todo!("Generic type mismatch {} != {}", Type::wrap(ty, ty2), *ty1);
                                 }
                             } else {
-                                generics.insert(s.clone(), ty1.clone());
+                                if Type::wrap(ty1.inner(), ty2) != *ty1 {
+                                    return Err(SemanticError::ArgTypeMismatch(span, Type::wrap(ty1.inner(), ty2), ty1.clone()));
+                                }
+                                generics.insert(s.clone(), ty1.inner().clone());
                             }
                         } else {
                             Self::type_cast(ty1.clone(), ty2.clone(), *arg_spans.get(i).unwrap())?;
@@ -775,7 +789,7 @@ impl Validate {
             return Err(SemanticError::InvalidArgCount(span, expected_types.len(), arg_types.len()));
         }
         for ((ty1, ty2), span) in expected_types.into_iter().zip(arg_types.iter()).zip(arg_spans.iter()) {
-            if let Type::Generic(_) = ty1 {
+            if let Type::Generic(_) = ty1.inner() {
                 continue;
             }
             if ty1 != ty2 {
@@ -810,7 +824,10 @@ impl Validate {
                 if built_in.args.len() != 1 {
                     return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 1));
                 }
-                let ty = self.expr(built_in.args.get_mut(0).unwrap())?;
+                let mut ty = self.expr(built_in.args.get_mut(0).unwrap())?;
+                if let Type::Pointer(p) = &ty {
+                    ty = *p.clone();
+                }
                 match ty {
                     Type::Array { .. } | Type::TaggedArray { .. } | Type::List { .. } | Type::String => Ok(()),
                     _ => Err(SemanticError::NoBuiltIn(span, "length".to_string(), ty))
@@ -842,11 +859,21 @@ impl Validate {
                 if built_in.args.len() != 1 {
                     return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 1));
                 }
-                let ty = self.expr(built_in.args.get_mut(0).unwrap())?;
+                let mut ty = self.expr(built_in.args.get_mut(0).unwrap())?;
+                if let Type::Pointer(p) = &ty {
+                    ty = *p.clone();
+                }
                 match ty {
                     Type::List { .. } => Ok(()),
                     _ => Err(SemanticError::NoBuiltIn(span, "capacity".to_string(), ty))
                 }?;
+                Ok(Type::Int)
+            }
+            node::BuiltInKind::Sizeof => {
+                if built_in.args.len() != 1 {
+                    return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 1));
+                }
+                self.expr(built_in.args.get_mut(0).unwrap())?;
                 Ok(Type::Int)
             }
         }
@@ -957,7 +984,7 @@ impl Validate {
                 }
             }
             (Type::Pointer(p1), Type::Pointer(p2)) => {
-                if **p1 != Type::Any && **p2 != Type::Any  {
+                if *p1.inner() != Type::Any && *p2.inner() != Type::Any  {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }

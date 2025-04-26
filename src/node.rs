@@ -147,7 +147,8 @@ pub enum BuiltInKind {
     Len,
     Copy,
     StackPointer,
-    Cap
+    Cap,
+    Sizeof
 }
 #[derive(Debug, Clone)]
 pub struct BuiltIn {

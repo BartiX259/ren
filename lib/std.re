@@ -116,7 +116,7 @@ syscall 9: mmap(int, int, int, int, int, int) -> *any;
 syscall 10: munmap(*any, int);
 
 decl allocator: (base: *any, size: int, offset: int, stack: *any);
-let SPACE_SIZE = 100;
+let SPACE_SIZE = 2;
 
 fn alloc(size: int) -> *any {
     if allocator.base == null {
@@ -130,9 +130,10 @@ fn alloc(size: int) -> *any {
         collect();
         new_offset = allocator.offset + size + 8;
         if new_offset > allocator.size {
-            print("DOUBLE");
-            *SPACE_SIZE *= 2;
-            print('\n');
+            while new_offset > *SPACE_SIZE {
+                print("DOUBLE\n");
+                *SPACE_SIZE = *SPACE_SIZE * 2;
+            }
             let to_space = mmap(0, *SPACE_SIZE, 3, 34, 0, 0);
             copy(allocator.base, to_space, allocator.size);
             munmap(allocator.base, allocator.size);
@@ -146,32 +147,56 @@ fn alloc(size: int) -> *any {
     return res + 8;
 }
 
+fn is_forwarded(ptr: *any) -> bool {
+    return (*(ptr as *int)) < 0;
+}
+
+fn get_forward(ptr: *any) -> *any {
+    return *((ptr + 8) as **any);
+}
+
+fn set_forward(ptr: *any, new_loc: *any) {
+    *(ptr as *int) = -1;
+    *((ptr + 8) as **any) = new_loc;
+}
+
 fn collect() {
-    print("gc");
-    print('\n');
-    print("base: {(allocator.base) as int}\n");
+    print("gc\n");
 
     let stack_end = sp();
     let stack_start = allocator.stack;
     let to_space = mmap(0, *SPACE_SIZE, 3, 34, 0, 0);
     let offset = 0;
+
     while stack_start > stack_end {
         stack_start -= 8;
-        let ptr = *(stack_start as **any) - 8;
-        if ptr >= allocator.base && ptr < allocator.base + allocator.size {
+        let ref_ptr = *(stack_start as **any) - 8;
+
+        if ref_ptr >= allocator.base && ref_ptr < allocator.base + allocator.size {
             print("found: ");
-            print(ptr as int);
+            print(ref_ptr as int);
             print('\n');
-            let size = *(ptr as *int);
-            print("size: ");
-            print(size);
-            print('\n');
-            copy(ptr, to_space + offset, size);
-            *(stack_start as **any) = to_space + offset + 8;
-            offset += size;
+
+            if is_forwarded(ref_ptr) {
+                *(stack_start as **any) = get_forward(ref_ptr) + 8;
+            } else {
+                let size = *(ref_ptr as *int);
+                print("size: ");
+                print(size);
+                print('\n');
+
+                copy(ref_ptr, to_space + offset, size);
+                set_forward(ref_ptr, to_space + offset);
+
+                *(stack_start as **any) = (to_space + offset) + 8;
+                offset += size;
+            }
         }
     }
+
     munmap(allocator.base, allocator.size);
     allocator.base = to_space;
-    allocator.offset = 0;
+    allocator.offset = offset;
+    print("gc ok\n");
 }
+

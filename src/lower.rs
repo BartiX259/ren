@@ -302,7 +302,7 @@ impl<'a> Lower<'a> {
                             node::StringFragment::Lit(lit) => {
                                 if let Some(sym) = self.string_map.get(lit) {
                                     self.push_op(
-                                        Op::Copy { from: Term::Data(sym.clone()), to: temp_ptr.clone(), size: Term::IntLit(lit.len() as i64) }, expr.span.end
+                                        Op::Copy { from: Term::Data(sym.clone()), to: temp_ptr.clone(), size: Term::IntLit(Type::align( lit.len() as u32) as i64) }, expr.span.end
                                     );
                                 } else {
                                     self.string_id += 1;
@@ -310,7 +310,7 @@ impl<'a> Lower<'a> {
                                     self.string_map.insert(lit.clone(), new_sym.clone());
                                     self.ir.insert(new_sym.clone(), Symbol::Data { ty: Type::String, str: lit.to_string() });
                                     self.push_op(
-                                        Op::Copy { from: Term::Data(new_sym), to: temp_ptr.clone(), size: Term::IntLit(lit.len() as i64) }, expr.span.end
+                                        Op::Copy { from: Term::Data(new_sym), to: temp_ptr.clone(), size: Term::IntLit(Type::align( lit.len() as u32) as i64) }, expr.span.end
                                     );
                                 }
                                 self.push_op(Op::Store { res: None, ptr: temp_pa.clone(), offset: 0, op: "+=".to_string(), term: Term::IntLit(lit.len() as i64), size: 8 }, expr.span.end);
@@ -880,7 +880,14 @@ impl<'a> Lower<'a> {
                 if let Type::Array { length, .. } = expr.ty {
                     Term::IntLit(length as i64)
                 } else {
-                    self.expr(expr)
+                    let s = self.expr(expr);
+                    if let Term::Stack(_) = s {
+                        s
+                    } else {
+                        self.temp_count += 1;
+                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: s, offset: 0, size: 8 }, pos_id);
+                        Term::Temp(self.temp_count)
+                    }
                 }
             }
             node::BuiltInKind::Copy => {
@@ -901,6 +908,10 @@ impl<'a> Lower<'a> {
                 self.temp_count += 1;
                 self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: s, offset: 8, size: 8 }, pos_id);
                 Term::Temp(self.temp_count)
+            }
+            node::BuiltInKind::Sizeof => {
+                let expr = built_in.args.get(0).unwrap();
+                Term::IntLit(expr.ty.size() as i64)
             }
         }
     }
