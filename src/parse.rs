@@ -101,15 +101,13 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
         }
         let prec: u8;
         let opstr: String;
-        let mut unclosed = None;
         let tok = peek.unwrap();
         if let Token::Op { value } = tok {
             opstr = value.to_string();
             prec = op_prec(value.as_str());
         } else if let Token::OpenSquare = tok {
-            opstr = "[]".to_string();
-            prec = op_prec("[]");
-            unclosed = Some((Token::CloseSquare, "']'"));
+            root = parse_array_access(tokens, root, start)?;
+            continue;
         } else if let Token::As = tok {
             let prec = op_prec("as");
             if prec < min_prec {
@@ -132,12 +130,6 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
         let op_pos = tokens.current_index();
         tokens.next();
         let rhs = parse_expr(tokens, prec + op_assoc(opstr.as_str()))?;
-        if let Some(unc) = unclosed {
-            let tok = check_none(tokens, unc.1)?;
-            if unc.0 != tok {
-                return Err(unexp(tok, tokens.prev_index(), unc.1));
-            }
-        }
         let lhs = root;
         root = expr(start, tokens.prev_index(), 
         node::ExprKind::BinExpr(node::BinExpr {
@@ -284,6 +276,62 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
         }
         _ => Err(unexp(tok, tokens.prev_index(), "a term")),
     }
+}
+
+fn parse_array_access(tokens: &mut VecIter<Token>, root: node::Expr, start: usize) -> Result<node::Expr, ParseError> {
+    tokens.next(); // consume `[`
+    
+    let mut lhs: Option<node::Expr> = None;
+    let mut rhs: Option<node::Expr> = None;
+
+    if tokens.peek() != Some(&Token::Op { value: "..".to_string() }) {
+        lhs = Some(parse_expr(tokens, op_prec("..") + 1)?);
+        if tokens.peek() != Some(&Token::Op { value: "..".to_string() }) {
+            let access_expr = expr(start, tokens.prev_index(), node::ExprKind::BinExpr(node::BinExpr {
+                lhs: Box::new(root),
+                rhs: Box::new(lhs.unwrap()),
+                op: PosStr { str: "[]".to_string(), pos_id: tokens.prev_index() },
+            }));
+            let tok = check_none(tokens, "']'")?;
+            let Token::CloseSquare = tok else {
+                return Err(unexp(tok, tokens.prev_index(), "']'"));
+            };
+    
+            return Ok(access_expr)
+        }
+    }
+
+    tokens.next(); // consume '..'
+
+    if tokens.peek() != Some(&Token::CloseSquare) {
+        rhs = Some(parse_expr(tokens, 0)?);
+    }
+
+    let tok = check_none(tokens, "']'")?;
+    let Token::CloseSquare = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "']'"));
+    };
+
+    // Build missing sides
+    let start_expr = lhs.unwrap_or_else(|| expr(start, tokens.prev_index(), node::ExprKind::IntLit(0)));
+    let end_expr = rhs.unwrap_or_else(|| expr(start, tokens.prev_index(), node::ExprKind::BuiltIn(node::BuiltIn {
+        kind: node::BuiltInKind::Len,
+        args: vec![root.clone()],
+    })));
+
+    let range_expr = expr(start, tokens.prev_index(), node::ExprKind::BinExpr(node::BinExpr {
+        lhs: Box::new(start_expr),
+        rhs: Box::new(end_expr),
+        op: PosStr { str: "..".to_string(), pos_id: tokens.prev_index() },
+    }));
+
+    let access_expr = expr(start, tokens.prev_index(), node::ExprKind::BinExpr(node::BinExpr {
+        lhs: Box::new(root),
+        rhs: Box::new(range_expr),
+        op: PosStr { str: "[]".to_string(), pos_id: tokens.prev_index() },
+    }));
+
+    Ok(access_expr)
 }
 
 fn parse_let(tokens: &mut VecIter<Token>) -> Result<node::Let, ParseError> {
@@ -695,6 +743,7 @@ fn op_prec(op: &str) -> u8 {
         "&=" => 1,
         "<<=" => 1,
         ">>=" => 1,
+        ".." => 2,
         "||" => 2,
         "&&" => 3,
         "|" => 4,
@@ -716,7 +765,6 @@ fn op_prec(op: &str) -> u8 {
         "!" => 12,
         "[]" => 13,
         "." => 14,
-        ".." => 14,
         "as" => 15, // Highest precedence (done first)
         _ => panic!("No precedence for operator {}", op),
     }

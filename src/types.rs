@@ -41,6 +41,7 @@ impl Type {
     pub fn dereference(&self) -> Option<Type> {
         match self {
             Type::Pointer(p) | Type::Array { inner: p, .. } => Some(*p.clone()),
+            Type::Range => Some(Type::Int),
             _ => None
         }
     }
@@ -53,6 +54,7 @@ impl Type {
     pub fn inner(&self) -> &Type {
         match self {
             Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p }  => p.inner(),
+            Type::String => &Type::Char,
             _ => self
         }
     }
@@ -69,7 +71,7 @@ impl Type {
     }
     pub fn salloc(&self) -> bool {
         match self {
-            Type::Array { .. } | Type::Struct(_) | Type::String | Type::Tuple(_) | Type::Slice { .. } | Type::List { .. } => true,
+            Type::Array { .. } | Type::Struct(_) | Type::String | Type::Tuple(_) | Type::Slice { .. } | Type::List { .. } | Type::Range => true,
             _ => false
         }
     }

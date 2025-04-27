@@ -117,6 +117,10 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Invalid assignment.");
             print_module_err_span(path, span);
         }
+        SemanticError::ConstAssign(span, ty) => {
+            eprintln!("Can't assign to constant type {ty}.");
+            print_module_err_span(path, span);
+        }
         SemanticError::InvalidUnaryOperator(pos_str) => {
             eprintln!("Invalid unary operator '{}'.", pos_str.str);
             print_module_err_id(path, pos_str.pos_id);
@@ -192,6 +196,14 @@ pub fn sematic_err(path: &String, e: SemanticError) {
         }
         SemanticError::ArrayTypeMismatch(span, ty1, ty2) => {
             eprintln!("Array type mismatch: expected {} but got {}.", ty1, ty2);
+            print_module_err_span(path, span);
+        }
+        SemanticError::GenericTypeMismatch(span, ty1, ty2) => {
+            eprintln!("Generic type mismatch: expected {} but got {}.", ty1, ty2);
+            print_module_err_span(path, span);
+        }
+        SemanticError::NoSlice(span, str) => {
+            eprintln!("Can't slice {str}.");
             print_module_err_span(path, span);
         }
         SemanticError::InvalidCast(span, ty1, ty2) => {

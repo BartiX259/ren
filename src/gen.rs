@@ -79,6 +79,11 @@ impl<'a> Gen<'a> {
     }
     fn all(&mut self) -> Result<(), GenError> {
         // Data section
+        self.buf.push_line("section .rodata");
+        self.buf.indent();
+        self.rodata();
+        self.buf.dedent();
+        self.buf.push_line("");
         self.buf.push_line("section .data");
         self.buf.indent();
         self.data();
@@ -119,13 +124,24 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    fn data(&mut self) {
+    fn rodata(&mut self) {
         for (name, sym) in self.symbol_table.iter() {
             match sym {
                 Symbol::Data { ty, str } => {
                     if let crate::types::Type::String = ty {
                         self.buf.push_line(format!("{} db {}", name, str));
-                    } else {
+                    }
+                }
+                _ => ()
+            }
+        }
+    }
+
+    fn data(&mut self) {
+        for (name, sym) in self.symbol_table.iter() {
+            match sym {
+                Symbol::Data { ty, str } => {
+                    if crate::types::Type::String != *ty {
                         self.buf.push_line(format!("{} dq {}", name, str));
                     }
                 }

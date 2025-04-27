@@ -63,11 +63,11 @@ fn str(x: int, buffer: *char) -> *char {
     return buffer + i;
 }
 
-fn strlen(x: str) -> int {
+fn strlen(x: <char>) -> int {
     return len(x);
 }
 
-fn str(x: str, buffer: *char) -> *char {
+fn str(x: <char>, buffer: *char) -> *char {
     for let i = 0; i < len(x); i += 1 {
         buffer[i] = (x as *char)[i];
     }
@@ -86,7 +86,7 @@ fn print(x: int) {
     write(1, &buf, end - &buf);
 }
 
-fn print(x: str) {
+fn print(x: <char>) {
     write(1, x as *char, len(x));
 }
 
