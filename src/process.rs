@@ -154,7 +154,7 @@ impl Process {
     }
 
     fn calc_bin_expr(&self, bin: node::BinExpr) -> node::ExprKind {
-        if !bin.is_bool() {
+        if !(bin.is_bool() || bin.is_cmp()) {
             if let node::ExprKind::IntLit(l) = &bin.lhs.kind {
                 if let node::ExprKind::IntLit(r) = &bin.rhs.kind {
                     return node::ExprKind::IntLit(
@@ -164,7 +164,11 @@ impl Process {
                             "*" => l * r,
                             "/" => l / r,
                             "%" => l % r,
-                            _ => panic!("Unexpected operation")
+                            ">>" => l >> r,
+                            "<<" => l << r,
+                            "|" => l | r,
+                            "&" => l & r,
+                            _ => panic!("Can't calculate {l} {} {r}", bin.op.str)
                         }
                     );
                 }
@@ -173,6 +177,9 @@ impl Process {
         node::ExprKind::BinExpr(bin)
     }
     fn bin_expr(&mut self, bin: node::BinExpr) -> node::ExprKind {
+        if bin.op.str == ".." {
+            return node::ExprKind::TupleLit(vec![self.expr(*bin.lhs), self.expr(*bin.rhs)]);
+        }
         if bin.op.str == "." { // Member access -> add &, apply offset and dereference
             let lhs;
             let map;
@@ -223,7 +230,7 @@ impl Process {
         let rtype = bin.rhs.ty.clone();
         let mut rhs = self.expr(*bin.rhs);
         if let Some(p) = ltype.dereference() {
-            if let Some(_) = rtype.dereference() {} else { // Pointer arithmetic - multiply by size of inner type
+            if let Some(_) = rtype.dereference() {} else if rhs.ty == Type::Range {} else { // Pointer arithmetic - multiply by size of inner type
                 let rspan = rhs.span;
                 rhs = node::Expr {
                     ty: rhs.ty.clone(),
@@ -240,59 +247,140 @@ impl Process {
                 };
                 if ltype.salloc() { // Add & to stack allocations
                     lhs = node::Expr {
-                        ty: lhs.ty.clone(),
+                        ty: Type::Pointer(Box::new(lhs.ty.clone())),
                         span: lhs.span,
                         kind: node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(lhs), op: self.pos_str("&".to_string()) })
                     }
                 }
             }
         }
-        if bin.op.str == "[]" { // Array access -> add and dereference
-            let ptr;
-            let offset;
-            if let Type::Tuple(v) = &lhs.ty {
-                let node::ExprKind::IntLit(i) = rhs.kind else { unreachable!() };
-                let o: u32 = v.iter().take(i as usize).map(|ty| ty.size()).sum();
-                let mut temp = rhs;
-                temp.kind = node::ExprKind::IntLit(o as i64);
-                ptr = lhs;
-                offset = temp;
-            } else if let Type::TaggedArray { inner } = &lhs.ty {
-                let mut temp = lhs.clone();
-                let mut add = lhs.clone();
-                let mut addtemp = lhs.clone();
-                temp.ty = Type::Pointer(inner.clone());
-                addtemp.kind = node::ExprKind::IntLit(8 as i64);
-                add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(lhs), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
-                temp.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
-                ptr = temp;
-                offset = rhs;
-            } else if let Type::List { inner } = &lhs.ty {
-                let mut temp = lhs.clone();
-                let mut add = lhs.clone();
-                let mut addtemp = lhs.clone();
-                temp.ty = Type::Pointer(inner.clone());
-                addtemp.kind = node::ExprKind::IntLit(16 as i64);
-                add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(lhs), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
-                temp.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
-                ptr = temp;
-                offset = rhs;
-            } else {
-                ptr = lhs;
-                offset = rhs;
-            }
-            return node::ExprKind::UnExpr(node::UnExpr {
-                op: self.pos_str("*".to_string()),
-                expr: Box::new(node::Expr { 
-                    ty: ptr.ty.clone(),
-                    span: ptr.span.add(offset.span),
-                    kind: self.bin_expr(node::BinExpr {
-                        lhs: Box::new(ptr),
-                        rhs: Box::new(offset),
-                        op: self.pos_str("+".to_string())
+        if bin.op.str == "[]" {
+            if rhs.ty == Type::Range { // Slice
+                let inner = lhs.ty.inner().clone();
+                let start;
+                let end;
+                if let node::ExprKind::TupleLit(range) = &rhs.kind {
+                    start = range.get(0).unwrap().clone();
+                    end = range.get(1).unwrap().clone();
+                } else if let node::ExprKind::Variable(_) = &rhs.kind {
+                    let mut stemp = rhs.clone();
+                    let mut etemp = rhs.clone();
+                    stemp.ty = Type::Int;
+                    etemp.ty = Type::Int;
+                    let mut r = rhs.clone();
+                    let mut add = rhs.clone();
+                    let mut addtemp = rhs.clone();
+                    addtemp.kind = node::ExprKind::IntLit(8 as i64);
+                    r.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(rhs.clone()), op: self.pos_str("&".to_string()) });
+                    add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(r), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
+                    etemp.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
+                    start = stemp;
+                    end = etemp;
+                } else {
+                    unreachable!();
+                }
+                return node::ExprKind::TupleLit(vec![
+                    node::Expr { // length
+                        kind: self.calc_bin_expr(node::BinExpr {
+                            lhs: Box::new(end),
+                            rhs: Box::new(start.clone()),
+                            op: node::PosStr {
+                                str: "-".to_string(),
+                                pos_id: bin.op.pos_id
+                            }
+                        }),
+                        ty: Type::Int,
+                        span: rhs.span
+                    },
+                    self.expr(node::Expr { // pointer
+                        kind: node::ExprKind::BinExpr(node::BinExpr {
+                            lhs: Box::new(match lhs.ty {
+                                Type::Array { .. } => lhs,
+                                Type::Slice { .. } => {
+                                    let mut ptr = lhs.clone();
+                                    let mut add = lhs.clone();
+                                    let mut addtemp = lhs.clone();
+                                    ptr.ty = Type::Pointer(Box::new(inner.clone()));
+                                    addtemp.kind = node::ExprKind::IntLit(8 as i64);
+                                    add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(lhs), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
+                                    ptr.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
+                                    ptr
+                                }
+                                Type::List { .. } => {
+                                    let mut ptr = lhs.clone();
+                                    let mut add = lhs.clone();
+                                    let mut addtemp = lhs.clone();
+                                    ptr.ty = Type::Pointer(Box::new(inner.clone()));
+                                    addtemp.kind = node::ExprKind::IntLit(16 as i64);
+                                    add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(lhs), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
+                                    ptr.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
+                                    ptr
+                                }
+                                _ => unreachable!()
+                            }),
+                            rhs: Box::new(start),
+                            op: node::PosStr {
+                                str: "+".to_string(),
+                                pos_id: bin.op.pos_id
+                            }
+                        }),
+                        ty: Type::Pointer(Box::new(inner)),
+                        span: rhs.span
                     })
-                })
-            });
+                ])
+            } else { // Array access -> add and dereference
+                let ptr;
+                let offset;
+                if let Type::Tuple(v) = &lhs.ty {
+                    let node::ExprKind::IntLit(i) = rhs.kind else { unreachable!() };
+                    let o: u32 = v.iter().take(i as usize).map(|ty| ty.size()).sum();
+                    let mut temp = rhs;
+                    temp.kind = node::ExprKind::IntLit(o as i64);
+                    ptr = lhs;
+                    offset = temp;
+                } else if let Type::Slice { inner } = &lhs.ty {
+                    let mut temp = lhs.clone();
+                    let mut add = lhs.clone();
+                    let mut addtemp = rhs.clone();
+                    let mut multemp = rhs.clone();
+                    temp.ty = Type::Pointer(inner.clone());
+                    addtemp.kind = node::ExprKind::IntLit(8 as i64);
+                    multemp.kind = node::ExprKind::IntLit(inner.size() as i64);
+                    add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(lhs), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
+                    temp.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
+                    rhs.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(rhs.clone()), rhs: Box::new(multemp), op: self.pos_str("*".to_string()) });
+                    ptr = temp;
+                    offset = rhs;
+                } else if let Type::List { inner } = &lhs.ty {
+                    let mut temp = lhs.clone();
+                    let mut add = lhs.clone();
+                    let mut addtemp = rhs.clone();
+                    let mut multemp = rhs.clone();
+                    temp.ty = Type::Pointer(inner.clone());
+                    addtemp.kind = node::ExprKind::IntLit(16 as i64);
+                    multemp.kind = node::ExprKind::IntLit(inner.size() as i64);
+                    add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(lhs), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
+                    temp.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
+                    rhs.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(rhs.clone()), rhs: Box::new(multemp), op: self.pos_str("*".to_string()) });
+                    ptr = temp;
+                    offset = rhs;
+                } else {
+                    ptr = lhs;
+                    offset = rhs;
+                }
+                return node::ExprKind::UnExpr(node::UnExpr {
+                    op: self.pos_str("*".to_string()),
+                    expr: Box::new(node::Expr { 
+                        ty: ptr.ty.clone(),
+                        span: ptr.span.add(offset.span),
+                        kind: self.calc_bin_expr(node::BinExpr {
+                            lhs: Box::new(ptr),
+                            rhs: Box::new(offset),
+                            op: self.pos_str("+".to_string())
+                        })
+                    })
+                });
+            }
         }
         self.calc_bin_expr(node::BinExpr {
             lhs: Box::new(lhs),

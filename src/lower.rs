@@ -998,7 +998,7 @@ impl<'a> Lower<'a> {
         let size = to.size();
         let res;
         match (&cast.expr.ty, to) {
-            (Type::Array { inner: _, length }, Type::TaggedArray { inner: _ }) => {
+            (Type::Array { inner: _, length }, Type::Slice { inner: _ }) => {
                 self.stack_count += 1;
                 let s = Term::Stack(self.stack_count);
                 self.temp_count += 1;
@@ -1008,7 +1008,7 @@ impl<'a> Lower<'a> {
                 self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: Term::Temp(self.temp_count), size: to.size() }, id);
                 res = s;
             }
-            (Type::String, Type::Pointer(_)) |  (Type::TaggedArray { .. }, Type::Pointer(_)) => {
+            (Type::String, Type::Pointer(_)) |  (Type::Slice { .. }, Type::Pointer(_)) => {
                 self.temp_count += 1;
                 self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8, size }, id);
                 res = Term::Temp(self.temp_count);

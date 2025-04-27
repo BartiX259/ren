@@ -40,7 +40,8 @@ pub struct Call {
 pub enum TypeKind {
     Word(String),
     Pointer(Box<Type>),
-    Array(Box<Type>, Option<i64>),
+    Array(Box<Type>, i64),
+    Slice(Box<Type>),
     List(Box<Type>),
     Tuple(Vec<Type>),
     Struct(Vec<PosStr>, Vec<Type>)

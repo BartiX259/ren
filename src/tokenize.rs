@@ -119,7 +119,6 @@ pub enum Token {
     OpenSquare,
     CloseSquare,
     Comma,
-    Dot,
     StringInterpolationStart,
     StringInterpolationEnd
 }
@@ -159,7 +158,6 @@ impl Token {
             Token::OpenSquare => "[".to_string(),
             Token::CloseSquare => "]".to_string(),
             Token::Comma => ",".to_string(),
-            Token::Dot => ".".to_string(),
             Token::StringInterpolationStart => "{".to_string(),
             Token::StringInterpolationEnd => "}".to_string()
         }
@@ -176,7 +174,6 @@ impl Token {
             '[' => Some(Token::OpenSquare),
             ']' => Some(Token::CloseSquare),
             ',' => Some(Token::Comma),
-            '.' => Some(Token::Dot),
             _ => None,
         }
     }
@@ -363,7 +360,7 @@ fn esc_char(esc: char, iter: &mut VecIter<char>) -> Result<u32, TokenizeError> {
 
 /// Checks if a character is a valid single-character operator.
 fn is_operator(ch: char) -> bool {
-    ['+', '-', '*', '/', '=', '<', '>', '&', '|', '!', '%', '^'].contains(&ch)
+    ['+', '-', '*', '/', '=', '<', '>', '&', '|', '!', '%', '^', '.'].contains(&ch)
 }
 
 /// Checks if a pair of characters form a valid two-character operator.
@@ -385,7 +382,8 @@ fn is_operator_pair(first: char, second: char) -> bool {
         ('|', '|') |
         ('<', '<') |
         ('>', '>') |
-        ('-', '>')
+        ('-', '>') |
+        ('.', '.')
         => true,
         _ => false,
     }

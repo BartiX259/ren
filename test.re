@@ -14,9 +14,9 @@ fn push<T>(list: *[T], el: T) {
 }
 
 fn main() -> int {
-	alloc(8);
-	let x = +["a", "b"];
-	push(&x, "cfdchhcfdhf");
-	print(x[2]);
-	print(len(x));
+	let x = +[(1, 1, 1), (2, 2, 2), (3, 3, 3)];
+	let p = 1..3;
+	let y = x[p];
+	print(len(y));
+	print(y[1][1]);
 }

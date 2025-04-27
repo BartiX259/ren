@@ -563,35 +563,49 @@ impl Validate {
                     Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
                 }
             }
-            "[]" => {
-                if let Some(t) = ty1.dereference() {
-                    if ty2 == Type::Int {
-                        Ok(t)
-                    } else {
-                        Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
-                    }
-                } else if let Type::Tuple(v) = ty1 {
-                    if let ExprKind::IntLit(i) = bin.rhs.kind {
-                        v.get(i as usize).cloned().ok_or(SemanticError::InvalidMemberAccess(bin.rhs.span))
-                    } else {
-                        Err(SemanticError::InvalidMemberAccess(bin.rhs.span))
-                    }
-                } else if let Type::TaggedArray { inner } = &ty1 {
-                    if ty2 == Type::Int {
-                        Ok(*inner.clone())
-                    } else {
-                        Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
-                    }
-                } else if let Type::List { inner } = &ty1 {
-                    if ty2 == Type::Int {
-                        Ok(*inner.clone())
-                    } else {
-                        Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
-                    }
+            ".." => {
+                // Range operator
+                if ty1 != Type::Int {
+                    Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, Type::Int))
+                } else if ty2 != Type::Int {
+                    Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, Type::Int))
                 } else {
-                    Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
+                    Ok(Type::Range)
                 }
             }
+            "[]" => {
+                // Helper closure to handle indexed types
+                let handle_index = |inner: Type| {
+                    if ty2 == Type::Int {
+                        Ok(inner)
+                    } else if ty2 == Type::Range {
+                        Ok(Type::Slice { inner: Box::new(inner) })
+                    } else {
+                        Err(SemanticError::TypeMismatch(bin.op.clone(), ty1.clone(), ty2.clone()))
+                    }
+                };
+
+                if let Some(inner) = ty1.dereference() {
+                    handle_index(inner)
+                } else {
+                    match &ty1 {
+                        Type::Tuple(v) => {
+                            if let ExprKind::IntLit(i) = bin.rhs.kind {
+                                v.get(i as usize)
+                                    .cloned()
+                                    .ok_or(SemanticError::InvalidMemberAccess(bin.rhs.span))
+                            } else {
+                                Err(SemanticError::InvalidMemberAccess(bin.rhs.span))
+                            }
+                        }
+                        Type::Array { inner, .. } | Type::Slice { inner } | Type::List { inner } => {
+                            handle_index(*inner.clone())
+                        }
+                        _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2)),
+                    }
+                }
+            }
+
             _ => panic!("Unhandled operator {}", bin.op.str),
         }
     }
@@ -829,7 +843,7 @@ impl Validate {
                     ty = *p.clone();
                 }
                 match ty {
-                    Type::Array { .. } | Type::TaggedArray { .. } | Type::List { .. } | Type::String => Ok(()),
+                    Type::Array { .. } | Type::Slice { .. } | Type::List { .. } | Type::String => Ok(()),
                     _ => Err(SemanticError::NoBuiltIn(span, "length".to_string(), ty))
                 }?;
                 Ok(Type::Int)
@@ -887,6 +901,7 @@ impl Validate {
                 "bool" => Ok(Type::Bool),
                 "str" => Ok(Type::String),
                 "char" => Ok(Type::Char),
+                "range" => Ok(Type::Range),
                 "any" => {
                     if indirection {
                         Ok(Type::Any)
@@ -907,11 +922,8 @@ impl Validate {
                 }
             }
             node::TypeKind::Pointer(inner) => Ok(Type::Pointer(Box::new(self.r#type(&inner, true)?))),
-            node::TypeKind::Array(inner, len_opt) => if let Some(len) = len_opt {
-                Ok(Type::Array { inner: Box::new(self.r#type(&inner, false)?), length: *len as usize })
-            } else {
-                Ok(Type::TaggedArray { inner: Box::new(self.r#type(&inner, true)?)})
-            }
+            node::TypeKind::Array(inner, len) => Ok(Type::Array { inner: Box::new(self.r#type(&inner, false)?), length: *len as usize }),
+            node::TypeKind::Slice(inner) => Ok(Type::Slice { inner: Box::new(self.r#type(inner, true)?) }),
             node::TypeKind::List(inner) => Ok(Type::List { inner: Box::new(self.r#type(inner, true)?) }),
             node::TypeKind::Tuple(type_list) => {
                 let mut types = Vec::new();
@@ -988,7 +1000,7 @@ impl Validate {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
-            (Type::TaggedArray { inner }, Type::Pointer(p)) => {
+            (Type::Slice { inner }, Type::Pointer(p)) => {
                 if inner != p {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }

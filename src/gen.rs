@@ -672,7 +672,7 @@ impl<'a> Gen<'a> {
             "^" => self.bin("xor", &r1, &r2, size),
             ">>" => self.bin_cl("shr", &mut r1, &mut r2, size),
             "<<" => self.bin_cl("shl", &mut r1, &mut r2, size),
-            _ => todo!(),
+            _ => panic!("Unsupported operator {op}"),
         }
         self.save_reg(&r1, &lhs);
         self.clear_reg(&r2);

@@ -110,15 +110,17 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
             opstr = "[]".to_string();
             prec = op_prec("[]");
             unclosed = Some((Token::CloseSquare, "']'"));
-        } else if let Token::Dot = tok {
-            opstr = ".".to_string();
-            prec = op_prec(".");
         } else if let Token::As = tok {
+            let prec = op_prec("as");
+            if prec < min_prec {
+                break;
+            }
             tokens.next();
             let ty = parse_type(tokens)?;
+            let lhs = root;
             root = expr(start, tokens.prev_index(), node::ExprKind::TypeCast(node::TypeCast {
                 r#type: ty,
-                expr: Box::new(root),
+                expr: Box::new(lhs),
             }));
             continue;
         } else {
@@ -133,7 +135,7 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
         if let Some(unc) = unclosed {
             let tok = check_none(tokens, unc.1)?;
             if unc.0 != tok {
-                return Err(unexp(tok, tokens.current_index(), unc.1));
+                return Err(unexp(tok, tokens.prev_index(), unc.1));
             }
         }
         let lhs = root;
@@ -572,12 +574,11 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
     if let Token::Word { value } = &tok {
         let ty = r#type(start, start, node::TypeKind::Word(value.clone()));
         if let Some(Token::OpenSquare) = tokens.peek() {
-            let mut len = None;
             tokens.next();
-            if let Some(Token::IntLit { value }) = tokens.peek() {
-                len = Some(value.clone());
-                tokens.next();
-            }
+            let tok = check_none(tokens, "a length")?;
+            let Token::IntLit { value: len } = tok else {
+                return Err(unexp(tok, tokens.prev_index(), "a length"));
+            };
             let cl = check_none(tokens, "']'")?;
             let Token::CloseSquare = cl else {
                 return Err(unexp(cl, tokens.prev_index(), "']'"));
@@ -589,6 +590,13 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
     } else if let Token::Op { value } = &tok {
         if value == "*" {
             Ok(r#type(start, tokens.prev_index(), node::TypeKind::Pointer(Box::new(parse_type(tokens)?))))
+        } else if value == "<" {
+            let ty = parse_type(tokens)?;
+            let cl = check_none(tokens, "'>'")?;
+            if cl != (Token::Op { value: ">".to_string() }) {
+                return Err(unexp(cl, tokens.prev_index(), "'>'"));
+            };
+            Ok(r#type(start, tokens.prev_index(), node::TypeKind::Slice(Box::new(ty))))
         } else {
             Err(unexp(tok, tokens.prev_index(), "a type"))
         }
@@ -708,6 +716,7 @@ fn op_prec(op: &str) -> u8 {
         "!" => 12,
         "[]" => 13,
         "." => 14,
+        ".." => 14,
         "as" => 15, // Highest precedence (done first)
         _ => panic!("No precedence for operator {}", op),
     }
@@ -745,6 +754,7 @@ fn op_assoc(op: &str) -> u8 {
         "/" => 1,
         "%" => 1,
         "." => 1,
+        ".." => 1,
         "[]" => 1,
         "," => 1,
         _ => panic!("No associativity for operator {}", op),
