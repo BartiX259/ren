@@ -7,7 +7,6 @@ pub enum Type {
     Float,
     Bool,
     Char,
-    String,
     Range,
     Any,
     Generic(String),
@@ -25,8 +24,7 @@ impl Type {
             Type::Struct(map) => map.iter().map(|(_, (ty, _))| ty.size()).sum(),
             Type::Array { inner, length } => *length as u32 * inner.size(),
             Type::Tuple(tys) => tys.iter().map(|ty| ty.size()).sum(),
-            Type::List { .. } => 24,
-            Type::String | Type::Range | Type::Slice { .. } => 16,
+            Type::Range | Type::Slice { .. } | Type::List { .. } => 16,
             Type::Int | Type::Float | Type::Pointer(_) => 8,
             Type::Char | Type::Bool | Type::Any | Type::Void => 1,
             Type::Generic(_) => panic!("Generic size called")
@@ -54,7 +52,6 @@ impl Type {
     pub fn inner(&self) -> &Type {
         match self {
             Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p }  => p.inner(),
-            Type::String => &Type::Char,
             _ => self
         }
     }
@@ -71,7 +68,7 @@ impl Type {
     }
     pub fn salloc(&self) -> bool {
         match self {
-            Type::Array { .. } | Type::Struct(_) | Type::String | Type::Tuple(_) | Type::Slice { .. } | Type::List { .. } | Type::Range => true,
+            Type::Array { .. } | Type::Struct(_) | Type::Tuple(_) | Type::Slice { .. } | Type::List { .. } | Type::Range => true,
             _ => false
         }
     }
@@ -85,7 +82,6 @@ impl Display for Type {
             Type::Float => write!(f, "float"),
             Type::Bool => write!(f, "bool"),
             Type::Char => write!(f, "char"),
-            Type::String => write!(f, "str"),
             Type::Range => write!(f, "range"),
             Type::Any => write!(f, "any"),
             Type::Generic(s) => write!(f, "{s}"),

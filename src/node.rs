@@ -148,7 +148,6 @@ pub enum BuiltInKind {
     Len,
     Copy,
     StackPointer,
-    Cap,
     Sizeof
 }
 #[derive(Debug, Clone)]

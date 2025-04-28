@@ -128,7 +128,7 @@ impl<'a> Gen<'a> {
         for (name, sym) in self.symbol_table.iter() {
             match sym {
                 Symbol::Data { ty, str } => {
-                    if let crate::types::Type::String = ty {
+                    if let crate::types::Type::Slice { .. } = ty {
                         self.buf.push_line(format!("{} db {}", name, str));
                     }
                 }
@@ -141,7 +141,7 @@ impl<'a> Gen<'a> {
         for (name, sym) in self.symbol_table.iter() {
             match sym {
                 Symbol::Data { ty, str } => {
-                    if crate::types::Type::String != *ty {
+                    if !matches!(ty, crate::types::Type::Slice { .. }) {
                         self.buf.push_line(format!("{} dq {}", name, str));
                     }
                 }

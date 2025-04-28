@@ -158,14 +158,13 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             if let Some(Token::OpenParen) = tokens.peek() {
                 tokens.next();
                 let kind = match value.as_str() {
-                    "len" | "sp" | "copy" | "cap" | "sizeof" => {
+                    "len" | "sp" | "copy" | "sizeof" => {
                         let args = parse_args(tokens)?;
                         node::ExprKind::BuiltIn(node::BuiltIn { 
                             kind: match value.as_str() {
                                 "len" => node::BuiltInKind::Len,
                                 "sp" => node::BuiltInKind::StackPointer,
                                 "copy" => node::BuiltInKind::Copy,
-                                "cap" => node::BuiltInKind::Cap,
                                 "sizeof" => node::BuiltInKind::Sizeof,
                                 _ => unreachable!()
                             },

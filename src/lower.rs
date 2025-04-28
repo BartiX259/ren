@@ -164,14 +164,12 @@ impl<'a> Lower<'a> {
                 } else {
                     self.stack_count += 1;
                     ptr = Term::Stack(self.stack_count);
-                    self.push_op(Op::Decl { term: ptr.clone(), size: 24 }, expr.span.end);
+                    self.push_op(Op::Decl { term: ptr.clone(), size: 16 }, expr.span.end);
                 }
                 let salloc_offset = self.salloc_offset;
                 self.push_op(Op::BeginScope, expr.span.end);
                 // len
                 self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: salloc_offset, op: "=".to_string(), term: Term::IntLit(len as i64), size: 8 }, expr.span.end);
-                // capacity
-                self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: salloc_offset + 16, op: "=".to_string(), term: Term::IntLit(len as i64), size: 8 }, expr.span.end);
                 // *any = alloc(len)
                 self.push_op(Op::BeginCall { params: vec![] }, expr.span.end);
                 self.push_op(Op::Param { term: Term::IntLit(Type::align(len as u32 * size) as i64) }, expr.span.end);
@@ -200,7 +198,7 @@ impl<'a> Lower<'a> {
                     self.salloc_offset = 0;
                 } else {
                     self.cur_salloc = Some(ptr.clone());
-                    self.salloc_offset = salloc_offset + 24;
+                    self.salloc_offset = salloc_offset + 16;
                 }
                 self.push_op(Op::EndScope, expr.span.end);
                 ptr
@@ -308,7 +306,7 @@ impl<'a> Lower<'a> {
                                     self.string_id += 1;
                                     let new_sym = format!("s.{}", self.string_id);
                                     self.string_map.insert(lit.clone(), new_sym.clone());
-                                    self.ir.insert(new_sym.clone(), Symbol::Data { ty: Type::String, str: lit.to_string() });
+                                    self.ir.insert(new_sym.clone(), Symbol::Data { ty: Type::Slice { inner: Box::new(Type::Char) }, str: lit.to_string() });
                                     self.push_op(
                                         Op::Copy { from: Term::Data(new_sym), to: temp_ptr.clone(), size: Term::IntLit(Type::align( lit.len() as u32) as i64) }, expr.span.end
                                     );
@@ -361,7 +359,7 @@ impl<'a> Lower<'a> {
                         self.string_id += 1;
                         let new_sym = format!("s.{}", self.string_id);
                         self.string_map.insert(lit.clone(), new_sym.clone());
-                        self.ir.insert(new_sym.clone(), Symbol::Data { ty: Type::String, str: lit.to_string() });
+                        self.ir.insert(new_sym.clone(), Symbol::Data { ty: Type::Slice { inner: Box::new(Type::Char) }, str: lit.to_string() });
                         self.push_op(
                             Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(new_sym), size: 8 }, expr.span.end
                         );
@@ -466,16 +464,6 @@ impl<'a> Lower<'a> {
         let id = self.stack_count;
         self.var_map.insert(decl.name.str.clone(), Term::Stack(id));
         self.push_op(Op::Decl { term: Term::Stack(id), size: decl.ty.aligned_size() }, decl.name.pos_id);
-        let zeroes = match &decl.ty {
-            Type::List { .. } => 3,
-            Type::String => 2,
-            _ => 0
-        };
-        let mut offset = 0;
-        for _ in 0..zeroes {
-            self.push_op(Op::Store { res: None, ptr: Term::Stack(id), offset, op: "=".to_string(), term: Term::IntLit(0), size: 8 },  decl.name.pos_id);
-            offset += 8;
-        }
     }
 
     fn r#fn(&mut self, decl: &node::Fn) {
@@ -776,6 +764,13 @@ impl<'a> Lower<'a> {
         }
         if un.op.str.starts_with("+") {
             let alloc_fn = un.op.str.split("+").last().unwrap().to_string();
+            let Type::Slice { inner } = &un.expr.ty else {
+                unreachable!();
+            };
+            self.stack_count += 1;
+            let s = Term::Stack(self.stack_count);
+            self.push_op(Op::Decl { term: s.clone(), size: 16 }, un.op.pos_id);
+            self.push_op(Op::BeginScope, un.op.pos_id);
             self.pointer_count += 1;
             let p = Term::Pointer(self.pointer_count);
             self.push_op(Op::BeginCall { params: vec![] }, un.op.pos_id);
@@ -784,12 +779,21 @@ impl<'a> Lower<'a> {
             self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: alloc_fn }, un.op.pos_id);
             self.push_op(Op::Let { res: p.clone(), term: Term::Temp(self.temp_count) }, un.op.pos_id);
             self.temp_count += 1;
+            self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: term.clone(), offset: 0, size: 8 }, un.op.pos_id);
+            self.stack_count += 1;
+            let len = Term::Stack(self.stack_count);
+            self.push_op(Op::Let { res: len.clone(), term: Term::Temp(self.temp_count) }, un.op.pos_id);
+            self.temp_count += 1;
+            self.push_op(Op::BinOp { res: Some(Term::Temp(self.temp_count)), lhs: len.clone(), op: "*".to_string(), rhs: Term::IntLit(inner.size() as i64), size: 8 }, un.op.pos_id);
+            self.temp_count += 1;
             self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: term.clone(), offset: 8, size: 8 }, un.op.pos_id);
-            self.push_op(Op::Copy { from: Term::Temp(self.temp_count), to: p.clone(), size: Term::IntLit(size as i64) }, un.op.pos_id);
+            self.push_op(Op::Copy { from: Term::Temp(self.temp_count), to: p.clone(), size: Term::Temp(self.temp_count-1) }, un.op.pos_id);
             // self.temp_count += 1;
             // self.push_op(Op::Read { res: Term::Temp(self.pointer_count), ptr: p, offset: 0, size: 8 }, un.op.pos_id);
-            self.push_op(Op::Store { res: None, ptr: term.clone(), offset: 8, op: "=".to_string(), term: p, size: 8 }, un.op.pos_id);
-            return term;
+            self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: p, size: 8 }, un.op.pos_id);
+            self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 0, op: "=".to_string(), term: len, size: 8 }, un.op.pos_id);
+            self.push_op(Op::EndScope, un.op.pos_id);
+            return s;
         }
         self.temp_count += 1;
         self.push_op(
@@ -931,13 +935,6 @@ impl<'a> Lower<'a> {
                 self.push_op(Op::StackPointer { res: Term::Temp(self.temp_count) }, pos_id);
                 Term::Temp(self.temp_count)
             }
-            node::BuiltInKind::Cap => {
-                let expr = built_in.args.get(0).unwrap();
-                let s = self.expr(expr);
-                self.temp_count += 1;
-                self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: s, offset: 16, size: 8 }, pos_id);
-                Term::Temp(self.temp_count)
-            }
             node::BuiltInKind::Sizeof => {
                 let expr = built_in.args.get(0).unwrap();
                 Term::IntLit(expr.ty.size() as i64)
@@ -1037,7 +1034,7 @@ impl<'a> Lower<'a> {
                 self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: Term::Temp(self.temp_count), size: to.size() }, id);
                 res = s;
             }
-            (Type::String, Type::Pointer(_)) |  (Type::Slice { .. }, Type::Pointer(_)) => {
+            (Type::Slice { .. }, Type::Pointer(_)) => {
                 self.temp_count += 1;
                 self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8, size }, id);
                 res = Term::Temp(self.temp_count);

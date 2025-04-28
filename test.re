@@ -1,20 +1,26 @@
 import lib/std
 
 fn push<T>(list: *[T], el: T) {
-    if len(list) == cap(list) {
-		let new_cap = cap(list) * 2;
-        *(((list as *any) + 16) as *int) = new_cap;
-		let old_ptr = *(((list as **any) + 1));
-		let new_ptr = alloc(new_cap * sizeof(el));
-		copy(*(((list as **any) + 1)), new_ptr, len(list) * sizeof(el));
+	let ptr = *(((list as **any) + 1));
+	let cap = *((ptr - 1) as *int) - 8;
+	let size = len(list) * sizeof(el);
+    if size == cap {
+		let new_ptr = alloc(cap * 2);
+		copy(ptr, new_ptr, size);
 		*(((list as **any) + 1)) = new_ptr;
     }
 	copy(&el, *(((list as **any) + 1) as **T) + len(list), sizeof(el));
 	*((list as *any) as *int) += 1;
 }
 
+fn t(x: <char>) {
+	print(x[0..2]);
+}
+
 fn main() -> int {
-	let x = "asd";
-	let y = +x;
-	print(y[1..]);
+	let x = [1, 2, 3, 4];
+	let y = +(x[..3]);
+	push(&y, 5);
+	y[1] = 49;
+	print(y);
 }

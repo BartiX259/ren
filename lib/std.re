@@ -112,6 +112,20 @@ fn print(x: *char) {
     write(1, original_x, len);
 }
 
+fn print<T>(x: <T>) {
+    print('[');
+    let start = true;
+    for let i = 0; i < len(x); i += 1 {
+        if start {
+            start = false;
+        } else {
+            print(", ");
+        }
+        print(x[i]);
+    }
+    print(']');
+}
+
 syscall 9: mmap(int, int, int, int, int, int) -> *any;
 syscall 10: munmap(*any, int);
 

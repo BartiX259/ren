@@ -348,7 +348,7 @@ impl Process {
                         kind: node::ExprKind::BinExpr(node::BinExpr {
                             lhs: Box::new(match lhs.ty {
                                 Type::Array { .. } => lhs,
-                                Type::Slice { .. } | Type::String | Type::List { .. } => {
+                                Type::Slice { .. } | Type::List { .. } => {
                                     let mut ptr = lhs.clone();
                                     let mut add = lhs.clone();
                                     let mut addtemp = lhs.clone();
@@ -382,7 +382,7 @@ impl Process {
                         ptr = lhs;
                         offset = temp;
                     }
-                    Type::Slice { .. } | Type::List { .. } | Type::String => {
+                    Type::Slice { .. } | Type::List { .. } => {
                         let mut temp = lhs.clone();
                         let mut add = lhs.clone();
                         let mut addtemp = rhs.clone();
