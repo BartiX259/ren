@@ -57,7 +57,7 @@ impl Validate {
             }
             self.hoist_func_with_types(decl, ty, arg_symbols, types, public)?;
             if self.cur_generics.len() > 0 {
-                self.gfns.push(decl.name.str.clone());
+                self.gfns += 1;
                 self.cur_generics.clear();
             }
         } else if let node::Stmt::Syscall(decl) = stmt {

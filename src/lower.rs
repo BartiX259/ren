@@ -90,7 +90,7 @@ impl<'a> Lower<'a> {
             }
             _ => ()
         }
-        println!("CLEAR RES {:?}", self.cur_block.as_ref().unwrap().ops.last());
+        // println!("CLEAR RES {:?}", self.cur_block.as_ref().unwrap().ops.last());
     }
 
     fn stmt(&mut self, stmt: &node::Stmt) {
@@ -257,9 +257,8 @@ impl<'a> Lower<'a> {
                                 if r.is_stack() {
                                     terms.push(r);
                                 } else {
-                                    self.stack_count += 1;
-                                    self.push_op(Op::Let { res: Term::Stack(self.stack_count), term: r }, expr.span.end);
-                                    terms.push(Term::Stack(self.stack_count));
+                                    let t = self.make_stack(r, &expr.ty, expr.span.end);
+                                    terms.push(t);
                                 }
                             }
                         }
@@ -429,34 +428,9 @@ impl<'a> Lower<'a> {
         }
         if r.is_stack() && !is_var {
             self.var_map.insert(decl.name.str.clone(), r);
-        } else if let Term::Double(_) = r {
-            self.stack_count += 1;
-            let id = self.stack_count;
-            self.var_map.insert(decl.name.str.clone(), Term::Stack(id));
-            self.push_op(Op::Decl { term: Term::Stack(id), size: 16 }, decl.name.pos_id);
-            self.push_op(Op::Store { res: None, ptr: Term::Stack(id), offset: 0, op: "=".to_string(), term: r, size: 16 }, decl.name.pos_id);
-        } else if let Type::Pointer(_) = decl.expr.ty {
-            self.pointer_count += 1;
-            let id = self.pointer_count;
-            self.var_map.insert(decl.name.str.clone(), Term::Pointer(id));
-            self.push_op(
-                Op::Let {
-                    term: r,
-                    res: Term::Pointer(id),
-                },
-                decl.name.pos_id,
-            );
         } else {
-            self.stack_count += 1;
-            let id = self.stack_count;
-            self.var_map.insert(decl.name.str.clone(), Term::Stack(id));
-            self.push_op(
-                Op::Let {
-                    term: r,
-                    res: Term::Stack(id),
-                },
-                decl.name.pos_id,
-            );
+            let t = self.make_stack(r, &decl.expr.ty, decl.name.pos_id);
+            self.var_map.insert(decl.name.str.clone(), t);
         }
     }
     fn r#decl(&mut self, decl: &node::Decl) {
@@ -464,6 +438,30 @@ impl<'a> Lower<'a> {
         let id = self.stack_count;
         self.var_map.insert(decl.name.str.clone(), Term::Stack(id));
         self.push_op(Op::Decl { term: Term::Stack(id), size: decl.ty.aligned_size() }, decl.name.pos_id);
+    }
+    fn make_stack(&mut self, term: Term, ty: &Type, pos_id: usize) -> Term {
+        let res;
+        let size = ty.size();
+        if let Term::Double(_) = term {
+            self.stack_count += 1;
+            res = Term::Stack(self.stack_count);
+            self.push_op(Op::Decl { term: res.clone(), size: 16 }, pos_id);
+            self.push_op(Op::Store { res: None, ptr: res.clone(), offset: 0, op: "=".to_string(), term, size: 16 }, pos_id);
+        } else if let Type::Pointer(_) = ty {
+            self.pointer_count += 1;
+            res = Term::Pointer(self.pointer_count);
+            self.push_op(Op::Let { term, res: res.clone() }, pos_id);
+        } else if size > 8 {
+            self.stack_count += 1;
+            res = Term::Stack(self.stack_count);
+            self.push_op(Op::Decl { term: res.clone(), size }, pos_id);
+            self.push_op(Op::Copy { from: term, to: res.clone(), size: Term::IntLit(size as i64) }, pos_id);
+        } else {
+            self.stack_count += 1;
+            res = Term::Stack(self.stack_count);
+            self.push_op(Op::Let { term, res: res.clone() }, pos_id);
+        }
+        res
     }
 
     fn r#fn(&mut self, decl: &node::Fn) {
@@ -509,8 +507,8 @@ impl<'a> Lower<'a> {
         self.scope(&decl.scope);
         self.unload_symbols(0);
         self.ret_salloc = None;
-        println!("VAR MAP {}", decl.name.str);
-        println!("{:?}", self.var_map);
+        // println!("VAR MAP {}", decl.name.str);
+        // println!("{:?}", self.var_map);
         if let Some(Symbol::Func { block, .. }) = self.ir.get_mut(&decl.name.str) {
             *block = self.cur_block.clone().unwrap();
         } else {
@@ -767,31 +765,26 @@ impl<'a> Lower<'a> {
             let Type::Slice { inner } = &un.expr.ty else {
                 unreachable!();
             };
-            self.stack_count += 1;
-            let s = Term::Stack(self.stack_count);
-            self.push_op(Op::Decl { term: s.clone(), size: 16 }, un.op.pos_id);
-            self.push_op(Op::BeginScope, un.op.pos_id);
             self.pointer_count += 1;
             let p = Term::Pointer(self.pointer_count);
-            self.push_op(Op::BeginCall { params: vec![] }, un.op.pos_id);
-            self.push_op(Op::Param { term: term.clone() }, un.op.pos_id);
-            self.temp_count += 1;
-            self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: alloc_fn }, un.op.pos_id);
-            self.push_op(Op::Let { res: p.clone(), term: Term::Temp(self.temp_count) }, un.op.pos_id);
-            self.temp_count += 1;
-            self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: term.clone(), offset: 0, size: 8 }, un.op.pos_id);
+            let pa = Term::PointerArithmetic(self.pointer_count);
+            self.push_op(Op::Decl { term: p.clone(), size: 8 }, un.op.pos_id);
+            self.stack_count += 1;
+            let s = Term::Stack(self.stack_count);
+            self.push_op(Op::Let { res: s.clone(), term: term.clone() }, un.op.pos_id);
+            self.push_op(Op::BeginScope, un.op.pos_id);
             self.stack_count += 1;
             let len = Term::Stack(self.stack_count);
-            self.push_op(Op::Let { res: len.clone(), term: Term::Temp(self.temp_count) }, un.op.pos_id);
+            self.push_op(Op::Let { res: len.clone(), term: term.clone() }, un.op.pos_id);
+            self.push_op(Op::Store { res: None, ptr: len.clone(), offset: 0, op: "*=".to_string(), term: Term::IntLit(inner.size() as i64), size: 8 }, un.op.pos_id);
+            self.push_op(Op::BeginCall { params: vec![len.clone()] }, un.op.pos_id);
+            self.push_op(Op::Param { term: len.clone() }, un.op.pos_id);
             self.temp_count += 1;
-            self.push_op(Op::BinOp { res: Some(Term::Temp(self.temp_count)), lhs: len.clone(), op: "*".to_string(), rhs: Term::IntLit(inner.size() as i64), size: 8 }, un.op.pos_id);
+            self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: alloc_fn }, un.op.pos_id);
+            self.push_op(Op::Store { res: None, ptr: pa, offset: 0, op: "=".to_string(), term: Term::Temp(self.temp_count), size: 8 }, un.op.pos_id);
             self.temp_count += 1;
             self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: term.clone(), offset: 8, size: 8 }, un.op.pos_id);
-            self.push_op(Op::Copy { from: Term::Temp(self.temp_count), to: p.clone(), size: Term::Temp(self.temp_count-1) }, un.op.pos_id);
-            // self.temp_count += 1;
-            // self.push_op(Op::Read { res: Term::Temp(self.pointer_count), ptr: p, offset: 0, size: 8 }, un.op.pos_id);
-            self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: p, size: 8 }, un.op.pos_id);
-            self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 0, op: "=".to_string(), term: len, size: 8 }, un.op.pos_id);
+            self.push_op(Op::Copy { from: Term::Temp(self.temp_count), to: p.clone(), size: len.clone() }, un.op.pos_id);
             self.push_op(Op::EndScope, un.op.pos_id);
             return s;
         }

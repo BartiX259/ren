@@ -6,36 +6,36 @@ use std::collections::HashMap;
 mod hoist;
 
 /// Validate the ast, return a symbol table if successful
-pub fn validate(module: &mut node::Module, public: Vec<&PublicSymbols>, gcalls: &Vec<(String, HashMap<String, Type>)>) -> Result<(PublicSymbols, Vec<(String, HashMap<String, Type>)>, usize), SemanticError> {
+pub fn validate(module: &mut node::Module, public: Vec<&PublicSymbols>, gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>) -> Result<(PublicSymbols, usize), SemanticError> {
     let mut val = Validate::new();
     for syms in public {
         val.symbol_table.extend(syms.symbol_table.clone());
         val.fn_map.extend(syms.fn_map.clone());
     }
     val.gcalls = gcalls.clone();
-    println!("===========PUBLIC==========\n{:?}\n------------------\n{:?}\n===================", val.symbol_table, val.fn_map);
     for stmt in module.stmts.iter_mut() {
         val.hoist_type(stmt, false)?;
     }
     for stmt in module.stmts.iter_mut() {
         val.hoist_func(stmt, false)?;
     }
-    println!("===========HOISTED==========\n{:?}\n------------------\n{:?}\n===================", val.symbol_table, val.fn_map);
     for stmt in module.stmts.iter_mut() {
         val.stmt(stmt)?;
     }
-    Ok((PublicSymbols { symbol_table: val.symbol_table, fn_map: val.fn_map }, val.gcalls[gcalls.len()..].to_vec(), val.gfns.len()))
+    gcalls.extend(val.gcalls[gcalls.len()..].to_vec());
+    Ok((PublicSymbols { symbol_table: val.symbol_table, fn_map: val.fn_map }, val.gfns))
 }
 
-pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &Vec<(String, HashMap<String, Type>)>) -> Result<(HashMap<String, Symbol>, node::Module), SemanticError> {
+pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>) -> Result<(PublicSymbols, node::Module), SemanticError> {
     let mut val = Validate::new();
     let mut new_mod = node::Module { path: module.path, stmts: Vec::new() };
+    let mut to_remove = Vec::new();
     val.symbol_table = symbols.symbol_table;
     val.fn_map = symbols.fn_map;
     for stmt in module.stmts.into_iter() {
         if let node::Stmt::Fn(decl) = &stmt {
             if decl.generics.len() > 0 {
-                for (i, (name, map)) in gcalls.iter().enumerate() {
+                for (index, (name, map, i)) in gcalls.iter().enumerate() {
                     val.cur_generics = map.keys().cloned().collect();
                     if *name == decl.name.str {
                         let mut ty = Type::Void;
@@ -43,7 +43,7 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &Vec<(Strin
                         let mut types = Vec::new();
                         if let Some(decl_type) = &decl.decl_type {
                             ty = val.r#type(decl_type, false)?;
-                            if let Type::Generic(s) = &ty.inner() {
+                            if let (Type::Generic(s), _) = &ty.depth(0) {
                                 if let Some(inner) = map.get(s) {
                                     ty = Type::wrap(inner, &ty);
                                 }
@@ -51,7 +51,7 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &Vec<(Strin
                         }
                         for (name, ty) in decl.arg_names.iter().zip(decl.arg_types.iter()) {
                             let mut ty = val.r#type(ty, false)?;
-                            if let Type::Generic(s) = &ty.inner() {
+                            if let (Type::Generic(s), _) = &ty.depth(0) {
                                 if let Some(inner) = map.get(s) {
                                     ty = Type::wrap(inner, &ty);
                                 }
@@ -74,10 +74,11 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &Vec<(Strin
                             val.symbol_table.remove(k);
                         }
                         new_mod.stmts.push(node::Stmt::Fn(new_decl));
+                        to_remove.push(index);
                     }
                 }
                 val.cur_generics = vec![];
-                val.symbol_table.remove(&decl.name.str);
+                new_mod.stmts.push(stmt);
             } else {
                 new_mod.stmts.push(stmt);
             }
@@ -85,7 +86,30 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &Vec<(Strin
         }
         new_mod.stmts.push(stmt);
     }
-    Ok((val.symbol_table, new_mod))
+    for i in to_remove {
+        gcalls.swap_remove(i);
+    }
+    for g in val.gcalls {
+        gcalls.push(g);
+    }
+    Ok((PublicSymbols { symbol_table: val.symbol_table, fn_map: val.fn_map }, new_mod))
+}
+
+pub fn clean_up(module: node::Module, symbols: PublicSymbols) -> (node::Module, HashMap<String, Symbol>) {
+    let mut val = Validate::new();
+    let mut new_mod = node::Module { path: module.path, stmts: Vec::new() };
+    val.symbol_table = symbols.symbol_table;
+    val.fn_map = symbols.fn_map;
+    for stmt in module.stmts.into_iter() {
+        if let node::Stmt::Fn(decl) = &stmt {
+            if decl.generics.len() > 0 {
+                val.symbol_table.remove(&decl.name.str);
+                continue;
+            }
+        }
+        new_mod.stmts.push(stmt);
+    }
+    (new_mod, val.symbol_table)
 }
 
 pub fn hoist_public(module: &mut node::Module, public: &HashMap<String, PublicSymbols>) -> Result<PublicSymbols, SemanticError> {
@@ -151,8 +175,8 @@ pub enum SemanticError {
 struct Validate {
     symbol_table: HashMap<String, Symbol>,
     fn_map: HashMap<String, Vec<(Vec<Type>, usize)>>,
-    gfns: Vec<String>,
-    gcalls: Vec<(String, HashMap<String, Type>)>,
+    gfns: usize,
+    gcalls: Vec<(String, HashMap<String, Type>, usize)>,
     cur_module: String,
     fn_symbols: Vec<Vec<(String, Symbol)>>,
     symbol_stack: Vec<usize>,
@@ -168,7 +192,7 @@ impl Validate {
         Self {
             symbol_table: HashMap::new(),
             fn_map: HashMap::new(),
-            gfns: Vec::new(),
+            gfns: 0,
             gcalls: Vec::new(),
             cur_module: String::new(),
             fn_symbols: Vec::new(),
@@ -192,7 +216,6 @@ impl Validate {
     }
 
     fn push_symbol(&mut self, name: String, sym: Symbol) {
-        println!("push {}", name);
         self.symbol_table.insert(name.clone(), sym.clone());
         self.scope_symbols().push((name.clone(), sym.clone()));
     }
@@ -372,7 +395,6 @@ impl Validate {
     }
 
     fn scope(&mut self, scope: &mut Vec<node::Stmt>) -> Result<(), SemanticError> {
-        println!("scope {}, {:?}", self.scope_id, self.fn_symbols);
         self.symbol_stack.push(self.scope_id);
         self.fn_symbols.push(Vec::new());
         self.scope_id += 1;
@@ -380,10 +402,8 @@ impl Validate {
             self.stmt(stmt)?;
         }
         // Remove the local symbols from the symbol table
-        println!("popping {:?}", self.symbol_stack);
         let i = self.symbol_stack.pop().unwrap();
         for sym in self.fn_symbols.get(i).unwrap() {
-            println!("removing {}", sym.0);
             self.symbol_table.remove(&sym.0);
         }
         Ok(())
@@ -688,6 +708,13 @@ impl Validate {
                 }
             }
             "!" => Ok(Type::Bool),
+            "~" => {
+                if ty == Type::Int {
+                    Ok(Type::Int)
+                } else {
+                    Err(SemanticError::UnaryTypeMismatch(span, un.op.str.clone(), ty))
+                }
+            }
             _ => Err(SemanticError::InvalidUnaryOperator(un.op.clone())),
         }
     }
@@ -754,15 +781,9 @@ impl Validate {
                     generics.clear();
                     for (i, (ty1, ty2)) in arg_types.iter_mut().zip(tys).enumerate() {
                         if ty1 != ty2 {
-                            if let Type::Generic(s) = ty2.inner() {
+                            if let (Type::Generic(s), depth) = ty2.depth(0) {
                                 if let Some(ty) = generics.get(s) {
                                     let t = Type::wrap(ty, ty2);
-                                    if t != *ty1 {
-                                        found = false;
-                                        break;
-                                    }
-                                } else {
-                                    let t = Type::wrap(ty1.inner(), ty2);
                                     if t != *ty1 {
                                         if Self::type_cast(ty1.clone(), t.clone(), *arg_spans.get(i).unwrap()).is_err() { 
                                             found = false;
@@ -776,7 +797,23 @@ impl Validate {
                                         call.args.get_mut(i).unwrap().ty = t.clone();
                                         *ty1 = t.clone();
                                     }
-                                    generics.insert(s.clone(), ty1.inner().clone());
+                                } else {
+                                    let inner = ty1.inner(depth).clone();
+                                    let t = Type::wrap(&inner, ty2);
+                                    if t != *ty1 {
+                                        if Self::type_cast(ty1.clone(), t.clone(), *arg_spans.get(i).unwrap()).is_err() { 
+                                            found = false;
+                                            break;
+                                        }
+                                        let e = call.args.get(i).unwrap().clone();
+                                        call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
+                                            kind: node::TypeKind::Word("void".to_string()), span: e.span },
+                                            expr: Box::new(e)
+                                        });
+                                        call.args.get_mut(i).unwrap().ty = t.clone();
+                                        *ty1 = t.clone();
+                                    }
+                                    generics.insert(s.clone(), inner);
                                 }
                             } else {
                                 if Self::type_cast(ty1.clone(), ty2.clone(), *arg_spans.get(i).unwrap()).is_err() { 
@@ -795,6 +832,7 @@ impl Validate {
                     }
                     if found {
                         id = sig.1 as i64;
+                        break;
                     }
                 }
                 if id == -1 {
@@ -803,7 +841,7 @@ impl Validate {
                 s = format!("{}.{}", s, id);
                 if !generics.is_empty() {
                     let mut found = false;
-                    for (i, (name, map)) in self.gcalls.iter().enumerate() {
+                    for (name, map, i) in self.gcalls.iter() {
                         if *name == s && generics == *map {
                             call.name.str = format!("{}.{}", s, i);
                             found = true;
@@ -811,8 +849,9 @@ impl Validate {
                         }
                     }
                     if !found {
-                        self.gcalls.push((s.clone(), generics));
-                        call.name.str = format!("{}.{}", s, self.gcalls.len()-1);
+                        let id = self.gcalls.len();
+                        self.gcalls.push((s.clone(), generics, id));
+                        call.name.str = format!("{}.{}", s, id);
                     }
                 } else {
                     call.name.str = s.clone();
@@ -860,7 +899,7 @@ impl Validate {
             return Err(SemanticError::InvalidArgCount(span, expected_types.len(), arg_types.len()));
         }
         for ((ty1, ty2), span) in expected_types.into_iter().zip(arg_types.iter()).zip(arg_spans.iter()) {
-            if let Type::Generic(_) = ty1.inner() {
+            if let (Type::Generic(_), _) = ty1.depth(0) {
                 continue;
             }
             if ty1 != ty2 {
@@ -868,13 +907,12 @@ impl Validate {
             }
         }
         let res;
-        if let Type::Generic(g) = ty {
+        if let (Type::Generic(g), _) = ty.depth(0) {
             let index = call.name.str.split(".").last().unwrap().parse::<usize>().unwrap();
-            let Some((_, map)) = self.gcalls.get(index) else {
+            let Some((_, map, _)) = self.gcalls.get(index) else {
                 panic!("no gcall");
             };
-            println!("{map:?} {g}");
-            res = map.get(g).unwrap().clone();
+            res = Type::wrap(map.get(g).unwrap(), ty);
         } else {
             res = ty.clone()
         }
@@ -1040,7 +1078,7 @@ impl Validate {
                 }
             }
             (Type::Pointer(p1), Type::Pointer(p2)) => {
-                if *p1.inner() != Type::Any && *p2.inner() != Type::Any  {
+                if *p1.depth(0).0 != Type::Any && *p2.depth(0).0 != Type::Any  {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }

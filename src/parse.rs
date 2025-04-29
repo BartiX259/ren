@@ -763,8 +763,8 @@ fn op_prec(op: &str) -> u8 {
         "%" => 11,
         "!" => 12,
         "[]" => 13,
-        "." => 14,
-        "as" => 15, // Highest precedence (done first)
+        "as" => 14, // Highest precedence (done first)
+        "." => 15,
         _ => panic!("No precedence for operator {}", op),
     }
 }

@@ -83,14 +83,13 @@ fn main() -> ExitCode {
                 pub_symbols.push(symbols);
             }
         }
-        let (syms, gcalls, gfns) = match validate::validate(&mut module, pub_symbols, &generic_calls) {
+        let (syms, gfns) = match validate::validate(&mut module, pub_symbols, &mut generic_calls) {
             Ok(res) => res,
             Err(e) => {
                 error::sematic_err(&module.path, e);
                 return ExitCode::from(1);
             }
         };
-        generic_calls.extend(gcalls);
         if gfns > 0 {
             unresolved.push((module, syms));
             continue;
@@ -104,20 +103,50 @@ fn main() -> ExitCode {
 
     println!("UNRESOLVED {}", unresolved.len());
     println!("CALLS {:?}", generic_calls);
-    for (module, syms) in unresolved {
-        let path = module.path.clone();
-        let (ir, module) = match validate::resolve(module, syms, &generic_calls) {
-            Ok(res) => res,
-            Err(e) => {
-                error::sematic_err(&path, e);
-                return ExitCode::from(1);
+
+    let mut resolved_modules = Vec::new();
+
+    loop {
+        println!("Resolving with {} generic calls...", generic_calls.len());
+
+        let drained: Vec<_> = unresolved.drain(..).collect();
+        let before = generic_calls.clone();
+
+        for (module, syms) in drained {
+            let path = module.path.clone();
+            match validate::resolve(module, syms, &mut generic_calls) {
+                Ok((ir, resolved_module)) => {
+                    // println!("{generic_calls:?}");
+                    resolved_modules.push((resolved_module, ir));
+                }
+                Err(e) => {
+                    error::sematic_err(&path, e);
+                    return ExitCode::from(1);
+                }
             }
-        };
-        files.push(match gen_module(module, ir) {
-            Ok(f) => f,
-            Err(e) => return ExitCode::from(e),
-        });
+        }
+
+        if generic_calls.is_empty() {
+            break;
+        } else if before == generic_calls {
+            panic!("No progress");
+        } else {
+            unresolved = resolved_modules
+                .drain(..)
+                .collect();
+        }
     }
+
+    for (module, syms) in resolved_modules {
+        let (m, ir) = validate::clean_up(module, syms);
+        match gen_module(m, ir) {
+            Ok(file) => files.push(file),
+            Err(e) => return ExitCode::from(e),
+        }
+    }
+
+
+    println!("CALLS {:?}", generic_calls);
 
     let mut obj_files = Vec::new();
     for file in files {
@@ -170,7 +199,7 @@ fn gen_module(module: node::Module, mut ir: HashMap<String, ir::Symbol>) -> Resu
 
     lower::lower(processed_stmts, &mut ir);
 
-    println!("IR:\n{:?}\n", ir);
+    // println!("IR:\n{:?}\n", ir);
 
     // optimize::optimize(&mut ir);
 

@@ -1,8 +1,4 @@
-- Heap
-- String interpolation
-- Lists
 - Files
-- Slices
 - Iterators
 - Arg parsing?
 - Peephole optimization (remove temporary stack variables)

@@ -49,9 +49,10 @@ impl Type {
             _ => None
         }
     }
-    pub fn inner(&self) -> &Type {
+    pub fn inner(&self, max_depth: usize) -> &Type {
+        if max_depth == 0 { return self; }
         match self {
-            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p }  => p.inner(),
+            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p }  => p.inner(max_depth - 1),
             _ => self
         }
     }
@@ -61,11 +62,18 @@ impl Type {
             _ => self
         }
     }
+    pub fn depth(&self, zero: usize) -> (&Type, usize) {
+        match self {
+            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p }  => p.depth(zero + 1),
+            _ => (self, zero)
+        }
+    }
     pub fn wrap(inner: &Type, outer: &Type) -> Type {
         let mut new = outer.clone();
         *new.inner_mut() = inner.clone();
         new
     }
+
     pub fn salloc(&self) -> bool {
         match self {
             Type::Array { .. } | Type::Struct(_) | Type::Tuple(_) | Type::Slice { .. } | Type::List { .. } | Type::Range => true,

@@ -14,15 +14,11 @@ pub fn process(module: node::Module) -> Vec<node::Stmt> {
 
 struct Process {
     pub stmts: Vec<Vec<node::Stmt>>,
-    index: usize,
-    cur_type: Type,
 }
 impl Process {
     pub fn new() -> Self {
         Self {
             stmts: Vec::new(),
-            index: 0,
-            cur_type: Type::Void
         }
     }
 
@@ -119,9 +115,6 @@ impl Process {
             node::ExprKind::BuiltIn(built_in) => node::ExprKind::BuiltIn(node::BuiltIn { kind: built_in.kind, args: self.expr_list(built_in.args) }),
             _ => expr.kind
         };
-        self.index += 1;
-        self.cur_type = expr.ty.clone();
-        println!("{}. {:?}", self.index, self.cur_type);
         node::Expr {
             kind: new_expr,
             ty: expr.ty,
@@ -277,8 +270,8 @@ impl Process {
                 })
             });
         }
+        let ltype = bin.lhs.ty.clone();
         let mut lhs = self.expr(*bin.lhs);
-        let ltype = self.cur_type.clone();
         let rtype = bin.rhs.ty.clone();
         let mut rhs = self.expr(*bin.rhs);
         if let Some(p) = ltype.dereference() {
@@ -307,7 +300,7 @@ impl Process {
             }
         }
         if bin.op.str == "[]" {
-            let inner = lhs.ty.inner().clone();
+            let inner = lhs.ty.inner(1).clone();
             if rhs.ty == Type::Range { // Slice
                 let start;
                 let end;

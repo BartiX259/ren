@@ -130,9 +130,10 @@ syscall 9: mmap(int, int, int, int, int, int) -> *any;
 syscall 10: munmap(*any, int);
 
 decl allocator: (base: *any, size: int, offset: int, stack: *any);
-let SPACE_SIZE = 2;
+let SPACE_SIZE = 2000;
 
 fn alloc(size: int) -> *any {
+    size = (size + 7) & ~7;
     if allocator.base == null {
         allocator.base = mmap(0, *SPACE_SIZE, 3, 34, 0, 0);
         allocator.size = *SPACE_SIZE;
@@ -159,6 +160,28 @@ fn alloc(size: int) -> *any {
     *(res as *int) = size + 8;
     allocator.offset = new_offset;
     return res + 8;
+}
+
+fn print_heap() {
+    print("HEAP: ");
+    let ptr = (allocator.base) as *int;
+    while ptr < allocator.base + allocator.offset {
+        print(*ptr);
+        print(" :: ");
+        ptr += 1;
+    }
+    print('\n');
+}
+
+fn print_stack(len: int) {
+    print("STACK: ");
+    let ptr = sp() as *int;
+    for let i = 0; i < len; i += 1 {
+        print(*ptr);
+        print(" :: ");
+        ptr -= 1;
+    }
+    print('\n');
 }
 
 fn is_forwarded(ptr: *any) -> bool {

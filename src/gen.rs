@@ -194,6 +194,9 @@ impl<'a> Gen<'a> {
                 ir::Op::Store { term, op, ptr, offset, res, size } => self.store(term, op, ptr, offset, res, size)?,
                 ir::Op::Read { ptr, offset, res, size } => self.read(ptr, offset, res, size)?,
                 ir::Op::Copy { from, to, size } => {
+                    if size == Term::IntLit(0) {
+                        continue;
+                    }
                     if let Some(t) = from.stack_arithmetic() {
                         self.free_reg(&"rsi".to_string())?;
                         self.buf.push_line("mov rsi, rsp");
@@ -227,6 +230,7 @@ impl<'a> Gen<'a> {
                     } else {
                         let mut r1 = self.eval_term(size.clone(), None, false)?;
                         let mut r2 = "3".to_string();
+                        self.bin("add", &r1, &"7".to_string(), 8);
                         self.bin_cl("shr", &mut r1, &mut r2, 8);
                         self.force_term_at(&size, &"rcx".to_string())?;
                         self.buf.push_line("rep movsq");
@@ -242,8 +246,11 @@ impl<'a> Gen<'a> {
                 }
                 ir::Op::Decl { term, size } => {
                     self.sp += size as i64;
-                    self.buf.push_line(format!("sub rsp, {}", size));
                     self.locs.insert(term, self.sp);
+                    for _ in (0..size).step_by(8) {
+                        // self.buf.push_line(format!("sub rsp, {}", size));
+                        self.buf.push_line("push 0");
+                    }
                 }
                 ir::Op::Arg { term, double } => {
                     let reg = *self.call_order.get(self.arg_index).ok_or(GenError::TooManyArguments(self.last_loc.clone()))?;
@@ -274,7 +281,7 @@ impl<'a> Gen<'a> {
                             saved.push(r.clone());
                             self.buf.push_line(format!("push {}", r.name));
                             self.buf.comment(format!("save {:?}", r.term.clone().unwrap()));
-                            println!("save {:?} ({})",r.term.clone().unwrap(), r.name);
+                            // println!("save {:?} ({})", r.term.clone().unwrap(), r.name);
                             self.sp += 8;
                         }
                         r.term = None;
@@ -349,7 +356,7 @@ impl<'a> Gen<'a> {
                             self.buf.push_line(format!("pop {}", r.name));
                         }
                         self.sp -= 8;
-                        println!("restore {:?} into {} lock {:?}", r.term.clone().unwrap(), r.name, self.get_reg(&r.name));
+                        // println!("restore {:?} into {} lock {:?}", r.term.clone().unwrap(), r.name, self.get_reg(&r.name));
                         self.buf.comment(format!("restore {:?}", r.term.clone().unwrap()));
                     }
                     self.calling = false;
@@ -454,6 +461,9 @@ impl<'a> Gen<'a> {
         for r in binding.iter().zip(state.iter()) {
             if r.0 != r.1 {
                 if let Some(t) = &r.1.term {
+                    if let Some(Term::Temp(_)) = r.1.term {
+                        continue;
+                    }
                     self.eval_term_at(t, &r.1.name.clone());
                     self.save_reg(&r.1.name.clone(), t);
                     self.lock_reg(&r.1.name.clone(), r.1.locked);
@@ -609,7 +619,7 @@ impl<'a> Gen<'a> {
     }
 
     fn force_term_at(&mut self, term: &Term, target: &String) -> Result<(), GenError> {
-        println!("force {:?} at {}", term, target);
+        // println!("force {:?} at {}", term, target);
         let mut free = None;
         if let Some(r) = self.get_reg(&target.to_string()) {
             if let Some(t) = &r.term {
@@ -624,7 +634,7 @@ impl<'a> Gen<'a> {
         }
         self.clear_reg(target);
         if let Some(f) = free {
-            println!("move {}, {}", f.1, target);
+            // println!("move {}, {}", f.1, target);
             self.buf.push_line(format!("mov {}, {}", f.1, target));
             self.save_reg(&f.1, &f.0);
             self.lock_reg(&f.1, true);
@@ -635,7 +645,7 @@ impl<'a> Gen<'a> {
     }
 
     fn free_reg(&mut self, reg: &String) -> Result<(), GenError> {
-        println!("free {}", reg);
+        // println!("free {}", reg);
         let mut free = None;
         if let Some(r) = self.get_reg(&reg.to_string()) {
             if let Some(t) = &r.term {
@@ -737,11 +747,12 @@ impl<'a> Gen<'a> {
                 self.buf.push_line(format!("test {}, {}", d, d));
                 self.buf.push_line(format!("sete {}", Self::reg_name(&r, 1)));
             }
+            "~" => self.buf.push_line(format!("not {}", d)),
             _ => unreachable!("Unknown unary op '{}'.", op),
         }
         self.save_reg(&r, &res);
         self.lock_reg(&r, true);
-        println!("SAVE {res:?} {r}");
+        // println!("SAVE {res:?} {r}");
         Ok(())
     }
 
@@ -756,7 +767,7 @@ impl<'a> Gen<'a> {
     }
 
     fn store(&mut self, term: Term, op: String, ptr: Term, mut offset: i64, res: Option<Term>, size: u32) -> Result<(), GenError> {
-        let mut p;
+        let p;
         if let Some(t) = ptr.stack_arithmetic() {
             p = "rsp".to_string();
             offset += self.sp - self.locs.get(&t).unwrap();
@@ -791,11 +802,13 @@ impl<'a> Gen<'a> {
             "*=" => {
                 let mut free = "rax".to_string();
                 self.free_reg(&free)?;
+                if t == "rax" {
+                    t = self.eval_term(term.clone(), None, false)?;
+                }
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
                 self.bin_rax("mul", &mut free, &mut t, size)?;
                 self.save_reg(&free, &term);
                 self.lock_reg(&free, true);
-                p = self.eval_term(ptr, None, false)?;
                 self.clear_reg(&free);
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
@@ -815,12 +828,14 @@ impl<'a> Gen<'a> {
             "%=" => {
                 let mut free = "rax".to_string();
                 self.free_reg(&free)?;
+                if t == "rax" {
+                    t = self.eval_term(term.clone(), None, false)?;
+                }
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
                 self.bin_rax("div", &mut free, &mut t, size)?;
-                self.buf.push_line("mov rax, rdx");
+                self.buf.push("mov rax, rdx");
                 self.save_reg(&free, &term);
                 self.lock_reg(&free, true);
-                p = self.eval_term(ptr, None, false)?;
                 self.clear_reg(&free);
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
