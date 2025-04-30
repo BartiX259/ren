@@ -52,14 +52,18 @@ fn split<T>(sl: <T>, split: T) -> [<T>] {
 }
 
 fn main() -> int {
-	let x = +"bsckzxc";
-	push(&x, "kurwa");
+	init();
+	let x = +"bsikzx";
+	print("1: ");
 	print(x);
+	print('\n');
+	push(&x, "khrj");
+	print("2: ");
+	print(x);
+	print('\n');
 	let y = split(x, 'k');
-	print(len(y));
+	print("3: ");
+	print(x);
+	print('\n');
 	print(y);
-	print("\n---\n");
-	for let i = 0; i < len(y); i += 1 {
-		print("{i}: {y[i]}\n");
-	}
 }

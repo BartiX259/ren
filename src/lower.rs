@@ -28,8 +28,9 @@ struct Lower<'a> {
     stack_return: Option<Term>,
     label_count: u16,
     scope_id: usize,
+    scope_depth: usize,
     loop_start: Vec<u16>,
-    loop_exit: Vec<u16>,
+    loop_exit: Vec<(u16, usize)>,
     string_map: HashMap<StringLit, String>,
     string_id: usize,
 }
@@ -50,6 +51,7 @@ impl<'a> Lower<'a> {
             stack_return: None,
             label_count: 0,
             scope_id: 0,
+            scope_depth: 0,
             loop_start: Vec::new(),
             loop_exit: Vec::new(),
             string_map: HashMap::new(),
@@ -108,7 +110,10 @@ impl<'a> Lower<'a> {
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
             node::Stmt::While(r#while) => self.r#while(r#while),
             node::Stmt::For(r#for) => self.r#for(r#for),
-            node::Stmt::Break(pos_id) => self.push_op(Op::Jump { label: *self.loop_exit.last().unwrap() }, *pos_id),
+            node::Stmt::Break(pos_id) => { 
+                self.push_op(Op::BreakScope { depth: self.scope_depth - self.loop_exit.last().unwrap().1 }, *pos_id);
+                self.push_op(Op::Jump { label: self.loop_exit.last().unwrap().0 }, *pos_id)
+            }
             node::Stmt::Continue(pos_id) => self.push_op(Op::Jump { label: *self.loop_start.last().unwrap() }, *pos_id),
             node::Stmt::Syscall(_) => ()
         }
@@ -522,9 +527,11 @@ impl<'a> Lower<'a> {
         let sc = self.scope_id;
         self.load_symbols(sc);
         self.scope_id += 1;
+        self.scope_depth += 1;
         for s in scope.iter() {
             self.stmt(s);
         }
+        self.scope_depth -= 1;
         self.unload_symbols(sc);
         // if let Some(Op::Return { .. }) = self.cur_block.as_ref().unwrap().ops.last() {
         // } else {
@@ -940,7 +947,7 @@ impl<'a> Lower<'a> {
         let s = self.label_count - 1;
         self.loop_start.push(s);
         let e = self.label_count;
-        self.loop_exit.push(e);
+        self.loop_exit.push((e, self.scope_depth));
         self.push_op(Op::Label {label: s }, r#loop.pos_id);
         self.push_op(Op::BeginLoop, 0);
         self.scope(&r#loop.scope);
@@ -956,7 +963,7 @@ impl<'a> Lower<'a> {
         let c = self.label_count - 1;
         let e = self.label_count;
         self.loop_start.push(s);
-        self.loop_exit.push(e);
+        self.loop_exit.push((e, self.scope_depth));
         self.push_op(Op::Jump { label: c }, r#while.pos_id);
         self.push_op(Op::Label { label: s }, r#while.pos_id);
         self.push_op(Op::BeginLoop, r#while.pos_id);
@@ -987,7 +994,7 @@ impl<'a> Lower<'a> {
         let c = self.label_count - 1;
         let e = self.label_count;
         self.loop_start.push(c);
-        self.loop_exit.push(e);
+        self.loop_exit.push((e, self.scope_depth));
         self.push_op(Op::Label { label: s }, r#for.pos_id);
         self.push_op(Op::BeginLoop, 0);
         self.scope(&r#for.scope);

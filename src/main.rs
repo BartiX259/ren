@@ -177,7 +177,6 @@ fn parse_module(import: &node::Import) -> Result<(Vec<node::Stmt>, Vec<node::Imp
             return Err(ExitCode::from(1));
         }
     };
-    println!("{tokens:?}");
 
     match parse::parse(tokens, Some(import.path.clone())) {
         Ok(res) => Ok(res),

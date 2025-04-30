@@ -65,6 +65,7 @@ pub enum Op {
     EndLoop,
     BeginScope,
     EndScope,
+    BreakScope { depth: usize }
 }
 
 impl Block {
@@ -137,7 +138,8 @@ impl fmt::Debug for Op {
             Op::BeginLoop => write!(f, "begin loop"),
             Op::EndLoop => write!(f, "end loop"),
             Op::BeginScope => write!(f, "begin scope"),
-            Op::EndScope => write!(f, "end scope")
+            Op::EndScope => write!(f, "end scope"),
+            Op::BreakScope { depth } => write!(f, "break scope (depth {depth})")
         }
     }
 }

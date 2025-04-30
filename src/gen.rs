@@ -110,6 +110,24 @@ impl<'a> Gen<'a> {
             self.buf.push_line("");
             self.buf.push_line("_start:");
             self.buf.indent();
+            let mut i = 1;
+            while let Some(sym) = self.symbol_table.get(&format!("init.{i}")) {
+                let empty = match sym {
+                    Symbol::ExternFunc { args, .. } => args.is_empty(),
+                    Symbol::Func { symbols, .. } => symbols.get(0).unwrap().iter().map(|(_, s)| {
+                        let Symbol::Var { ty } = s else { unreachable!(); };
+                        ty.clone()
+                    }).len() == 0,
+                    _ => {
+                        i += 1;
+                        continue;
+                    }
+                };
+                if empty {
+                    self.buf.push_line(format!("call init.{i}"));
+                }
+                i += 1;
+            }
             self.buf.push_line("mov rdi, [rsp]");
             self.buf.push_line("mov rsi, rsp");
             self.buf.push_line("add rsi, 8");
@@ -373,7 +391,7 @@ impl<'a> Gen<'a> {
                 }
                 ir::Op::CondJump { cond, label } => {
                     let r = self.eval_term(cond, None, false)?;
-                    self.restore_sp();
+                    self.restore_sp(0);
                     self.buf.push_line(format!("test {}, {}", r, r));
                     self.clear_reg(&r);
                     self.buf.push_line(format!("jnz .L{}", label));
@@ -391,7 +409,7 @@ impl<'a> Gen<'a> {
                         "!=" => "jne",
                         _ => panic!("Unsupported binary operation in BinJump: {}", op),
                     };
-                    self.restore_sp();
+                    self.restore_sp(0);
                     self.buf.push_line(format!("{} .L{}", jmp_instr, label));
                     self.clear_reg(&r1);
                     self.clear_reg(&r2);
@@ -424,7 +442,8 @@ impl<'a> Gen<'a> {
                 ir::Op::BeginLoop => self.reg_states.push(self.regs.to_vec()),
                 ir::Op::EndLoop => self.restore_regs(),
                 ir::Op::BeginScope => self.saved_sps.push(self.sp),
-                ir::Op::EndScope => self.restore_sp(),
+                ir::Op::EndScope => self.restore_sp(0),
+                ir::Op::BreakScope { depth } => self.restore_sp(depth),
             }
             match op_clone {
                 ir::Op::BeginLoop | ir::Op::EndLoop | ir::Op::Arg { .. } | ir::Op::Param { .. } | ir::Op::Call { .. } | ir::Op::BeginCall { .. } | ir::Op::BeginScope | ir::Op::EndScope | ir::Op::NaturalFlow => (),
@@ -473,6 +492,20 @@ impl<'a> Gen<'a> {
             }
         }
     }
+    fn restore_sp(&mut self, depth: usize) {
+        if let Some(sp) = if depth == 0 { self.saved_sps.pop() } else { self.saved_sps.get(self.saved_sps.len() - depth).cloned() } {
+            if self.sp != sp {
+                self.buf.push_line(format!("add rsp, {}", self.sp - sp));
+                self.buf.comment(format!("restore sp"));
+                if depth == 0 {
+                    self.sp = sp;
+                }
+            }
+        } else {
+            panic!("no sp {depth}");
+        }
+    }
+
     fn get_free_reg(&self) -> Result<String, GenError> {
         // Find any empty register
         for r in self.regs.iter() {
@@ -535,16 +568,6 @@ impl<'a> Gen<'a> {
             }
         }
         //println!("swap {} {}, {:?}", r1, r2, self.regs);
-    }
-
-    fn restore_sp(&mut self) {
-        if let Some(sp) = self.saved_sps.pop() {
-            if self.sp != sp {
-                self.buf.push_line(format!("add rsp, {}", self.sp - sp));
-                self.buf.comment(format!("restore sp"));
-                self.sp = sp;
-            }
-        }
     }
 
     /// Find a term and move it to a target register
