@@ -181,14 +181,19 @@ fn print_heap() {
     print('\n');
 }
 
-fn print_stack(len: int) {
-    print("STACK: ");
-    let ptr = sp() as *int;
+fn print_stack(offset: int, len: int) {
+    print("STACK: |");
+    let ptr = sp() as *int + offset;
+    print(ptr);
+    print("| :: ");
     for let i = 0; i < len; i += 1 {
         print(*ptr);
         print(" :: ");
         ptr -= 1;
     }
+    print('|');
+    print(ptr);
+    print("|");
     print('\n');
 }
 
@@ -277,3 +282,80 @@ fn collect_ptr(ref_ptr: **any, to_space: *any, offset: int) -> int {
     }
     return offset;
 }
+
+pub fn push<T>(list: *[T], el: T) {
+	let ptr = *(list as **any + 1);
+	if ptr == null {
+		ptr = alloc(sizeof(el) * 5);
+		*(list as **any + 1) = ptr;
+	}
+	let cap = *((ptr as *int - 1)) - 8;
+	let size = len(list) * sizeof(el);
+    if size >= cap {
+		let new_ptr = alloc(cap * 2);
+		copy(ptr, new_ptr, size);
+		ptr = new_ptr;
+		*(list as **any + 1) = new_ptr;
+    }
+	copy(&el, ptr as *T + len(list), sizeof(el));
+	*(list as *any as *int) += 1;
+}
+
+pub fn push<T>(list: *[T], sl: <T>) {
+	let ptr = *(list as **any + 1);
+	if ptr == null {
+		ptr = alloc(sizeof(*(sl as *T)) * 5);
+		*(list as **any + 1) = ptr;
+	}
+	let cap = *((ptr as *int - 1)) - 8;
+	let size = len(list) * sizeof(*(sl as *T));
+	let add_size = len(sl) * sizeof(*(sl as *T));
+    if size + add_size > cap {
+		let new_ptr = alloc(cap + add_size);
+		copy(ptr, new_ptr, size);
+		ptr = new_ptr;
+		*(list as **any + 1) = new_ptr;
+    }
+	copy(sl as *T, ptr as *T + len(list), add_size);
+	*(list as *any as *int) += len(sl);
+}
+
+pub fn split<T>(sl: <T>, split: T) -> [<T>] {
+	let base = 0;
+	decl res: [<T>];
+	for let i = 0; i < len(sl); i += 1 {
+		if sl[i] == split {
+			let s = sl[base..i];
+			push(&res, s);
+			base = i + 1;
+		}
+	}
+	push(&res, sl[base..]);
+	return res;
+}
+
+syscall 2: open(*char, int, int) -> int;
+syscall 5: fstat(int, *any) -> int;
+syscall 6: close(int) -> int;
+
+pub fn read_file(path: *char) -> <char> {
+    let fd = open(path, 0, 0);
+    if fd < 0 {
+        print("Failed to open file.\n");
+        return "";
+    }
+
+    decl st: int[18];
+    if fstat(fd, &st) < 0 {
+        print("Failed to stat file.\n");
+        close(fd);
+        return "";
+    }
+
+    let size = st[6];
+    let mapped = mmap(0, size, 3, 2, fd, 0);
+    close(fd);
+
+    return (mapped as *char)[0..size];
+}
+

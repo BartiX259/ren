@@ -341,7 +341,7 @@ impl Process {
                     self.expr(node::Expr { // pointer
                         kind: node::ExprKind::BinExpr(node::BinExpr {
                             lhs: Box::new(match lhs.ty {
-                                Type::Array { .. } => lhs,
+                                Type::Array { .. } | Type::Pointer(_) => lhs,
                                 Type::Slice { .. } | Type::List { .. } => {
                                     let mut ptr = lhs.clone();
                                     let mut add = lhs.clone();

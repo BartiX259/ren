@@ -92,6 +92,7 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(S
         }
         new_mod.stmts.push(stmt);
     }
+    to_remove.sort_unstable_by(|a, b| b.cmp(a)); // sort in descending order
     for i in to_remove {
         gcalls.swap_remove(i);
     }

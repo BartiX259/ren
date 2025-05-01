@@ -491,8 +491,10 @@ impl<'a> Gen<'a> {
     fn restore_sp(&mut self, depth: usize) {
         if let Some(sp) = if depth == 0 { self.saved_sps.pop() } else { self.saved_sps.get(self.saved_sps.len() - depth).cloned() } {
             if self.sp != sp {
-                self.buf.push_line(format!("add rsp, {}", self.sp - sp));
-                self.buf.comment(format!("restore sp"));
+                if self.buf.last_line != "ret" {
+                    self.buf.push_line(format!("add rsp, {}", self.sp - sp));
+                    self.buf.comment(format!("restore sp"));
+                }
                 if depth == 0 {
                     self.sp = sp;
                 }
@@ -534,7 +536,7 @@ impl<'a> Gen<'a> {
             if self.sp == res_loc {
                 self.buf.push("mov qword [rsp], ");
             } else {
-                self.buf.push(format!("mov qword [rsp + {}], ", self.sp - res_loc));
+                self.buf.push(format!("mov qword [rsp+{}], ", self.sp - res_loc));
             }
         } else {
             self.sp += 8;
@@ -591,7 +593,7 @@ impl<'a> Gen<'a> {
         if let Some(loc) = self.locs.get(&t) {
             self.buf.push(format!("mov {}, [rsp", target));
             if self.sp != *loc {
-                self.buf.push(" + ");
+                self.buf.push("+");
                 self.buf.push((self.sp - loc).to_string());
             }
             self.buf.push_line("]");
