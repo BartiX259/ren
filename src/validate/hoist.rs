@@ -5,33 +5,63 @@ use crate::ir::{Symbol, Block};
 
 impl Validate {
     pub fn hoist_type(&mut self, stmt: &mut node::Stmt, public: bool) -> Result<(), SemanticError> {
-        if let node::Stmt::TypeDecl(decl) = stmt {
-            if self.symbol_table.contains_key(&decl.name.str) {
-                return Err(SemanticError::SymbolExists(decl.name.clone()));
+        let mut stmt_ref = stmt; // local mutable reference
+        let mut is_public = false;
+
+        if let node::Stmt::Decorator(dec) = stmt_ref {
+            stmt_ref = dec.inner.as_mut(); // swap the reference, not the actual AST
+            if dec.kinds.contains(&node::DecoratorKind::Pub) {
+                is_public = true;
             }
-            let ty = self.r#type(&decl.r#type, false)?;
-            self.symbol_table.insert(decl.name.str.clone(), Symbol::Type { ty });
-        } else if let node::Stmt::Let(decl) = stmt {
-            if self.symbol_table.contains_key(&decl.name.str) {
-                return Err(SemanticError::SymbolExists(decl.name.clone()));
-            }
-            let str = self.const_expr(&decl.expr)?;
-            let ty = self.expr(&mut decl.expr)?;
-            self.symbol_table.insert(decl.name.str.clone(), Symbol::Data { ty, str });
-        } else if let node::Stmt::Decl(decl) = stmt {
-            if self.symbol_table.contains_key(&decl.name.str) {
-                return Err(SemanticError::SymbolExists(decl.name.clone()));
-            }
-            let ty = self.r#type(&decl.r#type, false)?;
-            let size = ((ty.size() + 7) / 8) as usize;
-            let str = std::iter::repeat("0").take(size).collect::<Vec<_>>().join(", ");
-            self.symbol_table.insert(decl.name.str.clone(), Symbol::Data { ty, str });
         }
+
+        if public && !is_public {
+            return Ok(());
+        }
+
+        match stmt_ref {
+            node::Stmt::TypeDecl(decl) => {
+                if self.symbol_table.contains_key(&decl.name.str) {
+                    return Err(SemanticError::SymbolExists(decl.name.clone()));
+                }
+                let ty = self.r#type(&decl.r#type, false)?;
+                self.symbol_table.insert(decl.name.str.clone(), Symbol::Type { ty });
+            }
+            node::Stmt::Let(decl) => {
+                if self.symbol_table.contains_key(&decl.name.str) {
+                    return Err(SemanticError::SymbolExists(decl.name.clone()));
+                }
+                let str = self.const_expr(&decl.expr)?;
+                let ty = self.expr(&mut decl.expr)?;
+                self.symbol_table.insert(decl.name.str.clone(), Symbol::Data { ty, str });
+            }
+            node::Stmt::Decl(decl) => {
+                if self.symbol_table.contains_key(&decl.name.str) {
+                    return Err(SemanticError::SymbolExists(decl.name.clone()));
+                }
+                let ty = self.r#type(&decl.r#type, false)?;
+                let size = ((ty.size() + 7) / 8) as usize;
+                let str = std::iter::repeat("0").take(size).collect::<Vec<_>>().join(", ");
+                self.symbol_table.insert(decl.name.str.clone(), Symbol::Data { ty, str });
+            }
+            _ => {}
+        }
+
         Ok(())
     }
 
     pub fn hoist_func(&mut self, stmt: &mut node::Stmt, public: bool) -> Result<(), SemanticError> {
-        if let node::Stmt::Fn(decl) = stmt {
+        let mut stmt_ref = stmt; // local mutable reference
+        let mut is_public = false;
+
+        if let node::Stmt::Decorator(dec) = stmt_ref {
+            stmt_ref = dec.inner.as_mut(); // swap the reference, not the actual AST
+            if dec.kinds.contains(&node::DecoratorKind::Pub) {
+                is_public = true;
+            }
+        }
+
+        if let node::Stmt::Fn(decl) = stmt_ref {
             decl.generics.clone_into(&mut self.cur_generics);
             let ty;
             if let Some(t) = &decl.decl_type {
@@ -55,12 +85,12 @@ impl Validate {
                 let sym = Symbol::Var { ty };
                 arg_symbols.push((arg.0.str.clone(), sym.clone()));
             }
-            self.hoist_func_with_types(decl, ty, arg_symbols, types, public)?;
+            self.hoist_func_with_types(decl, ty, arg_symbols, types, public, is_public)?;
             if self.cur_generics.len() > 0 {
                 self.gfns += 1;
                 self.cur_generics.clear();
             }
-        } else if let node::Stmt::Syscall(decl) = stmt {
+        } else if let node::Stmt::Syscall(decl) = stmt_ref {
             let ty;
             if let Some(t) = &decl.decl_type {
                 ty = self.r#type(t, false)?;
@@ -94,7 +124,9 @@ impl Validate {
                     s = format!("{}.{}", decl.name.str, len);
                     decl.name.str = s.clone();
                 }
-                self.symbol_table.insert(s, Symbol::Syscall { id: decl.id, ty, args: types });
+                if is_public {
+                    self.symbol_table.insert(s, Symbol::Syscall { id: decl.id, ty, args: types });
+                }
             } else {
                 let split: Vec<&str> = decl.name.str.split('.').collect();
                 if split.len() < 2 {
@@ -117,7 +149,7 @@ impl Validate {
         Ok(())
     }
 
-    pub fn hoist_func_with_types(&mut self, decl: &mut node::Fn, ty: Type, arg_symbols: Vec<(String, Symbol)>, types: Vec<Type>, public: bool) -> Result<(), SemanticError> {
+    pub fn hoist_func_with_types(&mut self, decl: &mut node::Fn, ty: Type, arg_symbols: Vec<(String, Symbol)>, types: Vec<Type>, public: bool, insert_extern: bool) -> Result<(), SemanticError> {
         if public {
             let s;
             if decl.name.str == "main" {
@@ -140,10 +172,12 @@ impl Validate {
                 s = format!("{}.{}", decl.name.str, len);
                 decl.name.str = s.clone();
             }
-            self.symbol_table.insert(s, Symbol::ExternFunc { 
-                ty,
-                args: arg_symbols.iter().map(|(_, sym)| { let Symbol::Var { ty } = sym.clone() else { unreachable!() }; ty }).collect()
-            });
+            if insert_extern {
+                self.symbol_table.insert(s, Symbol::ExternFunc { 
+                    ty,
+                    args: arg_symbols.iter().map(|(_, sym)| { let Symbol::Var { ty } = sym.clone() else { unreachable!() }; ty }).collect()
+                });
+            }
         } else {
             let split: Vec<&str> = decl.name.str.split('.').collect();
             if split.len() < 2 {

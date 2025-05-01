@@ -33,7 +33,11 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(S
     val.symbol_table = symbols.symbol_table;
     val.fn_map = symbols.fn_map;
     for stmt in module.stmts.into_iter() {
-        if let node::Stmt::Fn(decl) = &stmt {
+        let mut stmt_ref = &stmt;
+        if let node::Stmt::Decorator(dec) = &stmt {
+            stmt_ref = dec.inner.as_ref();
+        }
+        if let node::Stmt::Fn(decl) = stmt_ref {
             if decl.generics.len() > 0 {
                 for (index, (name, map, i)) in gcalls.iter().enumerate() {
                     val.cur_generics = map.keys().cloned().collect();
@@ -68,7 +72,7 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(S
                         }
                         new_decl.generics.clear();
                         new_decl.name.str += format!(".{i}").as_str();
-                        val.hoist_func_with_types(&mut new_decl, ty, arg_symbols, types, false)?;
+                        val.hoist_func_with_types(&mut new_decl, ty, arg_symbols, types, false, false)?;
                         val.r#fn(&mut new_decl)?;
                         for k in map.keys() {
                             val.symbol_table.remove(k);
@@ -101,7 +105,11 @@ pub fn clean_up(module: node::Module, symbols: PublicSymbols) -> (node::Module, 
     val.symbol_table = symbols.symbol_table;
     val.fn_map = symbols.fn_map;
     for stmt in module.stmts.into_iter() {
-        if let node::Stmt::Fn(decl) = &stmt {
+        let mut stmt_ref = &stmt;
+        if let node::Stmt::Decorator(dec) = &stmt {
+            stmt_ref = dec.inner.as_ref();
+        }
+        if let node::Stmt::Fn(decl) = stmt_ref {
             if decl.generics.len() > 0 {
                 val.symbol_table.remove(&decl.name.str);
                 continue;
@@ -156,10 +164,11 @@ pub enum SemanticError {
     NoIndirection(Span),
     InvalidGlobal(Span),
     FuncInFunc(PosStr),
+    TypeInFunc(PosStr),
+    DecoratorInFunc(Span),
     InvalidArgCount(Span, usize, usize),
     ArgTypeMismatch(Span, Type, Type),
     NoFnSig(String, Span, Vec<Type>),
-    TypeInFunc(PosStr),
     InvalidStructKey(PosStr, PosStr),
     MissingStructKey(PosStr, String),
     StructTypeMismatch(PosStr, Type, Type),
@@ -169,7 +178,8 @@ pub enum SemanticError {
     GenericTypeMismatch(Span, Type, Type),
     NoSlice(Span, String),
     InvalidCast(Span, Type, Type),
-    NoBuiltIn(Span, String, Type)
+    NoBuiltIn(Span, String, Type),
+    PrivateAccess(PosStr)
 }
 
 struct Validate {
@@ -227,6 +237,7 @@ impl Validate {
             node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
             node::Stmt::TypeDecl(decl) => self.type_decl(decl),
+            node::Stmt::Decorator(dec) => self.decorator(dec),
             node::Stmt::Ret(ret) => self.ret(ret),
             node::Stmt::If(r#if) => self.r#if(r#if),
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
@@ -388,6 +399,13 @@ impl Validate {
             return Err(SemanticError::TypeInFunc(decl.name.clone()));
         }
         Ok(())
+    }
+
+    fn decorator(&mut self, dec: &mut node::Decorator) -> Result<(), SemanticError> {
+        if self.cur_func.is_some() {
+            return Err(SemanticError::DecoratorInFunc(dec.span));
+        }
+        self.stmt(dec.inner.as_mut())
     }
 
     fn node_type(span: Span) -> node::Type {
@@ -891,8 +909,12 @@ impl Validate {
                 temp = args.iter().collect();
                 expected_types = temp;
             }
-            None => return Err(SemanticError::UndeclaredSymbol(call.name.clone())),
-            _ => return Err(SemanticError::UndeclaredSymbol(call.name.clone())),
+            _ => {
+                if s.contains(".") {
+                    return Err(SemanticError::PrivateAccess(call.name.clone()));
+                }
+                return Err(SemanticError::UndeclaredSymbol(call.name.clone()));
+            }
         }
         // let mut insert = None;
         if expected_types.len() != arg_types.len() {

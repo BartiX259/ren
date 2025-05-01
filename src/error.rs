@@ -157,6 +157,10 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Type declaration inside a function.");
             print_module_err_id(path, pos_str.pos_id);
         }
+        SemanticError::DecoratorInFunc(span) => {
+            eprintln!("Decorator inside a function.");
+            print_module_err_span(path, span);
+        }
         SemanticError::InvalidArgCount(span, exp, got) => {
             eprintln!("Invalid argument count, expected {} arguments but got {}", exp, got);
             print_module_err_span(path, span);
@@ -213,6 +217,10 @@ pub fn sematic_err(path: &String, e: SemanticError) {
         SemanticError::NoBuiltIn(span, str, ty) => {
             eprintln!("Type {ty} has no {str}.");
             print_module_err_span(path, span);
+        }
+        SemanticError::PrivateAccess(pos_str) => {
+            eprintln!("Can't access private symbol '{}'.", pos_str.str);
+            print_module_err_id(path, pos_str.pos_id);
         }
     }
 }

@@ -32,51 +32,53 @@ pub enum ParseError {
 
 fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
     match tokens.peek() {
-        Some(Token::Let) => return Ok(node::Stmt::Let(parse_let(tokens)?)),
-        Some(Token::Decl) => return Ok(node::Stmt::Decl(parse_decl(tokens)?)),
-        Some(Token::Fn) => return Ok(node::Stmt::Fn(parse_fn_decl(tokens)?)),
-        Some(Token::Type) => return Ok(node::Stmt::TypeDecl(parse_type_decl(tokens)?)),
+        Some(Token::Let) => Ok(node::Stmt::Let(parse_let(tokens)?)),
+        Some(Token::Decl) => Ok(node::Stmt::Decl(parse_decl(tokens)?)),
+        Some(Token::Fn) => Ok(node::Stmt::Fn(parse_fn_decl(tokens)?)),
+        Some(Token::Type) => Ok(node::Stmt::TypeDecl(parse_type_decl(tokens)?)),
+        Some(Token::Pub) => Ok(node::Stmt::Decorator(parse_decorator(tokens)?)),
         Some(Token::Return) => {
             tokens.next();
             let pos_id = tokens.prev_index();
             let expr = parse_opt_expr(tokens)?;
             check_semi(tokens)?;
-            return Ok(node::Stmt::Ret(node::Ret { pos_id, expr }));
+            Ok(node::Stmt::Ret(node::Ret { pos_id, expr }))
         }
-        Some(Token::If) => return Ok(node::Stmt::If(parse_if(tokens)?)),
+        Some(Token::If) => Ok(node::Stmt::If(parse_if(tokens)?)),
         Some(Token::Loop) => {
             tokens.next();
-            return Ok(node::Stmt::Loop(node::Loop {
+            Ok(node::Stmt::Loop(node::Loop {
                 pos_id: tokens.prev_index(),
                 scope: parse_scope(tokens)?,
-            }));
+            }))
         }
         Some(Token::While) => {
             tokens.next();
-            return Ok(node::Stmt::While(node::While {
+            Ok(node::Stmt::While(node::While {
                 pos_id: tokens.prev_index(),
                 expr: parse_expr(tokens, 0)?,
                 scope: parse_scope(tokens)?
-            }));
+            }))
         }
         Some(Token::For) => return Ok(node::Stmt::For(parse_for(tokens)?)),
         Some(Token::Break) => {
             tokens.next();
             check_semi(tokens)?;
-            return Ok(node::Stmt::Break(tokens.prev_index() - 1));
+            Ok(node::Stmt::Break(tokens.prev_index() - 1))
         }
         Some(Token::Continue) => {
             tokens.next();
             check_semi(tokens)?;
-            return Ok(node::Stmt::Continue(tokens.prev_index() - 1));
+            Ok(node::Stmt::Continue(tokens.prev_index() - 1))
         }
-        Some(Token::Syscall) => return Ok(node::Stmt::Syscall(parse_syscall(tokens)?)),
-        Some(Token::Import { .. }) => return Err(ParseError::ImportNotAtStart(tokens.current_index())),
-        _ => (),
+        Some(Token::Syscall) => Ok(node::Stmt::Syscall(parse_syscall(tokens)?)),
+        Some(Token::Import { .. }) => Err(ParseError::ImportNotAtStart(tokens.current_index())),
+        _ => {
+            let expr = parse_expr(tokens, 0)?;
+            check_semi(tokens)?;
+            Ok(node::Stmt::Expr(expr))
+        }
     }
-    let expr = parse_expr(tokens, 0)?;
-    check_semi(tokens)?;
-    Ok(node::Stmt::Expr(expr))
 }
 
 fn expr(start: usize, end: usize, kind: ExprKind) -> node::Expr {
@@ -567,6 +569,28 @@ fn parse_type_decl(tokens: &mut VecIter<Token>) -> Result<node::TypeDecl, ParseE
     Ok(node::TypeDecl {
         name: PosStr { str: name, pos_id: name_pos },
         r#type
+    })
+}
+
+fn parse_decorator(tokens: &mut VecIter<Token>) -> Result<node::Decorator, ParseError> {
+    let mut kinds = Vec::new();
+    let mut pos_ids = Vec::new();
+    let start = tokens.current_index();
+    loop {
+        match tokens.peek() {
+            Some(Token::Pub) => {
+                tokens.next();
+                kinds.push(node::DecoratorKind::Pub);
+                pos_ids.push(tokens.prev_index());
+            }
+            _ => break
+        }
+    }
+    Ok(node::Decorator {
+        kinds,
+        pos_ids,
+        span: Span { start, end: tokens.prev_index() },
+        inner: Box::new(parse_stmt(tokens)?)
     })
 }
 

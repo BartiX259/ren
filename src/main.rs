@@ -129,7 +129,7 @@ fn main() -> ExitCode {
         if generic_calls.is_empty() {
             break;
         } else if before == generic_calls {
-            panic!("No progress");
+            panic!("No progress {generic_calls:?}");
         } else {
             unresolved = resolved_modules
                 .drain(..)

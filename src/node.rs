@@ -60,6 +60,18 @@ pub struct Fn {
     pub generics: Vec<String>,
     pub scope: Vec<Stmt>,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DecoratorKind {
+    Pub
+}
+#[derive(Debug, Clone)]
+pub struct Decorator {
+    pub kinds: Vec<DecoratorKind>,
+    pub pos_ids: Vec<usize>,
+    pub span: Span,
+    pub inner: Box<Stmt>
+}
 #[derive(Debug, Clone)]
 pub struct BinExpr {
     pub lhs: Box<Expr>,
@@ -192,6 +204,7 @@ pub enum Stmt {
     Decl(Decl),
     Fn(Fn),
     TypeDecl(TypeDecl),
+    Decorator(Decorator),
     Ret(Ret),
     If(If),
     Loop(Loop),

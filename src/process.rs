@@ -41,6 +41,7 @@ impl Process {
                 generics: vec![],
                 scope: self.scope(decl.scope),
             }),
+            node::Stmt::Decorator(dec) => self.stmt(*dec.inner),
             node::Stmt::Ret(ret) => node::Stmt::Ret(node::Ret { pos_id: ret.pos_id, expr: self.opt_expr(ret.expr) }),
             node::Stmt::If(r#if) => node::Stmt::If(self.r#if(r#if)),
             node::Stmt::Loop(r#loop) => node::Stmt::Loop(node::Loop { pos_id: r#loop.pos_id, scope: self.scope(r#loop.scope) }),

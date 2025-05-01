@@ -1,3 +1,4 @@
+use core::panic;
 use std::collections::HashMap;
 
 use crate::ir::{Block, Symbol, Term, Op, OpLoc};
@@ -68,6 +69,9 @@ impl<'a> Lower<'a> {
     }
 
     fn load_symbols(&mut self, id: usize) {
+        if id >= self.cur_symbols.len() {
+            panic!("{:?}", self.cur_symbols);
+        }
         if self.cur_symbols.get(id).unwrap().is_empty() {
             return;
         }
@@ -105,6 +109,7 @@ impl<'a> Lower<'a> {
             node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
             node::Stmt::TypeDecl(_) => (),
+            node::Stmt::Decorator(dec) => self.stmt(dec.inner.as_ref()),
             node::Stmt::Ret(ret) => self.ret(ret),
             node::Stmt::If(r#if) => self.r#if(r#if),
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),

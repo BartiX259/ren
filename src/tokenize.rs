@@ -110,6 +110,7 @@ pub enum Token {
     Null,
     As,
     Syscall,
+    Pub,
     Semi,
     Colon,
     OpenParen,
@@ -149,6 +150,7 @@ impl Token {
             Token::Null => "null".to_string(),
             Token::As => "as".to_string(),
             Token::Syscall => "syscall".to_string(),
+            Token::Pub => "pub".to_string(),
             Token::Semi => ";".to_string(),
             Token::Colon => ":".to_string(),
             Token::OpenParen => "(".to_string(),
@@ -196,6 +198,7 @@ impl Token {
             "null" => Some(Token::Null),
             "as" => Some(Token::As),
             "syscall" => Some(Token::Syscall),
+            "pub" => Some(Token::Pub),
             _ => None,
         }
     }

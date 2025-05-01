@@ -74,7 +74,7 @@ fn str(x: <char>, buffer: *char) -> *char {
     return buffer + len(x);
 }
 
-fn print(x: int) {
+pub fn print(x: int) {
     decl buf: char[32];
     let ptr = &buf;
     if x < 0 {
@@ -86,11 +86,11 @@ fn print(x: int) {
     write(1, &buf, end - &buf);
 }
 
-fn print(x: <char>) {
+pub fn print(x: <char>) {
     write(1, x as *char, len(x));
 }
 
-fn print(x: bool) {
+pub fn print(x: bool) {
     if (x) {
         print("true");
     } else {
@@ -98,11 +98,11 @@ fn print(x: bool) {
     }
 }
 
-fn print(x: char) {
+pub fn print(x: char) {
     write(1, &x, 1);
 }
 
-fn print(x: *char) {
+pub fn print(x: *char) {
     let original_x = x;
     let len = 0;
     while *x != 0 {
@@ -112,7 +112,7 @@ fn print(x: *char) {
     write(1, original_x, len);
 }
 
-fn print<T>(x: <T>) {
+pub fn print<T>(x: <T>) {
     print('[');
     let start = true;
     for let i = 0; i < len(x); i += 1 {
@@ -132,12 +132,12 @@ syscall 10: munmap(*any, int);
 decl allocator: (base: *any, size: int, offset: int, stack: *any);
 let SPACE_SIZE = 20;
 
-fn init() {
+pub fn init() {
     allocator.offset = 0;
     allocator.stack = sp() + 8;
 }
 
-fn alloc(size: int) -> *any {
+pub fn alloc(size: int) -> *any {
     size = (size + 7) & ~7;
     let new_offset = allocator.offset + size + 8;
     if allocator.base == null {
