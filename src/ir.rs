@@ -5,7 +5,7 @@ use crate::types::Type;
 pub enum Symbol {
     Type { ty: Type },
     Var { ty: Type },
-    Func { ty: Type, block: Block, module: String, symbols: Vec<Vec<(String, Symbol)>> },
+    Func { ty: Type, block: Block, module: String, args: Vec<Type>, public: bool },
     ExternFunc { ty: Type, args: Vec<Type> },
     Syscall { id: i64, ty: Type, args: Vec<Type> },
     Data { ty: Type, str: String }
@@ -179,10 +179,9 @@ impl fmt::Debug for Symbol {
         match self {
             Symbol::Type { ty } => writeln!(f, "type {:?}\n", ty),
             Symbol::Var { ty } => writeln!(f, "var {:?}\n", ty),
-            Symbol::Func { ty, block, module, symbols } => {
-                write!(f, "func in {}: {} -> {:?}", module, fmt_args(&(symbols.get(0).unwrap().iter().map(|(_, sym)| { let Symbol::Var { ty } = sym else { unreachable!() }; ty.clone() }).collect::<Vec<Type>>())) , ty)?;
-                writeln!(f, "{:?}", block)?;
-                writeln!(f, "symbols: {:?}", symbols)
+            Symbol::Func { ty, block, module, args, public } => {
+                write!(f, "{}func in {}: {} -> {:?}", if *public { "public "} else { "" }, module, fmt_args(args) , ty)?;
+                writeln!(f, "{:?}", block)
             }
             Symbol::ExternFunc { ty, args } => writeln!(f, "extern func: {} -> {:?}\n", fmt_args(args), ty),
             Symbol::Syscall { id, ty, args } => writeln!(f, "syscall {}: {} -> {:?}\n", id, fmt_args(args), ty),

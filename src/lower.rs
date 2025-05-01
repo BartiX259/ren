@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::ir::{Block, Symbol, Term, Op, OpLoc};
 use crate::types::Type;
-use crate::{node, types};
+use crate::node;
 use crate::helpers::StringLit;
 
 /// Transform the ast into the IR
@@ -19,7 +19,6 @@ struct Lower<'a> {
     cur_salloc: Option<Term>,
     ret_salloc: Option<Term>,
     salloc_offset: i64,
-    cur_symbols: Vec<Vec<(String, Symbol)>>,
     cur_block: Option<Block>,
     var_map: HashMap<String, Term>,
     temp_count: usize,
@@ -28,7 +27,6 @@ struct Lower<'a> {
     pointer_count: usize,
     stack_return: Option<Term>,
     label_count: u16,
-    scope_id: usize,
     scope_depth: usize,
     loop_start: Vec<u16>,
     loop_exit: Vec<(u16, usize)>,
@@ -42,7 +40,6 @@ impl<'a> Lower<'a> {
             cur_salloc: None,
             ret_salloc: None,
             salloc_offset: 0,
-            cur_symbols: Vec::new(),
             cur_block: None,
             var_map: HashMap::new(),
             temp_count: 0,
@@ -51,7 +48,6 @@ impl<'a> Lower<'a> {
             pointer_count: 0,
             stack_return: None,
             label_count: 0,
-            scope_id: 0,
             scope_depth: 0,
             loop_start: Vec::new(),
             loop_exit: Vec::new(),
@@ -65,27 +61,6 @@ impl<'a> Lower<'a> {
             block.locs.push(OpLoc { start_id: pos_id, end_id: pos_id });
         } else {
             // panic!("No cur_block!");
-        }
-    }
-
-    fn load_symbols(&mut self, id: usize) {
-        if id >= self.cur_symbols.len() {
-            panic!("{:?}", self.cur_symbols);
-        }
-        if self.cur_symbols.get(id).unwrap().is_empty() {
-            return;
-        }
-        for s in self.cur_symbols.get(id).unwrap().iter() {
-            self.ir.insert(s.0.clone(), s.1.clone());
-        }
-    }
-
-    fn unload_symbols(&mut self, id: usize) {
-        if self.cur_symbols.get(id).unwrap().is_empty() {
-            return;
-        }
-        for s in self.cur_symbols.get(id).unwrap().iter() {
-            self.ir.remove(&s.0);
         }
     }
 
@@ -480,42 +455,33 @@ impl<'a> Lower<'a> {
         // self.stack_count = 0;
         self.var_map.clear();
         if let Some(sym) = self.ir.get(&decl.name.str).cloned() {
-            if let Symbol::Func { ty, symbols, .. } = sym  {
+            if let Symbol::Func { ty, args, .. } = sym  {
                 if ty.size() > 16 {
                     self.pointer_count += 1;
                     self.ret_salloc = Some(Term::Pointer(self.pointer_count));
                     self.push_op(Op::Arg { term: Term::Pointer(self.pointer_count), double: false }, decl.name.pos_id);
                 }
-                symbols.clone_into(&mut self.cur_symbols);
+                for (s, ty) in decl.arg_names.iter().zip(args) {
+                    if ty.size() > 16 {
+                        self.pointer_count += 1;
+                        let id = self.pointer_count;
+                        self.var_map.insert(s.str.clone(), Term::Pointer(id));
+                        self.push_op(Op::Arg { term: Term::Pointer(id), double: false }, s.pos_id);
+                    } else if let Some(_) = ty.dereference() {
+                        self.pointer_count += 1;
+                        let id = self.pointer_count;
+                        self.var_map.insert(s.str.clone(), Term::Pointer(id));
+                        self.push_op(Op::Arg { term: Term::Pointer(id), double: false }, s.pos_id);
+                    } else {
+                        self.stack_count += 1;
+                        let id = self.stack_count;
+                        self.var_map.insert(s.str.clone(), Term::Stack(id));
+                        self.push_op(Op::Arg { term: Term::Stack(id), double: ty.size() > 8 }, s.pos_id);
+                    }
+                }
             }
         }
-        self.scope_id = 0;
-        self.load_symbols(0);
-        for s in decl.arg_names.iter() {
-            let Some(Symbol::Var { ty }) = self.ir.get(&s.str) else {
-                println!("{:?}", self.ir.keys());
-                panic!("Argument not a var ({}).", s.str);
-            };
-            if ty.size() > 16 {
-                self.pointer_count += 1;
-                let id = self.pointer_count;
-                self.var_map.insert(s.str.clone(), Term::Pointer(id));
-                self.push_op(Op::Arg { term: Term::Pointer(id), double: false }, s.pos_id);
-            } else if let Some(_) = ty.dereference() {
-                self.pointer_count += 1;
-                let id = self.pointer_count;
-                self.var_map.insert(s.str.clone(), Term::Pointer(id));
-                self.push_op(Op::Arg { term: Term::Pointer(id), double: false }, s.pos_id);
-            } else {
-                self.stack_count += 1;
-                let id = self.stack_count;
-                self.var_map.insert(s.str.clone(), Term::Stack(id));
-                self.push_op(Op::Arg { term: Term::Stack(id), double: ty.size() > 8 }, s.pos_id);
-            }
-        }
-        self.scope_id += 1;
         self.scope(&decl.scope);
-        self.unload_symbols(0);
         self.ret_salloc = None;
         // println!("VAR MAP {}", decl.name.str);
         // println!("{:?}", self.var_map);
@@ -529,15 +495,11 @@ impl<'a> Lower<'a> {
 
     fn scope(&mut self, scope: &Vec<node::Stmt>) {
         self.push_op(Op::BeginScope, 0);
-        let sc = self.scope_id;
-        self.load_symbols(sc);
-        self.scope_id += 1;
         self.scope_depth += 1;
         for s in scope.iter() {
             self.stmt(s);
         }
         self.scope_depth -= 1;
-        self.unload_symbols(sc);
         // if let Some(Op::Return { .. }) = self.cur_block.as_ref().unwrap().ops.last() {
         // } else {
         // }

@@ -34,8 +34,12 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(S
     val.fn_map = symbols.fn_map;
     for stmt in module.stmts.into_iter() {
         let mut stmt_ref = &stmt;
+        let mut is_public = false;
         if let node::Stmt::Decorator(dec) = &stmt {
             stmt_ref = dec.inner.as_ref();
+            if dec.kinds.contains(&node::DecoratorKind::Pub) {
+                is_public = true;
+            }
         }
         if let node::Stmt::Fn(decl) = stmt_ref {
             if decl.generics.len() > 0 {
@@ -43,7 +47,6 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(S
                     val.cur_generics = map.keys().cloned().collect();
                     if *name == decl.name.str {
                         let mut ty = Type::Void;
-                        let mut arg_symbols: Vec<(String, Symbol)> = Vec::new();
                         let mut types = Vec::new();
                         if let Some(decl_type) = &decl.decl_type {
                             ty = val.r#type(decl_type, false)?;
@@ -53,7 +56,7 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(S
                                 }
                             }
                         }
-                        for (name, ty) in decl.arg_names.iter().zip(decl.arg_types.iter()) {
+                        for ty in decl.arg_types.iter() {
                             let mut ty = val.r#type(ty, false)?;
                             if let (Type::Generic(s), _) = &ty.depth(0) {
                                 if let Some(inner) = map.get(s) {
@@ -61,7 +64,6 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(S
                                 }
                             }
                             types.push(ty.clone());
-                            arg_symbols.push((name.str.clone(), Symbol::Var { ty: ty.clone() }));
                         }
                         let mut new_decl = decl.clone();
                         for (k, v) in map {
@@ -72,7 +74,7 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(S
                         }
                         new_decl.generics.clear();
                         new_decl.name.str += format!(".{i}").as_str();
-                        val.hoist_func_with_types(&mut new_decl, ty, arg_symbols, types, false, false)?;
+                        val.hoist_func_with_types(&mut new_decl, ty, types, false, is_public)?;
                         val.r#fn(&mut new_decl)?;
                         for k in map.keys() {
                             val.symbol_table.remove(k);
@@ -188,12 +190,10 @@ struct Validate {
     gfns: usize,
     gcalls: Vec<(String, HashMap<String, Type>, usize)>,
     cur_module: String,
-    fn_symbols: Vec<Vec<(String, Symbol)>>,
-    symbol_stack: Vec<usize>,
+    symbol_stack: Vec<Vec<String>>,
     cur_func: Option<String>,
     cur_ret: Type,
     cur_generics: Vec<String>,
-    scope_id: usize,
     loop_count: usize,
 }
 
@@ -205,29 +205,17 @@ impl Validate {
             gfns: 0,
             gcalls: Vec::new(),
             cur_module: String::new(),
-            fn_symbols: Vec::new(),
             symbol_stack: Vec::new(),
             cur_func: None,
             cur_ret: Type::Void,
             cur_generics: Vec::new(),
-            scope_id: 0,
             loop_count: 0,
-        }
-    }
-
-    /// Returns mutable reference to the current scope's symbols
-    fn scope_symbols(&mut self) -> &mut Vec<(String, Symbol)> {
-        if self.cur_func.is_some() {
-            let i = self.symbol_stack.last().unwrap().clone();
-            self.fn_symbols.get_mut(i).unwrap()
-        } else {
-            panic!("Pushed symbol outside of function!");
         }
     }
 
     fn push_symbol(&mut self, name: String, sym: Symbol) {
         self.symbol_table.insert(name.clone(), sym.clone());
-        self.scope_symbols().push((name.clone(), sym.clone()));
+        self.symbol_stack.last_mut().unwrap().push(name.clone());
     }
     
     fn stmt(&mut self, stmt: &mut node::Stmt) -> Result<(), SemanticError> {
@@ -345,50 +333,33 @@ impl Validate {
         }
         if decl.generics.len() > 0 { return Ok(()); }
 
-        // Retrieve arguments
-        let arg_symbols = self
-            .symbol_table
+        // Retrieve arguments and return type
+        let mut arg_types = vec![];
+        self.symbol_table
             .get(&decl.name.str)
             .and_then(|sym| match sym {
-                Symbol::Func { symbols, .. } => symbols.get(0).cloned(),
+                Symbol::Func { ty, args, .. } => {
+                    self.cur_ret = ty.clone();
+                    arg_types = args.clone();
+                    Some(())
+                }
                 _ => None,
             })
             .expect("Function symbol not found");
 
-        for (name, symbol) in &arg_symbols {
-            self.symbol_table.insert(name.clone(), symbol.clone());
+        for (name, ty) in decl.arg_names.iter().zip(arg_types) {
+            self.symbol_table.insert(name.str.clone(), Symbol::Var { ty: ty.clone() });
         }
-
-        self.scope_id = 0;
-        self.symbol_stack.push(self.scope_id);
-        self.fn_symbols.push(arg_symbols.clone());
-        self.scope_id += 1;
-
-        self.cur_ret = self
-            .symbol_table
-            .get(&decl.name.str)
-            .and_then(|sym| match sym {
-                Symbol::Func { ty, .. } => Some(ty.clone()),
-                _ => None,
-            })
-            .expect("Function symbol not found");
 
         self.cur_func = Some(decl.name.str.clone());
 
         self.scope(&mut decl.scope)?;
 
-        for (name, _) in &arg_symbols {
-            self.symbol_table.remove(name);
-        }
-
-        if let Some(Symbol::Func { symbols, .. }) = self.symbol_table.get_mut(&decl.name.str) {
-            *symbols = self.fn_symbols.clone();
-        } else {
-            unreachable!("Function symbol should exist at this point");
+        for name in decl.arg_names.iter() {
+            self.symbol_table.remove(&name.str);
         }
 
         self.cur_ret = Type::Void;
-        self.fn_symbols.clear();
         self.cur_func = None;
 
         Ok(())
@@ -413,16 +384,13 @@ impl Validate {
     }
 
     fn scope(&mut self, scope: &mut Vec<node::Stmt>) -> Result<(), SemanticError> {
-        self.symbol_stack.push(self.scope_id);
-        self.fn_symbols.push(Vec::new());
-        self.scope_id += 1;
+        self.symbol_stack.push(Vec::new());
         for stmt in scope.iter_mut() {
             self.stmt(stmt)?;
         }
         // Remove the local symbols from the symbol table
-        let i = self.symbol_stack.pop().unwrap();
-        for sym in self.fn_symbols.get(i).unwrap() {
-            self.symbol_table.remove(&sym.0);
+        for sym in self.symbol_stack.pop().unwrap() {
+            self.symbol_table.remove(&sym);
         }
         Ok(())
     }
@@ -878,36 +846,12 @@ impl Validate {
         }
         let ty;
         let expected_types;
-        let temp: Vec<_>;
         match self.symbol_table.get(&s) {
-            Some(Symbol::Func { ty: t, symbols, .. }) => {
-                ty = t;
-                if symbols.len() == 0 { // Recursive call
-                    temp = self.fn_symbols
-                    .get(0)
-                    .unwrap()
-                    .iter()
-                    .filter_map(|(_, symbol)| if let Symbol::Var { ty } = symbol { Some(ty) } else { None })
-                    .collect();
-                } else {
-                    temp = symbols
-                    .get(0)
-                    .unwrap()
-                    .iter()
-                    .filter_map(|(_, symbol)| if let Symbol::Var { ty } = symbol { Some(ty) } else { None })
-                    .collect();
-                }
-                expected_types = temp;
-            }
-            Some(Symbol::ExternFunc { ty: t, args }) => {
-                ty = t;
-                temp = args.iter().collect();
-                expected_types = temp;
-            }
+            Some(Symbol::Func { ty: t, args, .. }) |
+            Some(Symbol::ExternFunc { ty: t, args }) |
             Some(Symbol::Syscall { id: _, ty: t, args }) => {
                 ty = t;
-                temp = args.iter().collect();
-                expected_types = temp;
+                expected_types = args;
             }
             _ => {
                 if s.contains(".") {

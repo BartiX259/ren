@@ -52,7 +52,6 @@ fn split<T>(sl: <T>, split: T) -> [<T>] {
 }
 
 fn main() -> int {
-	init();
 	let x = +"bsikzx";
 	print("1: ");
 	print(x);

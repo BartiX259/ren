@@ -39,7 +39,6 @@ struct Gen<'a> {
     buf: IndentedBuf,
     cur_module: String,
     symbol_table: &'a mut HashMap<String, Symbol>,
-    fn_symbols: Vec<Vec<(String, Symbol)>>,
     locs: HashMap<Term, i64>,
     doubles: HashMap<Term, (String, String)>,
     regs: Vec<Reg>,
@@ -61,7 +60,6 @@ impl<'a> Gen<'a> {
             buf: IndentedBuf::new(8, 24),
             cur_module: String::new(),
             symbol_table: ir,
-            fn_symbols: Vec::new(),
             locs: HashMap::new(),
             doubles: HashMap::new(),
             regs: vec![reg("rax"), reg("rbx"), reg("rcx"), reg("rdx"), reg("rdi"), reg("rsi"), reg("r8"), reg("r9")],
@@ -96,8 +94,10 @@ impl<'a> Gen<'a> {
         for (name, sym) in self.symbol_table.iter() {
             if let Symbol::ExternFunc { .. } = sym {
                 self.buf.push_line(format!("extern {}", name));
-            } else if let Symbol::Func { .. } = sym {
-                self.buf.push_line(format!("global {}", name));
+            } else if let Symbol::Func { public, .. } = sym {
+                if *public {
+                    self.buf.push_line(format!("global {}", name));
+                }
             }
         }
         // _start function
@@ -114,10 +114,7 @@ impl<'a> Gen<'a> {
             while let Some(sym) = self.symbol_table.get(&format!("init.{i}")) {
                 let empty = match sym {
                     Symbol::ExternFunc { args, .. } => args.is_empty(),
-                    Symbol::Func { symbols, .. } => symbols.get(0).unwrap().iter().map(|(_, s)| {
-                        let Symbol::Var { ty } = s else { unreachable!(); };
-                        ty.clone()
-                    }).len() == 0,
+                    Symbol::Func { args, .. } => args.is_empty(),
                     _ => {
                         i += 1;
                         continue;
@@ -180,12 +177,11 @@ impl<'a> Gen<'a> {
             self.sp = 0;
             self.arg_index = 0;
             let sym = self.symbol_table.get(&name);
-            if let Some(Symbol::Func { block, module, symbols, .. }) = sym {
+            if let Some(Symbol::Func { block, module, .. }) = sym {
                 self.cur_module = module.to_string();
                 self.buf.push_line("");
                 self.buf.push_line(format!("{}:", name));
                 self.buf.indent();
-                self.fn_symbols = symbols.clone();
                 self.block(block.clone())?;
                 if self.buf.last_line.clone() != "ret" {
                     if self.sp > 0 {

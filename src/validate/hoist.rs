@@ -69,23 +69,22 @@ impl Validate {
             } else {
                 ty = Type::Void;
             }
-            let mut arg_symbols: Vec<(String, Symbol)> = Vec::new();
+            let mut arg_names: Vec<String> = Vec::new();
             let mut types = Vec::new();
             for arg in decl.arg_names.iter().zip(decl.arg_types.iter()) {
                 if self.symbol_table.contains_key(&arg.0.str) {
                     return Err(SemanticError::SymbolExists(arg.0.clone()));
                 }
-                for existing in arg_symbols.iter() {
-                    if existing.0 == arg.0.str {
+                for existing in arg_names.iter() {
+                    if *existing == arg.0.str {
                         return Err(SemanticError::SymbolExists(arg.0.clone()));
                     }
                 }
                 let ty = self.r#type(arg.1, false)?;
                 types.push(ty.clone());
-                let sym = Symbol::Var { ty };
-                arg_symbols.push((arg.0.str.clone(), sym.clone()));
+                arg_names.push(arg.0.str.clone());
             }
-            self.hoist_func_with_types(decl, ty, arg_symbols, types, public, is_public)?;
+            self.hoist_func_with_types(decl, ty, types, public, is_public)?;
             if self.cur_generics.len() > 0 {
                 self.gfns += 1;
                 self.cur_generics.clear();
@@ -149,7 +148,7 @@ impl Validate {
         Ok(())
     }
 
-    pub fn hoist_func_with_types(&mut self, decl: &mut node::Fn, ty: Type, arg_symbols: Vec<(String, Symbol)>, types: Vec<Type>, public: bool, insert_extern: bool) -> Result<(), SemanticError> {
+    pub fn hoist_func_with_types(&mut self, decl: &mut node::Fn, ty: Type, types: Vec<Type>, public: bool, is_public: bool) -> Result<(), SemanticError> {
         if public {
             let s;
             if decl.name.str == "main" {
@@ -164,18 +163,18 @@ impl Validate {
                         return Err(SemanticError::SymbolExists(decl.name.clone()));
                     }
                     len = sigs.len() + 1;
-                    sigs.push((types, len));
+                    sigs.push((types.clone(), len));
                 } else {
-                    self.fn_map.insert(decl.name.str.clone(), vec![(types, 1)]);
+                    self.fn_map.insert(decl.name.str.clone(), vec![(types.clone(), 1)]);
                     len = 1;
                 }
                 s = format!("{}.{}", decl.name.str, len);
                 decl.name.str = s.clone();
             }
-            if insert_extern {
+            if is_public {
                 self.symbol_table.insert(s, Symbol::ExternFunc { 
                     ty,
-                    args: arg_symbols.iter().map(|(_, sym)| { let Symbol::Var { ty } = sym.clone() else { unreachable!() }; ty }).collect()
+                    args: types
                 });
             }
         } else {
@@ -184,7 +183,8 @@ impl Validate {
                 self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
                     ty, module: self.cur_module.clone(),
                     block: Block::new(),
-                    symbols: vec![arg_symbols],
+                    args: types,
+                    public: is_public
                 });
             } else {
                 let id = split.get(1).unwrap().parse::<usize>().unwrap();
@@ -193,14 +193,15 @@ impl Validate {
                     if sigs.iter().any(|(tys, _)| *tys == types) {
                         return Err(SemanticError::SymbolExists(decl.name.clone()));
                     }
-                    sigs.push((types, id));
+                    sigs.push((types.clone(), id));
                 } else {
-                    self.fn_map.insert(name, vec![(types, id)]);
+                    self.fn_map.insert(name, vec![(types.clone(), id)]);
                 }
                 self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
                     ty, module: self.cur_module.clone(),
                     block: Block::new(),
-                    symbols: vec![arg_symbols],
+                    args: types,
+                    public: is_public
                 });
             }
         }

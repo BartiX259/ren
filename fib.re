@@ -1,4 +1,3 @@
-import lib/std
 
 fn fib(n: int) -> int {
     if n == 0 {
@@ -11,5 +10,5 @@ fn fib(n: int) -> int {
 }
 
 fn main() {
-  print(fib(40));
+  (fib(8));
 }
