@@ -170,7 +170,7 @@ pub fn alloc(size: int) -> *any {
     return res + 8;
 }
 
-fn print_heap() {
+pub fn print_heap() {
     print("HEAP: ");
     let ptr = (allocator.base) as *int;
     while ptr < allocator.base + allocator.offset {
@@ -181,15 +181,15 @@ fn print_heap() {
     print('\n');
 }
 
-fn print_stack(offset: int, len: int) {
+pub fn print_stack(offset: int, len: int) {
     print("STACK: |");
-    let ptr = sp() as *int + offset;
+    let ptr = sp() as *int + offset + 3;
     print(ptr);
     print("| :: ");
     for let i = 0; i < len; i += 1 {
         print(*ptr);
         print(" :: ");
-        ptr -= 1;
+        ptr += 1;
     }
     print('|');
     print(ptr);
@@ -338,24 +338,24 @@ syscall 2: open(*char, int, int) -> int;
 syscall 5: fstat(int, *any) -> int;
 syscall 6: close(int) -> int;
 
-pub fn read_file(path: *char) -> <char> {
+pub fn read(path: *char) -> <char> ? <char> {
     let fd = open(path, 0, 0);
     if fd < 0 {
-        print("Failed to open file.\n");
-        return "";
+        print("Fail");
+        return ?"Failed to open file.\n";
     }
 
     decl st: int[18];
     if fstat(fd, &st) < 0 {
-        print("Failed to stat file.\n");
         close(fd);
-        return "";
+        return ?"Failed to stat file.\n";
     }
 
     let size = st[6];
     let mapped = mmap(0, size, 3, 2, fd, 0);
     close(fd);
 
-    return (mapped as *char)[0..size];
+    print("okk");
+    return (mapped as *char)[..size];
 }
 

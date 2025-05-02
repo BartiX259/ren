@@ -266,6 +266,10 @@ impl<'a> Gen<'a> {
                         self.buf.push_line("push 0");
                     }
                 }
+                ir::Op::Own { res, term, offset } => {
+                    let loc = self.locs.get(&term).unwrap();
+                    self.locs.insert(res, loc - offset);
+                }
                 ir::Op::Arg { term, double } => {
                     let reg = *self.call_order.get(self.arg_index).ok_or(GenError::TooManyArguments(self.last_loc.clone()))?;
                     self.arg_index += 1;

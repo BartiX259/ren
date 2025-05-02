@@ -54,7 +54,6 @@ fn main() -> ExitCode {
             break;
         }
     }
-    println!("{:?}", import_names);
 
     let mut public_map = HashMap::new();
     for module in modules.iter_mut() {
@@ -69,8 +68,6 @@ fn main() -> ExitCode {
             }
         }
     }
-
-    println!("{:?}", public_map);
 
     let mut files = Vec::new();
     let mut generic_calls = Vec::new();
@@ -198,7 +195,7 @@ fn gen_module(module: node::Module, mut ir: HashMap<String, ir::Symbol>) -> Resu
 
     lower::lower(processed_stmts, &mut ir);
 
-    // println!("IR:\n{:?}\n", ir);
+    println!("IR:\n{:?}\n", ir);
 
     // optimize::optimize(&mut ir);
 

@@ -36,6 +36,7 @@ pub struct Call {
     pub name: PosStr,
     pub args: Vec<Expr>,
 }
+
 #[derive(Debug, Clone)]
 pub enum TypeKind {
     Word(String),
@@ -44,13 +45,15 @@ pub enum TypeKind {
     Slice(Box<Type>),
     List(Box<Type>),
     Tuple(Vec<Type>),
-    Struct(Vec<PosStr>, Vec<Type>)
+    Struct(Vec<PosStr>, Vec<Type>),
+    Result(Box<Type>, Box<Type>)
 }
 #[derive(Debug, Clone)]
 pub struct Type {
     pub kind: TypeKind,
     pub span: Span
 }
+
 #[derive(Debug, Clone)]
 pub struct Fn {
     pub name: PosStr,
@@ -195,6 +198,7 @@ pub enum ExprKind {
     BuiltIn(BuiltIn),
     BinExpr(BinExpr),
     UnExpr(UnExpr),
+    PostUnExpr(UnExpr),
     TypeCast(TypeCast)
 }
 #[derive(Debug, Clone)]

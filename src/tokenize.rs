@@ -363,7 +363,7 @@ fn esc_char(esc: char, iter: &mut VecIter<char>) -> Result<u32, TokenizeError> {
 
 /// Checks if a character is a valid single-character operator.
 fn is_operator(ch: char) -> bool {
-    ['+', '-', '*', '/', '=', '<', '>', '&', '|', '!', '%', '^', '.', '~'].contains(&ch)
+    ['+', '-', '*', '/', '=', '<', '>', '&', '|', '!', '%', '^', '.', '~', '?'].contains(&ch)
 }
 
 /// Checks if a pair of characters form a valid two-character operator.

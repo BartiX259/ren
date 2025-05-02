@@ -106,6 +106,11 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
         let tok = peek.unwrap();
         if let Token::Op { value } = tok {
             opstr = value.to_string();
+            if value == "?" {
+                tokens.next();
+                root = expr(start, tokens.prev_index(), node::ExprKind::PostUnExpr(node::UnExpr { expr: Box::new(root), op: PosStr { str: opstr, pos_id: tokens.prev_index() } }));
+                continue;
+            }
             prec = op_prec(value.as_str());
         } else if let Token::OpenSquare = tok {
             root = parse_array_access(tokens, root, start)?;
@@ -642,7 +647,7 @@ fn r#type(start: usize, end: usize, kind: node::TypeKind) -> node::Type {
 fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
     let start = tokens.current_index();
     let tok = check_none(tokens, "a type")?;
-    if let Token::Word { value } = &tok {
+    let ty = if let Token::Word { value } = &tok {
         let ty = r#type(start, start, node::TypeKind::Word(value.clone()));
         if let Some(Token::OpenSquare) = tokens.peek() {
             tokens.next();
@@ -689,7 +694,16 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
         Ok(r#type(start, tokens.prev_index(), node::TypeKind::List(Box::new(ty))))
     } else {
         Err(unexp(tok, tokens.prev_index(), "a type"))
+    }?;
+    // Post
+    if let Some(Token::Op { value }) = tokens.peek() {
+        if value == "?" {
+            tokens.next();
+            let err = parse_type(tokens)?;
+            return Ok(r#type(start, tokens.prev_index(), node::TypeKind::Result(Box::new(ty), Box::new(err))));
+        }
     }
+    Ok(ty)
 }
 
 fn parse_syscall(tokens: &mut VecIter<Token>) -> Result<node::Syscall, ParseError> {

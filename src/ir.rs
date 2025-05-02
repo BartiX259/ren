@@ -50,6 +50,7 @@ pub enum Op {
     Copy { from: Term, to: Term, size: Term },
     Let { res: Term, term: Term },
     Decl { term: Term, size: u32 },
+    Own { res: Term, term: Term, offset: i64 },
     Arg { term: Term, double: bool },
     Param { term: Term },
     Call { res: Option<Term>, func: String },
@@ -91,7 +92,7 @@ impl Term {
     pub fn is_stack(&self) -> bool {
         match self {
             Term::Pointer(_) | Term::Stack(_) | Term::PointerArithmetic(_) => true,
-            _ => false
+            _ => false.clone()
         }
     }
     pub fn stack_arithmetic(&self) -> Option<Term> {
@@ -124,6 +125,7 @@ impl fmt::Debug for Op {
             Op::Copy { from, to, size } => write!(f, "copy {:?} into {:?} (size {:?})", from, to, size),
             Op::Let { res, term } => write!(f, "let {:?} = {:?}", res, term),
             Op::Decl { term, size } => write!(f, "decl {:?} (size {})", term, size),
+            Op::Own { res, term, offset } => write!(f, "{:?} = own {:?} + {}", res, term, offset),
             Op::Arg { term, double } => write!(f, "arg {:?}{}", term, if *double { " (double)" } else { "" }),
             Op::Param { term } => write!(f, "param {:?}", term),
             Op::BeginCall { params: args } => write!(f, "begin call {:?}", args),

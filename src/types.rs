@@ -15,7 +15,8 @@ pub enum Type {
     List { inner: Box<Type> },
     Slice { inner: Box<Type> },
     Struct(HashMap<String, (Type, u32)>),
-    Tuple(Vec<Type>)
+    Tuple(Vec<Type>),
+    Result(Box<Type>, Box<Type>)
 }
 
 impl Type {
@@ -24,6 +25,7 @@ impl Type {
             Type::Struct(map) => map.iter().map(|(_, (ty, _))| ty.size()).sum(),
             Type::Array { inner, length } => *length as u32 * inner.size(),
             Type::Tuple(tys) => tys.iter().map(|ty| ty.size()).sum(),
+            Type::Result(ty, err) => ty.size().max(err.size()) + 8,
             Type::Range | Type::Slice { .. } | Type::List { .. } => 16,
             Type::Int | Type::Float | Type::Pointer(_) => 8,
             Type::Char | Type::Bool | Type::Any | Type::Void => 1,
@@ -125,6 +127,7 @@ impl Display for Type {
                 }
                 write!(f, ")")
             }
+            Type::Result(ty, err) => write!(f, "{ty} ? {err}")
         }
     }
 }

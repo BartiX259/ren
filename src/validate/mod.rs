@@ -283,6 +283,7 @@ impl Validate {
             node::ExprKind::BuiltIn(built_in) => self.built_in(built_in, expr.span),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr, expr.span),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.span),
+            node::ExprKind::PostUnExpr(un_expr) => self.post_un_expr(un_expr, expr.span),
             node::ExprKind::TypeCast(cast) => {
                 let from = self.expr(&mut cast.expr)?;
                 let to = self.r#type(&cast.r#type, false)?;
@@ -405,6 +406,7 @@ impl Validate {
             let ty = self.expr(expr)?;
             if self.cur_ret != ty {
                 Self::type_cast(ty, self.cur_ret.clone(), span)?;
+                expr.ty = self.cur_ret.clone();
                 expr.kind = node::ExprKind::TypeCast(node::TypeCast { r#type: Self::node_type(span), expr: Box::new(expr.clone()) })
             }
         } else if self.cur_ret != Type::Void {
@@ -549,15 +551,15 @@ impl Validate {
                     Ok(Type::Bool)
                 } else {
                     if let Ok(ty) = Self::type_cast(ty1.clone(), ty2.clone(), bin.lhs.span) {
-                        bin.lhs.kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
-                            kind: node::TypeKind::Word("void".to_string()), span: bin.lhs.span },
+                        bin.lhs.kind = ExprKind::TypeCast(node::TypeCast { 
+                            r#type: Self::node_type(bin.lhs.span),
                             expr: bin.lhs.clone()
                         });
                         return Ok(ty);
                     }
                     if let Ok(ty) = Self::type_cast(ty2.clone(), ty1.clone(), bin.rhs.span) {
-                        bin.rhs.kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
-                            kind: node::TypeKind::Word("void".to_string()), span: bin.rhs.span },
+                        bin.rhs.kind = ExprKind::TypeCast(node::TypeCast { 
+                            r#type: Self::node_type(bin.rhs.span),
                             expr: bin.rhs.clone()
                         });
                         return Ok(ty);
@@ -575,8 +577,8 @@ impl Validate {
                     Ok(ty1)
                 } else {
                     if let Ok(ty) = Self::type_cast(ty2.clone(), ty1.clone(), bin.rhs.span) {
-                        bin.rhs.kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
-                            kind: node::TypeKind::Word("void".to_string()), span: bin.rhs.span },
+                        bin.rhs.kind = ExprKind::TypeCast(node::TypeCast { 
+                            r#type: Self::node_type(bin.rhs.span),
                             expr: bin.rhs.clone()
                         });
                         return Ok(ty);
@@ -702,7 +704,46 @@ impl Validate {
                     Err(SemanticError::UnaryTypeMismatch(span, un.op.str.clone(), ty))
                 }
             }
+            "?" => {
+                if let Type::Result(_, err) = &self.cur_ret {
+                    if ty != **err {
+                        Self::type_cast(ty.clone(), *err.clone(), span)?;
+                        un.expr.ty = *err.clone();
+                        un.expr.kind = node::ExprKind::TypeCast(node::TypeCast {
+                            r#type: Self::node_type(span),
+                            expr: un.expr.clone(),
+                        })
+                    }
+                    Ok(self.cur_ret.clone())
+                } else {
+                    Err(SemanticError::UnaryTypeMismatch(span, un.op.str.clone(), ty))
+                }
+            }
             _ => Err(SemanticError::InvalidUnaryOperator(un.op.clone())),
+        }
+    }
+    
+    fn post_un_expr(&mut self, un: &mut node::UnExpr, span: Span) -> Result<Type, SemanticError> {
+        let ty = self.expr(&mut un.expr)?;
+        match un.op.str.as_str() {
+            "?" => {
+                if let Type::Result(ty, err) = ty {
+                    let mut ok = false;
+                    if let Type::Result(_, e2) = &self.cur_ret {
+                        if err == *e2 {
+                            ok = true;
+                        }
+                    }
+                    if ok {
+                        Ok(*ty)
+                    } else {
+                        Err(SemanticError::InvalidReturn(un.op.pos_id))
+                    }
+                } else {
+                    Err(SemanticError::UnaryTypeMismatch(span, "?".to_string(), Type::Result(Box::new(Type::Any), Box::new(Type::Any))))
+                }
+            }
+            _ => Err(SemanticError::InvalidUnaryOperator(un.op.clone()))
         }
     }
 
@@ -777,8 +818,8 @@ impl Validate {
                                             break;
                                         }
                                         let e = call.args.get(i).unwrap().clone();
-                                        call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
-                                            kind: node::TypeKind::Word("void".to_string()), span: e.span },
+                                        call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
+                                            r#type: Self::node_type(e.span),
                                             expr: Box::new(e)
                                         });
                                         call.args.get_mut(i).unwrap().ty = t.clone();
@@ -793,8 +834,8 @@ impl Validate {
                                             break;
                                         }
                                         let e = call.args.get(i).unwrap().clone();
-                                        call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
-                                            kind: node::TypeKind::Word("void".to_string()), span: e.span },
+                                        call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
+                                            r#type: Self::node_type(e.span),
                                             expr: Box::new(e)
                                         });
                                         call.args.get_mut(i).unwrap().ty = t.clone();
@@ -808,8 +849,8 @@ impl Validate {
                                     break;
                                 }
                                 let e = call.args.get(i).unwrap().clone();
-                                call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast { r#type: node::Type { 
-                                    kind: node::TypeKind::Word("void".to_string()), span: e.span },
+                                call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
+                                    r#type: Self::node_type(e.span),
                                     expr: Box::new(e)
                                 });
                                 call.args.get_mut(i).unwrap().ty = ty2.clone();
@@ -994,6 +1035,7 @@ impl Validate {
                 }
                 Ok(Type::Struct(map))
             }
+            node::TypeKind::Result(ty, err) => Ok(Type::Result(Box::new(self.r#type(ty, false)?), Box::new(self.r#type(err, false)?)))
         }
     }
 
@@ -1055,6 +1097,11 @@ impl Validate {
                 }
             }
             (Type::Pointer(_), Type::Int) => (),
+            (ty, Type::Result(ok, _)) => {
+                if *ty != **ok {
+                    return Err(SemanticError::InvalidCast(span, from, to));
+                }
+            }
             _ => return Err(SemanticError::InvalidCast(span, from, to))
         }
         Ok(to)
