@@ -284,6 +284,7 @@ impl Validate {
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr, expr.span),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.span),
             node::ExprKind::PostUnExpr(un_expr) => self.post_un_expr(un_expr, expr.span),
+            node::ExprKind::Else(r#else) => self.r#else(r#else),
             node::ExprKind::TypeCast(cast) => {
                 let from = self.expr(&mut cast.expr)?;
                 let to = self.r#type(&cast.r#type, false)?;
@@ -744,6 +745,25 @@ impl Validate {
                 }
             }
             _ => Err(SemanticError::InvalidUnaryOperator(un.op.clone()))
+        }
+    }
+
+    fn r#else(&mut self, r#else: &mut node::Else) -> Result<Type, SemanticError> {
+        let ty = self.expr(&mut r#else.expr)?;
+        if let Type::Result(ok, err) = ty {
+            if let Some(c) = &r#else.capture {
+                if self.symbol_table.contains_key(&c.str) {
+                    return Err(SemanticError::SymbolExists(c.clone()));
+                }
+                self.push_symbol(c.str.clone(), Symbol::Var { ty: *err });
+            }
+            self.scope(&mut r#else.scope)?;
+            if let Some(c) = &r#else.capture {
+                self.symbol_table.remove(&c.str);
+            }
+            Ok(*ok)
+        } else {
+            Err(SemanticError::TypeMismatch(r#else.pos_str.clone(), ty, Type::Result(Box::new(Type::Any), Box::new(Type::Any))))
         }
     }
 

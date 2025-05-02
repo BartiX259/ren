@@ -112,6 +112,15 @@ impl Process {
                 args: self.expr_list(call.args)
             }),
             node::ExprKind::UnExpr(un) => self.un_expr(un),
+            node::ExprKind::PostUnExpr(un) => self.un_expr(un),
+            node::ExprKind::Else(r#else) => {
+                node::ExprKind::Else(node::Else {
+                    expr: Box::new(self.expr(*r#else.expr)),
+                    capture: r#else.capture,
+                    pos_str: r#else.pos_str,
+                    scope: self.scope(r#else.scope),
+                })
+            }
             node::ExprKind::TypeCast(cast) => node::ExprKind::TypeCast(node::TypeCast { r#type: cast.r#type, expr: Box::new(self.expr(*cast.expr)) }),
             node::ExprKind::BuiltIn(built_in) => node::ExprKind::BuiltIn(node::BuiltIn { kind: built_in.kind, args: self.expr_list(built_in.args) }),
             _ => expr.kind

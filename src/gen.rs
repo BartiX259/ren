@@ -211,6 +211,11 @@ impl<'a> Gen<'a> {
                     if size == Term::IntLit(0) {
                         continue;
                     }
+                    if let Term::IntLit(_) = from {
+                        self.store(from, "=".to_string(), to, 0, None, 8)?;
+                        self.buf.comment(format!("{op_clone:?}"));
+                        continue; 
+                    }
                     if let Some(t) = from.stack_arithmetic() {
                         self.free_reg(&"rsi".to_string())?;
                         self.buf.push_line("mov rsi, rsp");

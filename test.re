@@ -1,8 +1,10 @@
 import lib/std
 
-fn t() -> int ? <char> {
-    let x = read("test.re")?;
-    print_stack(0, 20);
+fn t() {
+    let x = read("test.rea") else err {
+        print("ERROR: {err}");
+        return;
+    };
     print(x);
 }
 

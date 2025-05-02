@@ -128,6 +128,30 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
                 expr: Box::new(lhs),
             }));
             continue;
+        } else if let Token::Else = tok {
+            let prec = op_prec("else");
+            if prec < min_prec {
+                break;
+            }
+            tokens.next();
+            let pos_str = PosStr {
+                str: "else".to_string(),
+                pos_id: tokens.prev_index()
+            };
+            let mut capture = None;
+            if let Some(Token::Word { value }) = tokens.peek() {
+                capture = Some(PosStr { str: value.clone(), pos_id: tokens.current_index() });
+                tokens.next();
+            }
+            let scope = parse_scope(tokens)?;
+            let lhs = root;
+            root = expr(start, tokens.prev_index(), node::ExprKind::Else(node::Else {
+                expr: Box::new(lhs),
+                pos_str,
+                capture,
+                scope
+            }));
+            continue;
         } else {
             break;
         }
@@ -769,6 +793,7 @@ fn unexp(token: Token, pos_id: usize, expected: &str) -> ParseError {
 fn op_prec(op: &str) -> u8 {
     match op {
         "," => 0,
+        "else" => 0,
         "=" => 1,  // Lowest precedence (done last)
         "+=" => 1,
         "-=" => 1,

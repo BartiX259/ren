@@ -98,6 +98,13 @@ pub struct UnExpr {
     pub op: PosStr,
 }
 #[derive(Debug, Clone)]
+pub struct Else {
+    pub expr: Box<Expr>,
+    pub capture: Option<PosStr>,
+    pub pos_str: PosStr,
+    pub scope: Vec<Stmt>
+}
+#[derive(Debug, Clone)]
 pub struct Ret {
     pub pos_id: usize,
     pub expr: Option<Expr>,
@@ -199,6 +206,7 @@ pub enum ExprKind {
     BinExpr(BinExpr),
     UnExpr(UnExpr),
     PostUnExpr(UnExpr),
+    Else(Else),
     TypeCast(TypeCast)
 }
 #[derive(Debug, Clone)]

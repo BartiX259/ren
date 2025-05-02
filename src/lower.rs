@@ -397,6 +397,7 @@ impl<'a> Lower<'a> {
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr, expr.ty.size()),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, &expr.ty),
             node::ExprKind::PostUnExpr(un_expr) => self.post_un_expr(un_expr),
+            node::ExprKind::Else(r#else) => self.r#else(r#else),
             node::ExprKind::TypeCast(cast) => self.type_cast(cast, &expr.ty)
         }
     }
@@ -793,41 +794,51 @@ impl<'a> Lower<'a> {
         Term::Temp(self.temp_count)
     }
 
+    fn unwrap(&mut self, t: Term, pos_id: usize) -> (Term, Term, u16) {
+        self.label_count += 1;
+        let ret_label = self.label_count;
+        self.label_count += 1;
+        let ok_label = self.label_count;
+        let s;
+        let inner;
+        if let Term::Temp(_) = t {
+            let Some(ret) = &self.stack_return else {
+                panic!("No stack return");
+            };
+            self.stack_count += 1;
+            s = ret.clone();
+            inner = Term::Stack(self.stack_count);
+            self.clear_res();
+            self.push_op(Op::Own { res: inner.clone(), term: s.clone(), offset: 8 }, pos_id);
+        } else if let Term::Double(_) = t {
+            self.stack_count += 1;
+            s = Term::Stack(self.stack_count);
+            self.stack_count += 1;
+            inner = Term::Stack(self.stack_count);
+            self.push_op(Op::Decl { term: s.clone(), size: 16 }, pos_id);
+            self.push_op(Op::Read { res: t.clone(), ptr: s.clone(), offset: 0, size: 16 }, pos_id);
+            self.push_op(Op::Own { res: inner.clone(), term: s.clone(), offset: 8 }, pos_id);
+        } else if let Term::Stack(_) = t {
+            s = t;
+            self.stack_count += 1;
+            inner = Term::Stack(self.stack_count);
+            self.push_op(Op::Own { res: inner.clone(), term: s.clone(), offset: 8 }, pos_id);
+        } else {
+            panic!("Not temp or double");
+        }
+        self.push_op(Op::BeginScope, pos_id);
+        self.push_op(Op::CondJump { label: ret_label, cond: s.clone() }, pos_id);
+        self.push_op(Op::Jump { label: ok_label }, pos_id);
+        self.push_op(Op::Label { label: ret_label }, pos_id);
+        (s, inner, ok_label)
+    }
+
     fn post_un_expr(&mut self, un: &node::UnExpr) -> Term {
         let t = self.expr(&un.expr);
         let inner_size = un.expr.ty.size();
         match un.op.str.as_str() {
             "?" => {
-                self.label_count += 1;
-                let ret_label = self.label_count;
-                self.label_count += 1;
-                let ok_label = self.label_count;
-                let s;
-                let inner;
-                if let Term::Temp(_) = t {
-                    let Some(ret) = &self.stack_return else {
-                        panic!("No stack return");
-                    };
-                    self.stack_count += 1;
-                    s = ret.clone();
-                    inner = Term::Stack(self.stack_count);
-                    self.push_op(Op::Own { res: inner.clone(), term: ret.clone(), offset: 8 }, un.op.pos_id);
-                    self.clear_res();
-                } else if let Term::Double(_) = t {
-                    self.stack_count += 1;
-                    s = Term::Stack(self.stack_count);
-                    self.stack_count += 1;
-                    inner = Term::Stack(self.stack_count);
-                    self.push_op(Op::Decl { term: s.clone(), size: 16 }, un.op.pos_id);
-                    self.push_op(Op::Read { res: t.clone(), ptr: s.clone(), offset: 0, size: 16 }, un.op.pos_id);
-                    self.push_op(Op::Own { res: inner.clone(), term: s.clone(), offset: 8 }, un.op.pos_id);
-                } else {
-                    panic!("Not temp or double");
-                }
-                self.push_op(Op::BeginScope, un.op.pos_id);
-                self.push_op(Op::CondJump { label: ret_label, cond: s.clone() }, un.op.pos_id);
-                self.push_op(Op::Jump { label: ok_label }, un.op.pos_id);
-                self.push_op(Op::Label { label: ret_label }, un.op.pos_id);
+                let (s, inner, ok_label) = self.unwrap(t, un.op.pos_id);
                 if let Some(r) = self.ret_salloc.clone() {
                     self.push_op(Op::Copy { from: s, to: r.clone(), size: Term::IntLit(inner_size as i64) }, un.op.pos_id);
                     self.push_op(Op::Return { term: Some(r) }, un.op.pos_id);
@@ -840,6 +851,20 @@ impl<'a> Lower<'a> {
             }
             _ => unreachable!()
         }
+    }
+
+    fn r#else(&mut self, r#else: &node::Else) -> Term {
+        let t = self.expr(&r#else.expr);
+        let (_, inner, ok_label) = self.unwrap(t, r#else.pos_str.pos_id);
+        if let Some(c) = &r#else.capture {
+            self.var_map.insert(c.str.clone(), inner.clone());
+        }
+        self.scope(&r#else.scope);
+        if let Some(c) = &r#else.capture {
+            self.var_map.remove(&c.str);
+        }
+        self.push_op(Op::Label { label: ok_label }, r#else.pos_str.pos_id);
+        inner
     }
 
     fn param(&mut self, r: Term, size: u32, aligned: u32, pos_id: usize) -> Vec<Term> {

@@ -10,7 +10,7 @@ fn int2str(x: int, buf: *char) -> *char {
     return buf + 1;
 }
 
-fn strlen(x: int) -> int {
+pub fn strlen(x: int) -> int {
     if x == 0 {
         return 1;
     }
@@ -31,7 +31,7 @@ fn strlen(x: int) -> int {
     return count;
 }
 
-fn str(x: int, buffer: *char) -> *char {
+pub fn str(x: int, buffer: *char) -> *char {
     let i = 0;
     let is_negative = false;
     if x == 0 {
@@ -63,11 +63,11 @@ fn str(x: int, buffer: *char) -> *char {
     return buffer + i;
 }
 
-fn strlen(x: <char>) -> int {
+pub fn strlen(x: <char>) -> int {
     return len(x);
 }
 
-fn str(x: <char>, buffer: *char) -> *char {
+pub fn str(x: <char>, buffer: *char) -> *char {
     for let i = 0; i < len(x); i += 1 {
         buffer[i] = (x as *char)[i];
     }
@@ -341,7 +341,6 @@ syscall 6: close(int) -> int;
 pub fn read(path: *char) -> <char> ? <char> {
     let fd = open(path, 0, 0);
     if fd < 0 {
-        print("Fail");
         return ?"Failed to open file.\n";
     }
 
@@ -355,7 +354,6 @@ pub fn read(path: *char) -> <char> ? <char> {
     let mapped = mmap(0, size, 3, 2, fd, 0);
     close(fd);
 
-    print("okk");
     return (mapped as *char)[..size];
 }
 
