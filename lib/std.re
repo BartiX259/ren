@@ -126,7 +126,7 @@ pub fn print<T>(x: <T>) {
     print(']');
 }
 
-syscall 9: mmap(int, int, int, int, int, int) -> *any;
+syscall 9: mmap(*any, int, int, int, int, int) -> *any;
 syscall 10: munmap(*any, int);
 
 decl allocator: (base: *any, size: int, offset: int, stack: *any);
@@ -145,7 +145,7 @@ pub fn alloc(size: int) -> *any {
             print("DOUBLE\n");
             *SPACE_SIZE = *SPACE_SIZE * 2;
         }
-        allocator.base = mmap(0, *SPACE_SIZE, 3, 34, 0, 0);
+        allocator.base = mmap(null, *SPACE_SIZE, 3, 34, 0, 0);
         allocator.size = *SPACE_SIZE;
     }
     if new_offset > allocator.size {
@@ -156,7 +156,7 @@ pub fn alloc(size: int) -> *any {
                 print("DOUBLE\n");
                 *SPACE_SIZE = *SPACE_SIZE * 2;
             }
-            let to_space = mmap(0, *SPACE_SIZE, 3, 34, 0, 0);
+            let to_space = mmap(null, *SPACE_SIZE, 3, 34, 0, 0);
             copy(allocator.base, to_space, allocator.offset);
             munmap(allocator.base, allocator.size);
             allocator.base = to_space;
@@ -216,7 +216,7 @@ fn collect() {
 
     let stack_end = sp() + 8;
     let scan = allocator.stack;
-    let to_space = mmap(0, *SPACE_SIZE, 3, 34, 0, 0);
+    let to_space = mmap(null, *SPACE_SIZE, 3, 34, 0, 0);
     let offset = 0;
 
     while scan > stack_end {
@@ -338,7 +338,7 @@ syscall 2: open(*char, int, int) -> int;
 syscall 5: fstat(int, *any) -> int;
 syscall 6: close(int) -> int;
 
-pub fn read(path: *char) -> <char> ? <char> {
+pub fn read(path: *char) -> [char] ? <char> {
     let fd = open(path, 0, 0);
     if fd < 0 {
         return ?"Failed to open file.\n";
@@ -351,9 +351,11 @@ pub fn read(path: *char) -> <char> ? <char> {
     }
 
     let size = st[6];
-    let mapped = mmap(0, size, 3, 2, fd, 0);
+    let ptr = mmap(null, size, 3, 2, fd, 0) as *char;
     close(fd);
-
-    return (mapped as *char)[..size];
+    
+    let res = +(ptr[..size]);
+    munmap(ptr, size);
+    return res;
 }
 

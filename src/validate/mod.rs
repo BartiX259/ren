@@ -1082,6 +1082,19 @@ impl Validate {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
+            (Type::Tuple(tys), Type::List { inner }) => {
+                let mut ok = false;
+                if let Some(Type::Int) = tys.get(0) {
+                    if let Some(Type::Pointer(p)) = tys.get(1) {
+                        if p == inner {
+                            ok = true;
+                        }
+                    }
+                }
+                if !ok {
+                    return Err(SemanticError::InvalidCast(span, from, to));
+                }
+            }
             (Type::Struct(s), other) => {
                 let first = s.iter().find(|(_, (_, offset))| *offset == 0);
                 let mut ok = false;

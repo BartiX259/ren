@@ -674,7 +674,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    fn free_reg(&mut self, reg: &String) -> Result<(), GenError> {
+    fn free_reg(&mut self, reg: &String) -> Result<String, GenError> {
         // println!("free {}", reg);
         let mut free = None;
         if let Some(r) = self.get_reg(&reg.to_string()) {
@@ -690,8 +690,9 @@ impl<'a> Gen<'a> {
             self.buf.push_line(format!("mov {}, {}", f.0, reg));
             self.save_reg(&f.0, &f.1);
             self.lock_reg(&f.0, true);
+            return Ok(f.0);
         }
-        Ok(())
+        Ok("".to_string())
     }
 
     fn binop(&mut self, lhs: Term, rhs: Term, op: String, res: Option<Term>, size: u32) -> Result<(), GenError> {
@@ -831,41 +832,47 @@ impl<'a> Gen<'a> {
             "&=" => self.buf.push_line(format!("and {s} [{}{}], {}", p, o, display_term)),
             "*=" => {
                 let mut free = "rax".to_string();
-                self.free_reg(&free)?;
+                if p != "rax" {
+                    self.free_reg(&free)?;
+                }
                 if t == "rax" {
                     t = self.eval_term(term.clone(), None, false)?;
                 }
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
-                self.bin_rax("mul", &mut free, &mut t, size)?;
                 self.save_reg(&free, &term);
                 self.lock_reg(&free, true);
+                self.bin_rax("mul", &mut free, &mut t, size)?;
                 self.clear_reg(&free);
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
             "/=" => {
                 let mut free = "rax".to_string();
-                self.free_reg(&free)?;
+                if p != "rax" {
+                    self.free_reg(&free)?;
+                }
                 if t == "rax" {
                     t = self.eval_term(term.clone(), None, false)?;
                 }
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
-                self.bin_rax("div", &mut free, &mut t, size)?;
                 self.save_reg(&free, &term);
                 self.lock_reg(&free, true);
+                self.bin_rax("div", &mut free, &mut t, size)?;
                 self.clear_reg(&free);
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
             "%=" => {
                 let mut free = "rax".to_string();
-                self.free_reg(&free)?;
+                if p != "rax" {
+                    self.free_reg(&free)?;
+                }
                 if t == "rax" {
                     t = self.eval_term(term.clone(), None, false)?;
                 }
                 self.buf.push_line(format!("mov {}, [{}{}]", free, p, o));
-                self.bin_rax("div", &mut free, &mut t, size)?;
-                self.buf.push("mov rax, rdx");
                 self.save_reg(&free, &term);
                 self.lock_reg(&free, true);
+                self.bin_rax("div", &mut free, &mut t, size)?;
+                self.buf.push("mov rax, rdx");
                 self.clear_reg(&free);
                 self.buf.push_line(format!("mov {s} [{}{}], {}", p, o, free));
             }
@@ -962,7 +969,10 @@ impl<'a> Gen<'a> {
             *r2 = "rax".to_string();
         }
         *r1 = "rax".to_string();
-        self.free_reg(&"rdx".to_string())?;
+        let moved = self.free_reg(&"rdx".to_string())?;
+        if r2 == "rdx" {
+            *r2 = moved;
+        }
         if op == "div" {
             self.buf.push_line("xor rdx, rdx");
         }

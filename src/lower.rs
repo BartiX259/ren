@@ -1,4 +1,3 @@
-use core::panic;
 use std::collections::HashMap;
 
 use crate::ir::{Block, Symbol, Term, Op, OpLoc};
@@ -445,6 +444,12 @@ impl<'a> Lower<'a> {
             res = Term::Stack(self.stack_count);
             self.push_op(Op::Decl { term: res.clone(), size }, pos_id);
             self.push_op(Op::Copy { from: term, to: res.clone(), size: Term::IntLit(size as i64) }, pos_id);
+        } else if let Term::Pointer(_) = term {
+            self.stack_count += 1;
+            res = Term::Stack(self.stack_count);
+            self.temp_count += 1;
+            self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: term, offset: 0, size: 8 }, pos_id);
+            self.push_op(Op::Let { res: res.clone(), term: Term::Temp(self.temp_count) }, pos_id);
         } else {
             self.stack_count += 1;
             res = Term::Stack(self.stack_count);
@@ -747,12 +752,10 @@ impl<'a> Lower<'a> {
             let pa = Term::PointerArithmetic(self.pointer_count);
             self.push_op(Op::Decl { term: p.clone(), size: 8 }, un.op.pos_id);
             self.stack_count += 1;
-            let s = Term::Stack(self.stack_count);
-            self.push_op(Op::Let { res: s.clone(), term: term.clone() }, un.op.pos_id);
+            let s = self.make_stack(term.clone(), &Type::Int, un.op.pos_id);
             self.push_op(Op::BeginScope, un.op.pos_id);
             self.stack_count += 1;
-            let len = Term::Stack(self.stack_count);
-            self.push_op(Op::Let { res: len.clone(), term: term.clone() }, un.op.pos_id);
+            let len = self.make_stack(term.clone(), &Type::Int, un.op.pos_id);
             self.push_op(Op::Store { res: None, ptr: len.clone(), offset: 0, op: "*=".to_string(), term: Term::IntLit(inner.size() as i64), size: 8 }, un.op.pos_id);
             self.push_op(Op::BeginCall { params: vec![len.clone()] }, un.op.pos_id);
             self.push_op(Op::Param { term: len.clone() }, un.op.pos_id);
