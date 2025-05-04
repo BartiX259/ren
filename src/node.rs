@@ -98,11 +98,17 @@ pub struct UnExpr {
     pub op: PosStr,
 }
 #[derive(Debug, Clone)]
-pub struct Else {
+pub struct ElseScope {
     pub expr: Box<Expr>,
     pub capture: Option<PosStr>,
     pub pos_str: PosStr,
     pub scope: Vec<Stmt>
+}
+#[derive(Debug, Clone)]
+pub struct ElseExpr {
+    pub expr: Box<Expr>,
+    pub pos_str: PosStr,
+    pub else_expr: Box<Expr>
 }
 #[derive(Debug, Clone)]
 pub struct Ret {
@@ -155,7 +161,7 @@ pub struct StructLit {
 #[derive(Debug, Clone)]
 pub enum StringFragment {
     Lit(crate::helpers::StringLit),
-    Expr { expr: Expr, len_fn: String, str_fn: String }
+    Expr { expr: Expr, str_fn: String }
 }
 
 #[derive(Debug, Clone)]
@@ -206,7 +212,8 @@ pub enum ExprKind {
     BinExpr(BinExpr),
     UnExpr(UnExpr),
     PostUnExpr(UnExpr),
-    Else(Else),
+    ElseScope(ElseScope),
+    ElseExpr(ElseExpr),
     TypeCast(TypeCast)
 }
 #[derive(Debug, Clone)]

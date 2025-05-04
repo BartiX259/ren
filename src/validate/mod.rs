@@ -171,7 +171,7 @@ pub enum SemanticError {
     DecoratorInFunc(Span),
     InvalidArgCount(Span, usize, usize),
     ArgTypeMismatch(Span, Type, Type),
-    NoFnSig(String, Span, Vec<Type>),
+    NoFnSig(String, Span, Vec<Type>, Option<Type>),
     InvalidStructKey(PosStr, PosStr),
     MissingStructKey(PosStr, String),
     StructTypeMismatch(PosStr, Type, Type),
@@ -252,12 +252,16 @@ impl Validate {
                 if lit.len() == 1 {
                     Ok(Type::Slice { inner: Box::new(Type::Char) })
                 } else {
-                    *alloc_fn = self.find_fn("alloc", vec![Type::Int], expr.span)?;
+                    *alloc_fn = self.find_fn("alloc", vec![Type::Int], Some(Type::Pointer(Box::new(Type::Any))), &mut vec![], expr.span)?;
                     for s in lit {
-                        if let node::StringFragment::Expr { expr, len_fn, str_fn } = s {
+                        if let node::StringFragment::Expr { expr, str_fn } = s {
                             let ty = self.expr(expr)?;
-                            *len_fn = self.find_fn("strlen",  vec![ty.clone()], expr.span)?;
-                            *str_fn = self.find_fn("str", vec![ty, Type::Pointer(Box::new(Type::Char))], expr.span)?;
+                            let span = expr.span;
+                            let mut args = vec![expr.clone()];
+                            *str_fn = self.find_fn("str", vec![ty], Some(Type::Slice { inner: Box::new(Type::Char) }), &mut args, span)?;
+                            if let Some(new_expr) = args.into_iter().next() {
+                                *expr = new_expr;
+                            }
                         }
                     }
                     Ok(Type::List { inner: Box::new(Type::Char) })
@@ -284,7 +288,8 @@ impl Validate {
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr, expr.span),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.span),
             node::ExprKind::PostUnExpr(un_expr) => self.post_un_expr(un_expr, expr.span),
-            node::ExprKind::Else(r#else) => self.r#else(r#else),
+            node::ExprKind::ElseScope(r#else) => self.else_scope(r#else),
+            node::ExprKind::ElseExpr(r#else) => self.else_expr(r#else),
             node::ExprKind::TypeCast(cast) => {
                 let from = self.expr(&mut cast.expr)?;
                 let to = self.r#type(&cast.r#type, false)?;
@@ -295,17 +300,6 @@ impl Validate {
             expr.ty = ty.clone();
         }
         res
-    }
-
-    fn find_fn(&self, func: &str, expected_sig: Vec<Type>, span: Span) -> Result<String, SemanticError> {
-        if let Some(sigs) = self.fn_map.get(func) {
-            for (sig, id) in sigs {
-                if *sig == expected_sig {
-                    return Ok(format!("{func}.{id}"));
-                }
-            }
-        }
-        return Err(SemanticError::NoFnSig(func.to_string(), span, expected_sig));
     }
 
     fn r#let(&mut self, decl: &mut node::Let) -> Result<(), SemanticError> {
@@ -348,7 +342,7 @@ impl Validate {
                 }
                 _ => None,
             })
-            .expect("Function symbol not found");
+            .expect(&format!("Function symbol not found {}", decl.name.str));
 
         for (name, ty) in decl.arg_names.iter().zip(arg_types) {
             self.symbol_table.insert(name.str.clone(), Symbol::Var { ty: ty.clone() });
@@ -664,11 +658,11 @@ impl Validate {
                     let Type::Array { inner, .. } = ty else {
                         panic!("not array");
                     };
-                    let func = self.find_fn("alloc", vec![Type::Int], span)?;
+                    let func = self.find_fn("alloc", vec![Type::Int], Some(Type::Pointer(Box::new(Type::Any))), &mut vec![], span)?;
                     un.op.str += &func;
                     Ok(Type::List { inner })
                 } else if let Type::Slice { inner } = &un.expr.ty {
-                    let func = self.find_fn("alloc", vec![Type::Int], span)?;
+                    let func = self.find_fn("alloc", vec![Type::Int], Some(Type::Pointer(Box::new(Type::Any))), &mut vec![], span)?;
                     un.op.str += &func;
                     Ok(Type::List { inner: inner.clone() })
                 } else {
@@ -744,11 +738,25 @@ impl Validate {
                     Err(SemanticError::UnaryTypeMismatch(span, "?".to_string(), Type::Result(Box::new(Type::Any), Box::new(Type::Any))))
                 }
             }
+            "!" => {
+                if let Type::Result(ty, err) = ty {
+                    let call = if let Ok(call) = self.find_fn("panic", vec![*err], None, &mut vec![], span) {
+                        call
+                    } else {
+                        let call = self.find_fn("panic", vec![], None, &mut vec![], span)?;
+                        call
+                    };
+                    un.op.str += &call;
+                    Ok(*ty)
+                } else {
+                    Err(SemanticError::UnaryTypeMismatch(span, "!".to_string(), Type::Result(Box::new(Type::Any), Box::new(Type::Any))))
+                }
+            }
             _ => Err(SemanticError::InvalidUnaryOperator(un.op.clone()))
         }
     }
 
-    fn r#else(&mut self, r#else: &mut node::Else) -> Result<Type, SemanticError> {
+    fn else_scope(&mut self, r#else: &mut node::ElseScope) -> Result<Type, SemanticError> {
         let ty = self.expr(&mut r#else.expr)?;
         if let Type::Result(ok, err) = ty {
             if let Some(c) = &r#else.capture {
@@ -767,6 +775,19 @@ impl Validate {
         }
     }
 
+    fn else_expr(&mut self, r#else: &mut node::ElseExpr) -> Result<Type, SemanticError> {
+        let ty = self.expr(&mut r#else.expr)?;
+        if let Type::Result(ok, _) = &ty {
+            let ty2 = self.expr(&mut r#else.else_expr)?;
+            if **ok != ty2 {
+                Self::type_cast(ty2, *ok.clone(), r#else.else_expr.span)?;
+                r#else.else_expr.kind = node::ExprKind::TypeCast(node::TypeCast { r#type: Self::node_type(r#else.else_expr.span), expr: r#else.else_expr.clone() })
+            }
+            Ok(*ok.clone())
+        } else {
+            Err(SemanticError::TypeMismatch(r#else.pos_str.clone(), ty, Type::Result(Box::new(Type::Any), Box::new(Type::Any))))
+        }
+    }
     fn struct_lit(&mut self, lit: &mut node::StructLit) -> Result<Type, SemanticError> {
         let mut i = 0;
         let mut map: HashMap<String, (Type, u32)> = HashMap::new();
@@ -798,20 +819,16 @@ impl Validate {
         return Ok((cur_type, exprs.len()));
     }
 
-    fn call(&mut self, call: &mut node::Call, span: Span) -> Result<Type, SemanticError> {
-        let mut arg_types = Vec::new();
-        let mut arg_spans = Vec::new();
-        for s in call.args.iter_mut() {
-            arg_types.push(self.expr(s)?);
-            arg_spans.push(s.span);
-        }
-        let mut s = call.name.str.clone();
-        if let Some(sigs) = self.fn_map.get(&call.name.str) {
+    fn find_fn(&mut self, func: &str, mut expected_sig: Vec<Type>, expected_ret: Option<Type>, args: &mut Vec<node::Expr>, span: Span) -> Result<String, SemanticError> {
+        let mut s = func.to_string();
+        let mut call = func.to_string();
+        let pos_str = PosStr { str: func.to_string(), pos_id: span.end };
+        if let Some(sigs) = self.fn_map.get(func) {
             let mut found = false;
             for sig in sigs.iter() {
-                if *sig.0 == arg_types {
+                if *sig.0 == expected_sig {
                     s = format!("{}.{}", s, sig.1);
-                    call.name.str = s.clone();
+                    call = s.clone();
                     found = true;
                     break;
                 }
@@ -822,58 +839,58 @@ impl Validate {
                 for sig in sigs {
                     // Implicit casting and generics
                     let tys = sig.0.iter();
-                    if arg_types.len() != tys.len() {
+                    if expected_sig.len() != tys.len() {
                         continue;
                     }
                     found = true;
                     generics.clear();
-                    for (i, (ty1, ty2)) in arg_types.iter_mut().zip(tys).enumerate() {
+                    for (i, (ty1, ty2)) in expected_sig.iter_mut().zip(tys).enumerate() {
                         if ty1 != ty2 {
                             if let (Type::Generic(s), depth) = ty2.depth(0) {
                                 if let Some(ty) = generics.get(s) {
                                     let t = Type::wrap(ty, ty2);
                                     if t != *ty1 {
-                                        if Self::type_cast(ty1.clone(), t.clone(), *arg_spans.get(i).unwrap()).is_err() { 
+                                        if Self::type_cast(ty1.clone(), t.clone(), span).is_err() { 
                                             found = false;
                                             break;
                                         }
-                                        let e = call.args.get(i).unwrap().clone();
-                                        call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
+                                        let e = args.get(i).unwrap().clone();
+                                        args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
                                             r#type: Self::node_type(e.span),
                                             expr: Box::new(e)
                                         });
-                                        call.args.get_mut(i).unwrap().ty = t.clone();
+                                        args.get_mut(i).unwrap().ty = t.clone();
                                         *ty1 = t.clone();
                                     }
                                 } else {
                                     let inner = ty1.inner(depth).clone();
                                     let t = Type::wrap(&inner, ty2);
                                     if t != *ty1 {
-                                        if Self::type_cast(ty1.clone(), t.clone(), *arg_spans.get(i).unwrap()).is_err() { 
+                                        if Self::type_cast(ty1.clone(), t.clone(), span).is_err() { 
                                             found = false;
                                             break;
                                         }
-                                        let e = call.args.get(i).unwrap().clone();
-                                        call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
+                                        let e = args.get(i).unwrap().clone();
+                                        args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
                                             r#type: Self::node_type(e.span),
                                             expr: Box::new(e)
                                         });
-                                        call.args.get_mut(i).unwrap().ty = t.clone();
+                                        args.get_mut(i).unwrap().ty = t.clone();
                                         *ty1 = t.clone();
                                     }
                                     generics.insert(s.clone(), inner);
                                 }
                             } else {
-                                if Self::type_cast(ty1.clone(), ty2.clone(), *arg_spans.get(i).unwrap()).is_err() { 
+                                if Self::type_cast(ty1.clone(), ty2.clone(), span).is_err() { 
                                     found = false;
                                     break;
                                 }
-                                let e = call.args.get(i).unwrap().clone();
-                                call.args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
+                                let e = args.get(i).unwrap().clone();
+                                args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
                                     r#type: Self::node_type(e.span),
                                     expr: Box::new(e)
                                 });
-                                call.args.get_mut(i).unwrap().ty = ty2.clone();
+                                args.get_mut(i).unwrap().ty = ty2.clone();
                                 *ty1 = ty2.clone();
                             }
                         }
@@ -884,14 +901,14 @@ impl Validate {
                     }
                 }
                 if id == -1 {
-                    return Err(SemanticError::NoFnSig(call.name.str.clone(), span, arg_types));
+                    return Err(SemanticError::NoFnSig(func.to_string(), span, expected_sig, expected_ret));
                 }
                 s = format!("{}.{}", s, id);
                 if !generics.is_empty() {
                     let mut found = false;
                     for (name, map, i) in self.gcalls.iter() {
                         if *name == s && generics == *map {
-                            call.name.str = format!("{}.{}", s, i);
+                            call = format!("{}.{}", s, i);
                             found = true;
                             break;
                         }
@@ -899,44 +916,30 @@ impl Validate {
                     if !found {
                         let id = self.gcalls.len();
                         self.gcalls.push((s.clone(), generics, id));
-                        call.name.str = format!("{}.{}", s, id);
+                        call = format!("{}.{}", s, id);
                     }
                 } else {
-                    call.name.str = s.clone();
+                    call = s.clone();
                 }
             }
         }
         let ty;
-        let expected_types;
         match self.symbol_table.get(&s) {
-            Some(Symbol::Func { ty: t, args, .. }) |
-            Some(Symbol::ExternFunc { ty: t, args }) |
-            Some(Symbol::Syscall { id: _, ty: t, args }) => {
+            Some(Symbol::Func { ty: t, .. }) |
+            Some(Symbol::ExternFunc { ty: t, .. }) |
+            Some(Symbol::Syscall { ty: t, .. }) => {
                 ty = t;
-                expected_types = args;
             }
             _ => {
                 if s.contains(".") {
-                    return Err(SemanticError::PrivateAccess(call.name.clone()));
+                    return Err(SemanticError::PrivateAccess(pos_str));
                 }
-                return Err(SemanticError::UndeclaredSymbol(call.name.clone()));
-            }
-        }
-        // let mut insert = None;
-        if expected_types.len() != arg_types.len() {
-            return Err(SemanticError::InvalidArgCount(span, expected_types.len(), arg_types.len()));
-        }
-        for ((ty1, ty2), span) in expected_types.into_iter().zip(arg_types.iter()).zip(arg_spans.iter()) {
-            if let (Type::Generic(_), _) = ty1.depth(0) {
-                continue;
-            }
-            if ty1 != ty2 {
-                return Err(SemanticError::ArgTypeMismatch(*span, ty1.clone(), ty2.clone()));
+                return Err(SemanticError::UndeclaredSymbol(pos_str));
             }
         }
         let res;
         if let (Type::Generic(g), _) = ty.depth(0) {
-            let index = call.name.str.split(".").last().unwrap().parse::<usize>().unwrap();
+            let index = call.split(".").last().unwrap().parse::<usize>().unwrap();
             let Some((_, map, _)) = self.gcalls.get(index) else {
                 panic!("no gcall");
             };
@@ -944,15 +947,31 @@ impl Validate {
         } else {
             res = ty.clone()
         }
-        if self.symbol_table.get(&call.name.str).is_none() {
-            self.symbol_table.insert(call.name.str.clone(), Symbol::ExternFunc { ty: res.clone(), args: arg_types });
+        if self.symbol_table.get(&call).is_none() {
+            self.symbol_table.insert(call.clone(), Symbol::ExternFunc { ty: res.clone(), args: args.iter().map(|a| a.ty.clone()).collect() });
         }
-        // if let Some(name) = insert {
-        //     let sym = self.symbol_table.get(&s).unwrap().clone();
-        //     call.name.str = name.clone();
-        //     self.symbol_table.insert(name, sym);
-        // }
-        Ok(res)
+        Ok(call)
+    }
+
+    fn call(&mut self, call: &mut node::Call, span: Span) -> Result<Type, SemanticError> {
+        let mut arg_types = Vec::new();
+        let mut arg_spans = Vec::new();
+        for s in call.args.iter_mut() {
+            arg_types.push(self.expr(s)?);
+            arg_spans.push(s.span);
+        }
+        let name = self.find_fn(&call.name.str, arg_types, None, &mut call.args, span)?;
+        call.name.str = name;
+        let ty;
+        match self.symbol_table.get(&call.name.str) {
+            Some(Symbol::Func { ty: t, .. }) |
+            Some(Symbol::ExternFunc { ty: t, .. }) |
+            Some(Symbol::Syscall { ty: t, .. }) => {
+                ty = t.clone();
+            }
+            _ => unreachable!()
+        }
+        Ok(ty)
     }
 
     fn built_in(&mut self, built_in: &mut node::BuiltIn, span: Span) -> Result<Type, SemanticError> {
@@ -1082,7 +1101,7 @@ impl Validate {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
-            (Type::Tuple(tys), Type::List { inner }) => {
+            (Type::Tuple(tys), Type::Slice { inner }) | (Type::Tuple(tys), Type::List { inner }) => {
                 let mut ok = false;
                 if let Some(Type::Int) = tys.get(0) {
                     if let Some(Type::Pointer(p)) = tys.get(1) {
@@ -1173,5 +1192,4 @@ impl Validate {
         }
         Ok(())
     }
-
 }

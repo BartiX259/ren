@@ -106,12 +106,15 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
         let tok = peek.unwrap();
         if let Token::Op { value } = tok {
             opstr = value.to_string();
-            if value == "?" {
+            if ["?", "!"].contains(&value.as_str()) {
                 tokens.next();
                 root = expr(start, tokens.prev_index(), node::ExprKind::PostUnExpr(node::UnExpr { expr: Box::new(root), op: PosStr { str: opstr, pos_id: tokens.prev_index() } }));
                 continue;
             }
             prec = op_prec(value.as_str());
+            if prec == u8::MAX {
+                return Err(unexp(tok.clone(), tokens.current_index(), "a valid binary or post-unary operator"));
+            }
         } else if let Token::OpenSquare = tok {
             root = parse_array_access(tokens, root, start)?;
             continue;
@@ -138,19 +141,31 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
                 str: "else".to_string(),
                 pos_id: tokens.prev_index()
             };
-            let mut capture = None;
-            if let Some(Token::Word { value }) = tokens.peek() {
-                capture = Some(PosStr { str: value.clone(), pos_id: tokens.current_index() });
-                tokens.next();
+            let is_scope = if let Some(Token::OpenCurly) = tokens.peek() { true }
+            else if let Some(Token::OpenCurly) = tokens.peek2() { true }
+            else { false };
+            if is_scope {
+                let mut capture = None;
+                if let Some(Token::Word { value }) = tokens.peek() {
+                    capture = Some(PosStr { str: value.clone(), pos_id: tokens.current_index() });
+                    tokens.next();
+                }
+                let scope = parse_scope(tokens)?;
+                let lhs = root;
+                root = expr(start, tokens.prev_index(), node::ExprKind::ElseScope(node::ElseScope {
+                    expr: Box::new(lhs),
+                    pos_str,
+                    capture,
+                    scope
+                }));
+            } else {
+                let lhs = root;
+                root = expr(start, tokens.prev_index(), node::ExprKind::ElseExpr(node::ElseExpr {
+                    expr: Box::new(lhs),
+                    pos_str,
+                    else_expr: Box::new(parse_expr(tokens, 0)?)
+                }));
             }
-            let scope = parse_scope(tokens)?;
-            let lhs = root;
-            root = expr(start, tokens.prev_index(), node::ExprKind::Else(node::Else {
-                expr: Box::new(lhs),
-                pos_str,
-                capture,
-                scope
-            }));
             continue;
         } else {
             break;
@@ -292,7 +307,7 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             let mut res = vec![node::StringFragment::Lit(value)];
             while let Some(Token::StringInterpolationStart) = tokens.peek() {
                 tokens.next();
-                res.push(node::StringFragment::Expr {expr: parse_expr(tokens, 0)?, len_fn: "".to_string(), str_fn: "".to_string() });
+                res.push(node::StringFragment::Expr {expr: parse_expr(tokens, 0)?, str_fn: "".to_string() });
                 let tok = check_none(tokens, "'}'")?;
                 let Token::StringInterpolationEnd = tok else {
                     return Err(unexp(tok, tokens.prev_index(), "'}'"));
@@ -828,7 +843,7 @@ fn op_prec(op: &str) -> u8 {
         "[]" => 13,
         "as" => 14, // Highest precedence (done first)
         "." => 15,
-        _ => panic!("No precedence for operator {}", op),
+        _ => u8::MAX,
     }
 }
 
@@ -867,6 +882,6 @@ fn op_assoc(op: &str) -> u8 {
         ".." => 1,
         "[]" => 1,
         "," => 1,
-        _ => panic!("No associativity for operator {}", op),
+        _ => u8::MAX,
     }
 }

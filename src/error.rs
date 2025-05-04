@@ -169,13 +169,17 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Argument type mismatch: expected {} but got {}", ty1, ty2);
             print_module_err_span(path, span);
         }
-        SemanticError::NoFnSig(str, span, tys) => {
+        SemanticError::NoFnSig(str, span, tys, ty) => {
             let ty_list = tys
                 .iter()
                 .map(|ty| format!("{}", ty))
                 .collect::<Vec<_>>()
                 .join(", ");
-            eprintln!("No function of signature {}({}).", str, ty_list);
+            eprint!("No function of signature {}({})", str, ty_list);
+            if let Some(t) = ty {
+                eprint!(" -> {}", t);
+            }
+            eprintln!(".");
             print_module_err_span(path, span);
         }
         SemanticError::InvalidStructKey(pos_str1, pos_str2) => {

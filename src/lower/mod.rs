@@ -1,3 +1,6 @@
+mod salloc;
+
+use core::panic;
 use std::collections::HashMap;
 
 use crate::ir::{Block, Symbol, Term, Op, OpLoc};
@@ -105,285 +108,6 @@ impl<'a> Lower<'a> {
             node::ExprKind::CharLit(val) => Term::IntLit(*val as i64),
             node::ExprKind::BoolLit(val) => Term::IntLit(*val as i64),
             node::ExprKind::Null => Term::IntLit(0),
-            node::ExprKind::ArrLit(arr_lit) => {
-                let ptr;
-                let Some(inner) = expr.ty.dereference() else {
-                    panic!("Salloc not a pointer");
-                };
-                let size = inner.size();
-                let inner_salloc = inner.salloc();
-                if let Some(p) = &self.cur_salloc {
-                    ptr = p.clone();
-                } else {
-                    self.stack_count += 1;
-                    ptr = Term::Stack(self.stack_count);
-                    self.cur_salloc = Some(ptr.clone());
-                    self.push_op(Op::Decl { term: ptr.clone(), size: Type::align(arr_lit.exprs.len() as u32 * size) }, arr_lit.pos_id);
-                }
-                for expr in &arr_lit.exprs {
-                    let r = self.expr(expr);
-                    if !inner_salloc {
-                        self.temp_count += 1;
-                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r, size: expr.ty.size() }, arr_lit.pos_id);
-                        self.salloc_offset += size as i64;
-                    }
-                }
-                if Some(ptr.clone()) == self.cur_salloc {
-                    self.cur_salloc = None;
-                    self.salloc_offset = 0;
-                }
-                ptr
-            }
-            node::ExprKind::ListLit(arr_lit, alloc_fn) => {
-                let ptr;
-                let Type::List { inner } = &expr.ty else {
-                    panic!("not a list");
-                };
-                let size = inner.size();
-                let inner_salloc = inner.salloc();
-                let len = arr_lit.exprs.len();
-                let mut is_salloc = true;
-                if let Some(p) = &self.cur_salloc {
-                    ptr = p.clone();
-                    is_salloc = false;
-                } else {
-                    self.stack_count += 1;
-                    ptr = Term::Stack(self.stack_count);
-                    self.push_op(Op::Decl { term: ptr.clone(), size: 16 }, expr.span.end);
-                }
-                let salloc_offset = self.salloc_offset;
-                self.push_op(Op::BeginScope, expr.span.end);
-                // len
-                self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: salloc_offset, op: "=".to_string(), term: Term::IntLit(len as i64), size: 8 }, expr.span.end);
-                // *any = alloc(len)
-                self.push_op(Op::BeginCall { params: vec![] }, expr.span.end);
-                self.push_op(Op::Param { term: Term::IntLit(Type::align(len as u32 * size) as i64) }, expr.span.end);
-                self.temp_count += 1;
-                self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: alloc_fn.to_string() }, expr.span.end);
-                self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: salloc_offset + 8, op: "=".to_string(), term: Term::Temp(self.temp_count), size: 8 }, expr.span.end);
-                // ptr = &*any
-                self.pointer_count += 1;
-                let temp_ptr = Term::Pointer(self.pointer_count);
-                self.temp_count += 1;
-                self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: ptr.clone(), offset: salloc_offset + 8, size: 8 }, expr.span.end);
-                self.push_op(Op::Let { res: temp_ptr.clone(), term: Term::Temp(self.temp_count) }, expr.span.end);
-                self.cur_salloc = Some(temp_ptr.clone());
-                self.salloc_offset = 0;
-                
-                for expr in &arr_lit.exprs {
-                    let r = self.expr(expr);
-                    if !inner_salloc {
-                        self.temp_count += 1;
-                        self.push_op(Op::Store { res: None, ptr: temp_ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r, size: expr.ty.size() }, arr_lit.pos_id);
-                        self.salloc_offset += size as i64;
-                    }
-                }
-                if is_salloc {
-                    self.cur_salloc = None;
-                    self.salloc_offset = 0;
-                } else {
-                    self.cur_salloc = Some(ptr.clone());
-                    self.salloc_offset = salloc_offset + 16;
-                }
-                self.push_op(Op::EndScope, expr.span.end);
-                ptr
-            }
-            node::ExprKind::StructLit(lit) => {
-                let ptr;
-                let ty = &expr.ty;
-                let mut is_salloc = true;
-                if let Some(p) = &self.cur_salloc {
-                    ptr = p.clone();
-                    is_salloc = false;
-                } else {
-                    self.stack_count += 1;
-                    ptr = Term::Stack(self.stack_count);
-                    self.cur_salloc = Some(ptr.clone());
-                    self.push_op(Op::Decl { term: ptr.clone(), size: ty.aligned_size() }, expr.span.end);
-                }
-                for expr in &lit.field_exprs {
-                    let r = self.expr(expr);
-                    if !expr.ty.salloc() {
-                        self.temp_count += 1;
-                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r, size: expr.ty.size() }, expr.span.end);
-                        self.salloc_offset += expr.ty.size() as i64;
-                    }
-                }
-                if is_salloc {
-                    self.cur_salloc = None;
-                    self.salloc_offset = 0;
-                }
-                ptr
-            }
-            node::ExprKind::StringLit(frags, alloc_fn) => {
-                if frags.len() != 1 {
-                    let ptr;
-                    let mut is_salloc = true;
-                    if let Some(p) = &self.cur_salloc {
-                        ptr = p.clone();
-                        self.cur_salloc = None;
-                        is_salloc = false;
-                    } else {
-                        self.stack_count += 1;
-                        ptr = Term::Stack(self.stack_count);
-                        self.push_op(Op::Decl { term: ptr.clone(), size: 16 }, expr.span.end);
-                    }
-                    let salloc_offset = self.salloc_offset;
-                    self.push_op(Op::BeginScope, expr.span.end);
-                    let mut len = 0;
-                    let mut terms = vec![];
-                    for f in frags {
-                        match f {
-                            node::StringFragment::Lit(string_lit) => {
-                                len += string_lit.len();
-                            }
-                            node::StringFragment::Expr { expr, .. } => {
-                                let r = self.expr(expr);
-                                if r.is_stack() {
-                                    terms.push(r);
-                                } else {
-                                    let t = self.make_stack(r, &expr.ty, expr.span.end);
-                                    terms.push(t);
-                                }
-                            }
-                        }
-                    }
-                    self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: salloc_offset, op: "=".to_string(), term: Term::IntLit(len as i64), size: 8 }, expr.span.end);
-                    let mut i = 0;
-                    for f in frags {
-                        if let node::StringFragment::Expr { expr, len_fn, .. } = f {
-                            let term = terms.get(i).unwrap();
-                            i += 1;
-                            self.push_op(Op::BeginCall { params: vec![] }, expr.span.end);
-                            for p in self.param(term.clone(), expr.ty.size(), expr.ty.aligned_size(), expr.span.end) {
-                                self.push_op(Op::Param { term: p }, expr.span.end);
-                            }
-                            self.temp_count += 1;
-                            self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: len_fn.to_string() }, expr.span.end);
-                            self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: salloc_offset, op: "+=".to_string(), term: Term::Temp(self.temp_count), size: 8 }, expr.span.end);
-                        }
-                    }
-                    self.temp_count += 1;
-                    // *char = alloc(len)
-                    self.push_op(Op::BeginCall { params: vec![Term::Temp(self.temp_count)] }, expr.span.end);
-                    self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: ptr.clone(), offset: salloc_offset, size: 8 }, expr.span.end);
-                    self.push_op(Op::Param { term: Term::Temp(self.temp_count) }, expr.span.end);
-                    self.temp_count += 1;
-                    self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: alloc_fn.to_string() }, expr.span.end);
-                    self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: salloc_offset + 8, op: "=".to_string(), term: Term::Temp(self.temp_count), size: 8 }, expr.span.end);
-                    // ptr = &*char
-                    self.pointer_count += 1;
-                    let temp_ptr = Term::Pointer(self.pointer_count);
-                    let temp_pa = Term::PointerArithmetic(self.pointer_count);
-                    self.temp_count += 1;
-                    self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: ptr.clone(), offset: salloc_offset + 8, size: 8 }, expr.span.end);
-                    self.push_op(Op::Let { res: temp_ptr.clone(), term: Term::Temp(self.temp_count) }, expr.span.end);
-                    i = 0;
-                    for f in frags {
-                        match f {
-                            node::StringFragment::Lit(lit) => {
-                                if let Some(sym) = self.string_map.get(lit) {
-                                    self.push_op(
-                                        Op::Copy { from: Term::Data(sym.clone()), to: temp_ptr.clone(), size: Term::IntLit(Type::align( lit.len() as u32) as i64) }, expr.span.end
-                                    );
-                                } else {
-                                    self.string_id += 1;
-                                    let new_sym = format!("s.{}", self.string_id);
-                                    self.string_map.insert(lit.clone(), new_sym.clone());
-                                    self.ir.insert(new_sym.clone(), Symbol::Data { ty: Type::Slice { inner: Box::new(Type::Char) }, str: lit.to_string() });
-                                    self.push_op(
-                                        Op::Copy { from: Term::Data(new_sym), to: temp_ptr.clone(), size: Term::IntLit(Type::align( lit.len() as u32) as i64) }, expr.span.end
-                                    );
-                                }
-                                self.push_op(Op::Store { res: None, ptr: temp_pa.clone(), offset: 0, op: "+=".to_string(), term: Term::IntLit(lit.len() as i64), size: 8 }, expr.span.end);
-                            }
-                            node::StringFragment::Expr { expr, str_fn, .. } => {
-                                let term = terms.get(i).unwrap();
-                                i += 1;
-                                self.push_op(Op::BeginCall { params: vec![] }, expr.span.end);
-                                for p in self.param(term.clone(), expr.ty.size(), expr.ty.aligned_size(), expr.span.end) {
-                                    self.push_op(Op::Param { term: p }, expr.span.end);
-                                }
-                                self.push_op(Op::Param { term: temp_ptr.clone() }, expr.span.end);
-                                self.temp_count += 1;
-                                self.push_op(Op::Call { res: Some(Term::Temp(self.temp_count)), func: str_fn.to_string() }, expr.span.end);
-                                self.push_op(Op::Store { res: None, ptr: temp_pa.clone(), offset: 0, op: "=".to_string(), term: Term::Temp(self.temp_count), size: 8 }, expr.span.end);
-                            }
-                        }
-                    }
-                    if is_salloc {
-                        self.cur_salloc = None;
-                        self.salloc_offset = 0;
-                    } else {
-                        self.cur_salloc = Some(ptr.clone());
-                        self.salloc_offset = salloc_offset + 16;
-                    }
-                    self.push_op(Op::EndScope, expr.span.end);
-                    ptr
-                } else if let Some(node::StringFragment::Lit(lit)) = frags.get(0) {
-                    let ptr;
-                    let mut is_salloc = true;
-                    if let Some(p) = &self.cur_salloc {
-                        ptr = p.clone();
-                        is_salloc = false;
-                    } else {
-                        self.stack_count += 1;
-                        ptr = Term::Stack(self.stack_count);
-                        self.cur_salloc = Some(ptr.clone());
-                        self.push_op(Op::Decl { term: ptr.clone(), size: 16}, expr.span.end);
-                    }
-                    self.temp_count += 1;
-                    self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::IntLit(lit.len() as i64), size: 8 }, expr.span.end);
-                    self.salloc_offset += 8;
-                    if let Some(sym) = self.string_map.get(lit) {
-                        self.push_op(
-                            Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(sym.clone()), size: 8 }, expr.span.end
-                        );
-                    } else {
-                        self.string_id += 1;
-                        let new_sym = format!("s.{}", self.string_id);
-                        self.string_map.insert(lit.clone(), new_sym.clone());
-                        self.ir.insert(new_sym.clone(), Symbol::Data { ty: Type::Slice { inner: Box::new(Type::Char) }, str: lit.to_string() });
-                        self.push_op(
-                            Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: Term::Data(new_sym), size: 8 }, expr.span.end
-                        );
-                    }
-                    self.salloc_offset += 8;
-                    if is_salloc {
-                        self.cur_salloc = None;
-                        self.salloc_offset = 0;
-                    }
-                    ptr
-                } else {
-                    panic!("len == 1, not lit");
-                }
-            }
-            node::ExprKind::TupleLit(exprs) => {
-                let ptr;
-                let mut is_salloc = true;
-                if let Some(p) = &self.cur_salloc {
-                    ptr = p.clone();
-                    is_salloc = false;
-                } else {
-                    self.stack_count += 1;
-                    ptr = Term::Stack(self.stack_count);
-                    self.cur_salloc = Some(ptr.clone());
-                    self.push_op(Op::Decl { term: ptr.clone(), size: expr.ty.aligned_size() }, expr.span.end);
-                }
-                for expr in exprs {
-                    let r = self.expr(expr);
-                    if !expr.ty.salloc() {
-                        self.temp_count += 1;
-                        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: self.salloc_offset, op: "=".to_string(), term: r, size: expr.ty.size() }, expr.span.end);
-                        self.salloc_offset += expr.ty.size() as i64;
-                    }
-                }
-                if is_salloc {
-                    self.cur_salloc = None;
-                    self.salloc_offset = 0;
-                }
-                ptr
-            }
             node::ExprKind::Variable(pos_str) => {
                 if let Some(var) = self.var_map.get(&pos_str.str) {
                     var.clone()
@@ -391,12 +115,18 @@ impl<'a> Lower<'a> {
                     Term::Data(pos_str.str.clone())
                 }
             }
+            node::ExprKind::ArrLit(arr_lit) => self.arr_lit(arr_lit, &expr),
+            node::ExprKind::ListLit(arr_lit, alloc_fn) => self.list_lit(arr_lit, alloc_fn, &expr),
+            node::ExprKind::StructLit(struct_lit) => self.struct_lit(struct_lit, &expr),
+            node::ExprKind::StringLit(frags, alloc_fn) => self.string_lit(frags, alloc_fn, &expr),
+            node::ExprKind::TupleLit(exprs) => self.tuple_lit(exprs, &expr),
             node::ExprKind::Call(call) => self.call(call),
             node::ExprKind::BuiltIn(built_in) => self.built_in(built_in, expr.span.end),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr, expr.ty.size()),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, &expr.ty),
             node::ExprKind::PostUnExpr(un_expr) => self.post_un_expr(un_expr),
-            node::ExprKind::Else(r#else) => self.r#else(r#else),
+            node::ExprKind::ElseScope(r#else) => self.else_scope(r#else),
+            node::ExprKind::ElseExpr(r#else) => self.else_expr(r#else),
             node::ExprKind::TypeCast(cast) => self.type_cast(cast, &expr.ty)
         }
     }
@@ -839,7 +569,21 @@ impl<'a> Lower<'a> {
     fn post_un_expr(&mut self, un: &node::UnExpr) -> Term {
         let t = self.expr(&un.expr);
         let inner_size = un.expr.ty.size();
-        match un.op.str.as_str() {
+        if un.op.str.starts_with("!") {
+            let Type::Result(_, err) = &un.expr.ty else {
+                unreachable!();
+            };
+            let (_, inner, ok_label) = self.unwrap(t, un.op.pos_id);
+            let panic = un.op.str.split("!").last().unwrap();
+            self.push_op(Op::BeginCall { params: vec![] }, un.op.pos_id);
+            for p in self.param(inner.clone(), err.size(), err.aligned_size(), un.op.pos_id) {
+                self.push_op(Op::Param { term: p }, un.op.pos_id);
+            }
+            self.push_op(Op::Call { res: None, func: panic.to_string() }, un.op.pos_id);
+            self.push_op(Op::Label { label: ok_label }, un.op.pos_id);
+            inner
+        }
+        else { match un.op.str.as_str() {
             "?" => {
                 let (s, inner, ok_label) = self.unwrap(t, un.op.pos_id);
                 if let Some(r) = self.ret_salloc.clone() {
@@ -853,10 +597,10 @@ impl<'a> Lower<'a> {
                 inner
             }
             _ => unreachable!()
-        }
+        }}
     }
 
-    fn r#else(&mut self, r#else: &node::Else) -> Term {
+    fn else_scope(&mut self, r#else: &node::ElseScope) -> Term {
         let t = self.expr(&r#else.expr);
         let (_, inner, ok_label) = self.unwrap(t, r#else.pos_str.pos_id);
         if let Some(c) = &r#else.capture {
@@ -870,42 +614,53 @@ impl<'a> Lower<'a> {
         inner
     }
 
-    fn param(&mut self, r: Term, size: u32, aligned: u32, pos_id: usize) -> Vec<Term> {
+    fn else_expr(&mut self, r#else: &node::ElseExpr) -> Term {
+        let t = self.expr(&r#else.expr);
+        let (_, inner, ok_label) = self.unwrap(t, r#else.pos_str.pos_id);
+        self.push_op(Op::BeginScope, r#else.pos_str.pos_id);
+        let els = self.expr(&r#else.else_expr);
+        self.push_op(Op::Copy { from: els, to: inner.clone(), size: Term::IntLit(r#else.else_expr.ty.size() as i64) }, r#else.pos_str.pos_id);
+        self.push_op(Op::EndScope, r#else.pos_str.pos_id);
+        self.push_op(Op::Label { label: ok_label }, r#else.pos_str.pos_id);
+        inner
+    }
+
+    fn param(&mut self, term: Term, size: u32, aligned: u32, pos_id: usize) -> Vec<Term> {
         let mut params = vec![];
-        if let Term::Stack(_) = r {
-            if self.var_map.values().any(|v| *v == r) {
+        if let Term::Stack(_) = term {
+            if self.var_map.values().any(|v| *v == term) {
                 if size > 16 {
                     self.stack_count += 1;
                     self.temp_count += 1;
                     self.push_op(Op::Decl { term: Term::Stack(self.stack_count), size: aligned }, pos_id);
-                    self.push_op(Op::Copy { from: r.clone(), to: Term::Stack(self.stack_count), size: Term::IntLit(aligned as i64) }, pos_id);
+                    self.push_op(Op::Copy { from: term.clone(), to: Term::Stack(self.stack_count), size: Term::IntLit(aligned as i64) }, pos_id);
                     self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: Term::Stack(self.stack_count), size: 8 }, pos_id);
                 } else {
                     self.temp_count += 1;
-                    self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r.clone(), offset: 0, size }, pos_id);
+                    self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: term.clone(), offset: 0, size }, pos_id);
                     if size > 8 {
                         self.temp_count += 1;
-                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8, size: size - 8 }, pos_id);
+                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: term, offset: 8, size: size - 8 }, pos_id);
                         params.push(Term::Temp(self.temp_count - 1));
                     }
                 }
             } else {
                 if size > 16 {
                     self.temp_count += 1;
-                    self.push_op(Op::UnOp {res: Term::Temp(self.temp_count), op: "&".to_string(), term: r.clone(), size: 8 }, pos_id);
+                    self.push_op(Op::UnOp {res: Term::Temp(self.temp_count), op: "&".to_string(), term: term.clone(), size: 8 }, pos_id);
                 } else {
                     self.temp_count += 1;
-                    self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r.clone(), offset: 0, size: size }, pos_id);
+                    self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: term.clone(), offset: 0, size: size }, pos_id);
                     if size > 8 {
                         self.temp_count += 1;
-                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: r, offset: 8, size: size - 8 }, pos_id);
+                        self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: term, offset: 8, size: size - 8 }, pos_id);
                         params.push(Term::Temp(self.temp_count - 1));
                     }
                 }
             }
             params.push(Term::Temp(self.temp_count));
         } else {
-            params.push(r);
+            params.push(term);
         }
         params
     }

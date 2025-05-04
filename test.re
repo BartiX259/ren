@@ -1,15 +1,11 @@
 import lib/std
 
-fn t() {
-    let x = read("test.re") else err {
-        print("ERROR: {err}");
-        return;
-    };
+fn main() {
+    let path = "ttt";
+    let x = read(path) else +"";
     print(x);
     print(len(x));
-}
-
-fn main() {
-    t();
+    push(&x, "alo\n");
+    write(path, x);
 }
 

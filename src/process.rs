@@ -93,8 +93,8 @@ impl Process {
             node::ExprKind::StringLit(frags, alloc_fn) => {
                 let mut list = vec![];
                 for f in frags {
-                    if let StringFragment::Expr { expr, len_fn, str_fn } = f {
-                        list.push(StringFragment::Expr { expr: self.expr(expr), len_fn, str_fn });
+                    if let StringFragment::Expr { expr, str_fn } = f {
+                        list.push(StringFragment::Expr { expr: self.expr(expr), str_fn });
                     } else {
                         list.push(f);
                     }
@@ -112,13 +112,23 @@ impl Process {
                 args: self.expr_list(call.args)
             }),
             node::ExprKind::UnExpr(un) => self.un_expr(un),
-            node::ExprKind::PostUnExpr(un) => self.un_expr(un),
-            node::ExprKind::Else(r#else) => {
-                node::ExprKind::Else(node::Else {
+            node::ExprKind::PostUnExpr(un) => node::ExprKind::PostUnExpr(node::UnExpr {
+                expr: Box::new(self.expr(*un.expr)),
+                op: un.op
+            }),
+            node::ExprKind::ElseScope(r#else) => {
+                node::ExprKind::ElseScope(node::ElseScope {
                     expr: Box::new(self.expr(*r#else.expr)),
                     capture: r#else.capture,
                     pos_str: r#else.pos_str,
                     scope: self.scope(r#else.scope),
+                })
+            }
+            node::ExprKind::ElseExpr(r#else) => {
+                node::ExprKind::ElseExpr(node::ElseExpr {
+                    expr: Box::new(self.expr(*r#else.expr)),
+                    pos_str: r#else.pos_str,
+                    else_expr: Box::new(self.expr(*r#else.else_expr))
                 })
             }
             node::ExprKind::TypeCast(cast) => node::ExprKind::TypeCast(node::TypeCast { r#type: cast.r#type, expr: Box::new(self.expr(*cast.expr)) }),

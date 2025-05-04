@@ -51,11 +51,11 @@ impl Validate {
     }
 
     pub fn hoist_func(&mut self, stmt: &mut node::Stmt, public: bool) -> Result<(), SemanticError> {
-        let mut stmt_ref = stmt; // local mutable reference
+        let mut stmt_ref = stmt;
         let mut is_public = false;
 
         if let node::Stmt::Decorator(dec) = stmt_ref {
-            stmt_ref = dec.inner.as_mut(); // swap the reference, not the actual AST
+            stmt_ref = dec.inner.as_mut();
             if dec.kinds.contains(&node::DecoratorKind::Pub) {
                 is_public = true;
             }
@@ -128,7 +128,7 @@ impl Validate {
                 }
             } else {
                 let split: Vec<&str> = decl.name.str.split('.').collect();
-                if split.len() < 2 {
+                if split.len() != 2 {
                     self.symbol_table.insert(decl.name.str.clone(), Symbol::Syscall { id: decl.id, ty, args: types });
                 } else {
                     let id = split.last().unwrap().parse::<usize>().unwrap();
@@ -179,7 +179,7 @@ impl Validate {
             }
         } else {
             let split: Vec<&str> = decl.name.str.split('.').collect();
-            if split.len() < 2 {
+            if split.len() != 2 {
                 self.symbol_table.insert(decl.name.str.clone(), Symbol::Func { 
                     ty, module: self.cur_module.clone(),
                     block: Block::new(),

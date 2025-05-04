@@ -256,6 +256,7 @@ impl<'a> Gen<'a> {
                     }
                     self.clear_reg(&"rsi".to_string());
                     self.clear_reg(&"rdi".to_string());
+                    self.clear_reg(&"rcx".to_string());
                 }
                 ir::Op::Let { term, res } => {
                     let r = self.eval_term(term, Some(res.clone()), true)?;
@@ -444,14 +445,21 @@ impl<'a> Gen<'a> {
                     self.lock_reg(&t, true);
                 }
                 ir::Op::NaturalFlow => (),
-                ir::Op::BeginLoop => self.reg_states.push(self.regs.to_vec()),
+                ir::Op::BeginLoop => {
+                    for r in self.regs.iter_mut() {
+                        if !r.locked {
+                            r.term = None;
+                        }
+                    }
+                    self.reg_states.push(self.regs.to_vec());
+                }
                 ir::Op::EndLoop => self.restore_regs(),
                 ir::Op::BeginScope => self.saved_sps.push(self.sp),
                 ir::Op::EndScope => self.restore_sp(0),
                 ir::Op::BreakScope { depth } => self.restore_sp(depth),
             }
             match op_clone {
-                ir::Op::BeginLoop | ir::Op::EndLoop | ir::Op::Arg { .. } | ir::Op::Param { .. } | ir::Op::Call { .. } | ir::Op::BeginCall { .. } | ir::Op::BeginScope | ir::Op::EndScope | ir::Op::NaturalFlow => (),
+                ir::Op::BeginLoop | ir::Op::EndLoop | ir::Op::Param { .. } | ir::Op::Call { .. } | ir::Op::BeginCall { .. } | ir::Op::BeginScope | ir::Op::EndScope | ir::Op::NaturalFlow => (),
                 _ => self.buf.comment(format!("{:?}", op_clone)),
             }
         }
