@@ -7,6 +7,7 @@ pub enum Symbol {
     Var { ty: Type },
     Func { ty: Type, block: Block, module: String, args: Vec<Type>, public: bool },
     ExternFunc { ty: Type, args: Vec<Type> },
+    MainFunc { ty: Type, block: Block, module: String, args: Vec<Type>, init: String, arg_parse: String, arg_names: Vec<String>, parse_fns: Vec<String>, span: crate::node::Span },
     Syscall { id: i64, ty: Type, args: Vec<Type> },
     Data { ty: Type, str: String }
 }
@@ -186,6 +187,10 @@ impl fmt::Debug for Symbol {
                 writeln!(f, "{:?}", block)
             }
             Symbol::ExternFunc { ty, args } => writeln!(f, "extern func: {} -> {:?}\n", fmt_args(args), ty),
+            Symbol::MainFunc { ty, block, module, args, .. } => {
+                write!(f, "main func in {}: {} -> {:?}", module, fmt_args(args) , ty)?;
+                writeln!(f, "{:?}", block)
+            }
             Symbol::Syscall { id, ty, args } => writeln!(f, "syscall {}: {} -> {:?}\n", id, fmt_args(args), ty),
             Symbol::Data { ty, str } => writeln!(f, "data {}: {}\n", str, ty),
         }

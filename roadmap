@@ -1,4 +1,4 @@
-- Files
-- Iterators
 - Arg parsing?
+- Enums
 - Peephole optimization (remove temporary stack variables)
+- Custom iterators

@@ -92,10 +92,11 @@ fn main() -> ExitCode {
             continue;
         }
 
-        files.push(match gen_module(module, syms.symbol_table) {
-            Ok(f) => f,
+        let (m, ir) = validate::clean_up(module, syms);
+        match gen_module(m, ir) {
+            Ok(file) => files.push(file),
             Err(e) => return ExitCode::from(e),
-        });
+        }
     }
 
     println!("UNRESOLVED {}", unresolved.len());

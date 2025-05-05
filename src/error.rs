@@ -105,6 +105,10 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Type mismatch: can't use '{}' with {} and {}", pos_str.str, ty1, ty2);
             print_module_err_id(path, pos_str.pos_id);
         }
+        SemanticError::NotIterable(span, ty) => {
+            eprintln!("Can't iterate over {ty}");
+            print_module_err_span(path, span);
+        }
         SemanticError::InvalidReturn(pos_id) => {
             eprintln!("Invalid return statement.");
             print_module_err_id(path, pos_id);
@@ -226,6 +230,10 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Can't access private symbol '{}'.", pos_str.str);
             print_module_err_id(path, pos_str.pos_id);
         }
+        SemanticError::MainFnCall(pos_str) => {
+            eprintln!("Can't call main function");
+            print_module_err_id(path, pos_str.pos_id);
+        }
     }
 }
 
@@ -244,7 +252,7 @@ pub fn gen_err(path: &String, e: GenError) {
             print_module_err_op(path, loc);
         }
         GenError::TooManyArguments(loc) => {
-            eprintln!("Too many arguments. Consider making and passing a struct instead.");
+            eprintln!("Too many arguments. Consider passing a struct instead.");
             print_module_err_op(path, loc);
         }
     }

@@ -64,6 +64,14 @@ pub struct Fn {
     pub scope: Vec<Stmt>,
 }
 
+#[derive(Debug, Clone)]
+pub struct MainFn {
+    pub pos_id: usize,
+    pub arg_names: Vec<PosStr>,
+    pub arg_types: Vec<Type>,
+    pub decl_type: Option<Type>,
+    pub scope: Vec<Stmt>,
+}
 #[derive(Debug, Clone, PartialEq)]
 pub enum DecoratorKind {
     Pub
@@ -149,6 +157,14 @@ pub struct For {
 }
 
 #[derive(Debug, Clone)]
+pub struct ForIn {
+    pub pos_id: usize,
+    pub capture: PosStr,
+    pub expr: Expr,
+    pub scope: Vec<Stmt>
+}
+
+#[derive(Debug, Clone)]
 pub struct ArrLit {
     pub exprs: Vec<Expr>,
     pub pos_id: usize
@@ -176,7 +192,8 @@ pub enum BuiltInKind {
     Len,
     Copy,
     StackPointer,
-    Sizeof
+    Sizeof,
+    Param
 }
 #[derive(Debug, Clone)]
 pub struct BuiltIn {
@@ -222,6 +239,7 @@ pub enum Stmt {
     Let(Let),
     Decl(Decl),
     Fn(Fn),
+    MainFn(MainFn),
     TypeDecl(TypeDecl),
     Decorator(Decorator),
     Ret(Ret),
@@ -229,6 +247,7 @@ pub enum Stmt {
     Loop(Loop),
     While(While),
     For(For),
+    ForIn(ForIn),
     Break(usize),
     Continue(usize),
     Syscall(Syscall)

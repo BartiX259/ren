@@ -34,7 +34,18 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
     match tokens.peek() {
         Some(Token::Let) => Ok(node::Stmt::Let(parse_let(tokens)?)),
         Some(Token::Decl) => Ok(node::Stmt::Decl(parse_decl(tokens)?)),
-        Some(Token::Fn) => Ok(node::Stmt::Fn(parse_fn_decl(tokens)?)),
+        Some(Token::Fn) => {
+            tokens.next();
+            let tok = check_none(tokens, "a function name")?;
+            let Token::Word { value } = tok else {
+                return Err(unexp(tok, tokens.prev_index(), "a function name"));
+            };
+            if value == "main" {
+                Ok(node::Stmt::MainFn(parse_main(tokens)?))
+            } else {
+                Ok(node::Stmt::Fn(parse_fn_decl(tokens, value)?))
+            }
+        }
         Some(Token::Type) => Ok(node::Stmt::TypeDecl(parse_type_decl(tokens)?)),
         Some(Token::Pub) => Ok(node::Stmt::Decorator(parse_decorator(tokens)?)),
         Some(Token::Return) => {
@@ -60,7 +71,7 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
                 scope: parse_scope(tokens)?
             }))
         }
-        Some(Token::For) => return Ok(node::Stmt::For(parse_for(tokens)?)),
+        Some(Token::For) => return Ok(parse_for(tokens)?),
         Some(Token::Break) => {
             tokens.next();
             check_semi(tokens)?;
@@ -204,7 +215,7 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             if let Some(Token::OpenParen) = tokens.peek() {
                 tokens.next();
                 let kind = match value.as_str() {
-                    "len" | "sp" | "copy" | "sizeof" => {
+                    "len" | "sp" | "copy" | "sizeof" | "param" => {
                         let args = parse_args(tokens)?;
                         node::ExprKind::BuiltIn(node::BuiltIn { 
                             kind: match value.as_str() {
@@ -212,6 +223,7 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                                 "sp" => node::BuiltInKind::StackPointer,
                                 "copy" => node::BuiltInKind::Copy,
                                 "sizeof" => node::BuiltInKind::Sizeof,
+                                "param" => node::BuiltInKind::Param,
                                 _ => unreachable!()
                             },
                             args
@@ -536,13 +548,35 @@ fn parse_type_args(tokens: &mut VecIter<Token>, closing: Token) -> Result<(Vec<P
     Ok((names, types))
 }
 
-fn parse_fn_decl(tokens: &mut VecIter<Token>) -> Result<node::Fn, ParseError> {
-    tokens.next();
-    let mut generics = vec![];
-    let tok = check_none(tokens, "an identifier")?;
-    let Token::Word { value: name } = tok else {
-        return Err(unexp(tok, tokens.prev_index(), "an identifier"));
+fn parse_main(tokens: &mut VecIter<Token>) -> Result<node::MainFn, ParseError> {
+    let name_pos = tokens.prev_index();
+    let tok = check_none(tokens, "'('")?;
+    let Token::OpenParen = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "'('"));
     };
+    let type_args = parse_type_args(tokens, Token::CloseParen)?;
+    let decl_type;
+    if let Some(Token::Op {value}) = tokens.peek() {
+        if value == "->" {
+            tokens.next();
+            decl_type = Some(parse_type(tokens)?);
+        } else {
+            return Err(unexp(tokens.peek().unwrap().clone(), tokens.current_index(), "'->'"));
+        }
+    } else {
+        decl_type = None;
+    }
+    Ok(node::MainFn {
+        pos_id: name_pos,
+        arg_names: type_args.0,
+        arg_types: type_args.1,
+        decl_type,
+        scope: parse_scope(tokens)?,
+    })
+}
+
+fn parse_fn_decl(tokens: &mut VecIter<Token>, name: String) -> Result<node::Fn, ParseError> {
+    let mut generics = vec![];
     let name_pos = tokens.prev_index();
     let mut tok = check_none(tokens, "'('")?;
     if let Token::Op { value } = &tok {
@@ -662,10 +696,24 @@ fn parse_if(tokens: &mut VecIter<Token>) -> Result<node::If, ParseError> {
     Ok(res)
 }
 
-fn parse_for(tokens: &mut VecIter<Token>) -> Result<node::For, ParseError> {
+fn parse_for(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
     let pos_id = tokens.current_index();
-    let init;
     tokens.next();
+    if let Some(Token::In) = tokens.peek2() {
+        let tok = check_none(tokens, "a word")?;
+        let Token::Word { value } = tok else {
+            return Err(unexp(tok, tokens.prev_index(), "a word"));
+        };
+        let capture = PosStr {
+            str: value,
+            pos_id: tokens.prev_index()
+        };
+        tokens.next(); // 'in'
+        let expr = parse_expr(tokens, 0)?;
+        let scope = parse_scope(tokens)?;
+        return Ok(node::Stmt::ForIn(node::ForIn { pos_id, capture, expr, scope }));
+    }
+    let init;
     if let Some(Token::Let) = tokens.peek() {
         init = node::LetOrExpr::Let(parse_let(tokens)?);
     } else {
@@ -676,7 +724,7 @@ fn parse_for(tokens: &mut VecIter<Token>) -> Result<node::For, ParseError> {
     check_semi(tokens)?;
     let incr = parse_expr(tokens, 0)?;
     let scope = parse_scope(tokens)?;
-    Ok(node::For { pos_id, init, cond, incr, scope})
+    Ok(node::Stmt::For(node::For { pos_id, init, cond, incr, scope}))
 }
 
 fn r#type(start: usize, end: usize, kind: node::TypeKind) -> node::Type {
@@ -712,6 +760,13 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
                 return Err(unexp(cl, tokens.prev_index(), "'>'"));
             };
             Ok(r#type(start, tokens.prev_index(), node::TypeKind::Slice(Box::new(ty))))
+        } else if value == "<<" {
+            let ty = parse_type(tokens)?;
+            let cl = check_none(tokens, "'>>'")?;
+            if cl != (Token::Op { value: ">>".to_string() }) {
+                return Err(unexp(cl, tokens.prev_index(), "'>>'"));
+            };
+            Ok(r#type(start, tokens.prev_index(), node::TypeKind::Slice(Box::new(r#type(start, tokens.prev_index(), node::TypeKind::Slice(Box::new(ty)))))))
         } else {
             Err(unexp(tok, tokens.prev_index(), "a type"))
         }

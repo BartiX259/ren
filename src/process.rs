@@ -57,6 +57,12 @@ impl Process {
                 incr: self.expr(r#for.incr),
                 scope: self.scope(r#for.scope)
             }),
+            node::Stmt::ForIn(r#for) => node::Stmt::ForIn(node::ForIn {
+                pos_id: r#for.pos_id,
+                capture: r#for.capture,
+                expr: self.expr(r#for.expr),
+                scope: self.scope(r#for.scope)
+            }),
             _ => stmt
         }
     }

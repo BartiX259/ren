@@ -6,6 +6,22 @@ syscall 9: mmap(*any, int, int, int, int, int) -> *any;
 syscall 10: munmap(*any, int);
 syscall 60: exit(int);
 
+pub fn arg_parse(expected: <<char>>) {
+    for a in expected {
+        print(a);
+    }
+}
+
+pub fn parse(str: *char, res: *int) {
+    print(str);
+    *res = 75;
+}
+
+pub fn parse(str: *char, res: *<char>) {
+    let s = "xd";
+    copy(&s, res, 16);
+}
+
 fn int2str(x: int, buf: *char) -> *char {
     if x < 10 {
         *buf = '0' + x;
@@ -127,7 +143,6 @@ pub fn split<T>(sl: <T>, split: T) -> [<T>] {
 	push(&res, sl[base..]);
 	return res;
 }
-
 
 pub fn null_terminate(s: <char>) -> *char {
     let new = alloc(len(s) + 1) as *char;

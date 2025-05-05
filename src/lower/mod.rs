@@ -86,6 +86,7 @@ impl<'a> Lower<'a> {
             node::Stmt::Let(decl) => self.r#let(decl),
             node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
+            node::Stmt::MainFn(_) => unreachable!(),
             node::Stmt::TypeDecl(_) => (),
             node::Stmt::Decorator(dec) => self.stmt(dec.inner.as_ref()),
             node::Stmt::Ret(ret) => self.ret(ret),
@@ -93,6 +94,7 @@ impl<'a> Lower<'a> {
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
             node::Stmt::While(r#while) => self.r#while(r#while),
             node::Stmt::For(r#for) => self.r#for(r#for),
+            node::Stmt::ForIn(r#for) => self.for_in(r#for),
             node::Stmt::Break(pos_id) => { 
                 self.push_op(Op::BreakScope { depth: self.scope_depth - self.loop_exit.last().unwrap().1 }, *pos_id);
                 self.push_op(Op::Jump { label: self.loop_exit.last().unwrap().0 }, *pos_id)
@@ -193,8 +195,8 @@ impl<'a> Lower<'a> {
         // self.temp_count = 0;
         // self.stack_count = 0;
         self.var_map.clear();
-        if let Some(sym) = self.ir.get(&decl.name.str).cloned() {
-            if let Symbol::Func { ty, args, .. } = sym  {
+        match self.ir.get(&decl.name.str).cloned() {
+            Some(Symbol::Func { ty, args, .. }) | Some(Symbol::MainFunc { ty, args, .. }) => {
                 if ty.size() > 16 {
                     self.pointer_count += 1;
                     self.ret_salloc = Some(Term::Pointer(self.pointer_count));
@@ -219,15 +221,15 @@ impl<'a> Lower<'a> {
                     }
                 }
             }
+            _ => panic!("Couldn't find symbol '{}'", decl.name.str)
         }
         self.scope(&decl.scope);
         self.ret_salloc = None;
         // println!("VAR MAP {}", decl.name.str);
         // println!("{:?}", self.var_map);
-        if let Some(Symbol::Func { block, .. }) = self.ir.get_mut(&decl.name.str) {
-            *block = self.cur_block.clone().unwrap();
-        } else {
-            panic!("Couldn't find {} symbol", decl.name.str);
+        match self.ir.get_mut(&decl.name.str) {
+            Some(Symbol::Func { block, .. }) | Some(Symbol::MainFunc { block, .. }) => *block = self.cur_block.clone().unwrap(),
+            _ => panic!("Couldn't find symbol '{}'", decl.name.str)
         }
         self.cur_block = None;
     }
@@ -757,6 +759,14 @@ impl<'a> Lower<'a> {
                 let expr = built_in.args.get(0).unwrap();
                 Term::IntLit(expr.ty.size() as i64)
             }
+            node::BuiltInKind::Param => {
+                let expr = built_in.args.get(0).unwrap();
+                let param = self.expr(expr);
+                for p in self.param(param, expr.ty.size(), expr.ty.aligned_size(), pos_id) {
+                    self.push_op(Op::Param { term: p }, pos_id);
+                }
+                Term::IntLit(0)
+            }
         }
     }
 
@@ -802,6 +812,7 @@ impl<'a> Lower<'a> {
         self.loop_start.pop();
         self.loop_exit.pop();
     }
+
     fn r#for(&mut self, r#for: &node::For) {
         match &r#for.init {
             node::LetOrExpr::Let(r#let) => self.r#let(r#let),
@@ -834,6 +845,53 @@ impl<'a> Lower<'a> {
         self.push_op(Op::NaturalFlow, r#for.pos_id);
         self.loop_start.pop();
         self.loop_exit.pop();
+    }
+
+    fn for_in(&mut self, r#for: &node::ForIn) {
+        self.push_op(Op::BeginScope, r#for.pos_id);
+        let t = self.expr(&r#for.expr);
+        let sl = self.make_stack(t, &r#for.expr.ty, r#for.pos_id);
+        self.stack_count += 1;
+        let Type::Slice { inner } = &r#for.expr.ty else {
+            panic!("not slice");
+        };
+        self.pointer_count += 1;
+        let ptr = Term::Pointer(self.pointer_count);
+        let pa = Term::PointerArithmetic(self.pointer_count);
+        self.push_op(Op::Own { res: ptr.clone(), term: sl.clone(), offset: 8 }, r#for.pos_id);
+        let el = Term::Stack(self.stack_count);
+        self.push_op(Op::Decl { term: el.clone(), size: inner.aligned_size() }, r#for.pos_id);
+        let size = Term::IntLit(inner.size() as i64);
+        self.var_map.insert(r#for.capture.str.clone(), el.clone());
+        self.label_count += 3;
+        let s = self.label_count - 2;
+        let c = self.label_count - 1;
+        let e = self.label_count;
+        self.loop_start.push(c);
+        self.loop_exit.push((e, self.scope_depth));
+        self.push_op(Op::Label { label: s }, r#for.pos_id);
+        self.push_op(Op::BeginLoop, 0);
+        self.push_op(Op::Copy { from: ptr, to: el, size: size.clone() }, r#for.pos_id);
+        self.scope(&r#for.scope);
+        self.push_op(Op::EndLoop, 0);
+        self.push_op(Op::Label { label: c }, r#for.pos_id);
+        self.push_op(Op::NaturalFlow, r#for.pos_id);
+        self.push_op(Op::BeginScope, r#for.pos_id);
+        self.push_op(Op::Store { res: None, ptr: pa, offset: 0, op: "+=".to_string(), term: size.clone(), size: 8 }, r#for.pos_id);
+        self.push_op(Op::Store { res: None, ptr: sl.clone(), offset: 0, op: "-=".to_string(), term: Term::IntLit(1), size: 8 }, r#for.pos_id);
+        self.push_op(
+            Op::CondJump {
+                cond: sl,
+                label: s,
+            },
+            r#for.pos_id,
+        );
+        self.push_op(Op::Label { label: e }, r#for.pos_id);
+        self.push_op(Op::NaturalFlow, r#for.pos_id);
+        self.loop_start.pop();
+        self.loop_exit.pop();
+        self.var_map.remove(&r#for.capture.str);
+        self.push_op(Op::EndScope, r#for.pos_id);
     }
 
     fn type_cast(&mut self, cast: &node::TypeCast, to: &Type) -> Term {

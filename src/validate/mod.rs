@@ -1,6 +1,6 @@
 use crate::ir::Symbol;
-use crate::types::Type;
 use crate::node::{self, ExprKind, PosStr, Span};
+use crate::types::Type;
 use std::collections::HashMap;
 
 mod hoist;
@@ -13,6 +13,7 @@ pub fn validate(module: &mut node::Module, public: Vec<&PublicSymbols>, gcalls: 
         val.fn_map.extend(syms.fn_map.clone());
     }
     val.gcalls = gcalls.clone();
+    val.cur_module = module.path.clone();
     for stmt in module.stmts.iter_mut() {
         val.hoist_type(stmt, false)?;
     }
@@ -23,7 +24,13 @@ pub fn validate(module: &mut node::Module, public: Vec<&PublicSymbols>, gcalls: 
         val.stmt(stmt)?;
     }
     gcalls.extend(val.gcalls[gcalls.len()..].to_vec());
-    Ok((PublicSymbols { symbol_table: val.symbol_table, fn_map: val.fn_map }, val.gfns))
+    Ok((
+        PublicSymbols {
+            symbol_table: val.symbol_table,
+            fn_map: val.fn_map,
+        },
+        val.gfns,
+    ))
 }
 
 pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>) -> Result<(PublicSymbols, node::Module), SemanticError> {
@@ -68,7 +75,10 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(S
                         let mut new_decl = decl.clone();
                         for (k, v) in map {
                             if val.symbol_table.contains_key(k) {
-                                return Err(SemanticError::SymbolExists(PosStr { str: k.clone(), pos_id: decl.name.pos_id }));
+                                return Err(SemanticError::SymbolExists(PosStr {
+                                    str: k.clone(),
+                                    pos_id: decl.name.pos_id,
+                                }));
                             }
                             val.symbol_table.insert(k.clone(), Symbol::Type { ty: v.clone() });
                         }
@@ -99,7 +109,13 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(S
     for g in val.gcalls {
         gcalls.push(g);
     }
-    Ok((PublicSymbols { symbol_table: val.symbol_table, fn_map: val.fn_map }, new_mod))
+    Ok((
+        PublicSymbols {
+            symbol_table: val.symbol_table,
+            fn_map: val.fn_map,
+        },
+        new_mod,
+    ))
 }
 
 pub fn clean_up(module: node::Module, symbols: PublicSymbols) -> (node::Module, HashMap<String, Symbol>) {
@@ -108,6 +124,20 @@ pub fn clean_up(module: node::Module, symbols: PublicSymbols) -> (node::Module, 
     val.symbol_table = symbols.symbol_table;
     val.fn_map = symbols.fn_map;
     for stmt in module.stmts.into_iter() {
+        if let node::Stmt::MainFn(decl) = stmt {
+            new_mod.stmts.push(node::Stmt::Fn(node::Fn {
+                name: PosStr {
+                    str: "main".to_string(),
+                    pos_id: decl.pos_id,
+                },
+                arg_names: decl.arg_names,
+                arg_types: decl.arg_types,
+                decl_type: decl.decl_type,
+                generics: vec![],
+                scope: decl.scope,
+            }));
+            continue;
+        }
         let mut stmt_ref = &stmt;
         if let node::Stmt::Decorator(dec) = &stmt {
             stmt_ref = dec.inner.as_ref();
@@ -141,13 +171,16 @@ pub fn hoist_public(module: &mut node::Module, public: &HashMap<String, PublicSy
             }
         }
     }
-    Ok(PublicSymbols { symbol_table: val.symbol_table, fn_map: val.fn_map })
+    Ok(PublicSymbols {
+        symbol_table: val.symbol_table,
+        fn_map: val.fn_map,
+    })
 }
 
 #[derive(Debug)]
 pub struct PublicSymbols {
     pub symbol_table: HashMap<String, Symbol>,
-    fn_map: HashMap<String, Vec<(Vec<Type>, usize)>>
+    fn_map: HashMap<String, Vec<(Vec<Type>, usize)>>,
 }
 
 pub enum SemanticError {
@@ -155,6 +188,7 @@ pub enum SemanticError {
     SymbolExists(PosStr),
     UndeclaredSymbol(PosStr),
     TypeMismatch(PosStr, Type, Type),
+    NotIterable(Span, Type),
     InvalidReturn(usize),
     NotInLoop(String, usize),
     InvalidAssign(Span),
@@ -182,7 +216,8 @@ pub enum SemanticError {
     NoSlice(Span, String),
     InvalidCast(Span, Type, Type),
     NoBuiltIn(Span, String, Type),
-    PrivateAccess(PosStr)
+    PrivateAccess(PosStr),
+    MainFnCall(PosStr),
 }
 
 struct Validate {
@@ -218,13 +253,14 @@ impl Validate {
         self.symbol_table.insert(name.clone(), sym.clone());
         self.symbol_stack.last_mut().unwrap().push(name.clone());
     }
-    
+
     fn stmt(&mut self, stmt: &mut node::Stmt) -> Result<(), SemanticError> {
         match stmt {
             node::Stmt::Expr(expr) => self.expr(expr).map(|_| ()),
             node::Stmt::Let(decl) => self.r#let(decl),
             node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
+            node::Stmt::MainFn(decl) => self.main_fn(decl),
             node::Stmt::TypeDecl(decl) => self.type_decl(decl),
             node::Stmt::Decorator(dec) => self.decorator(dec),
             node::Stmt::Ret(ret) => self.ret(ret),
@@ -232,9 +268,10 @@ impl Validate {
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
             node::Stmt::While(r#while) => self.r#while(r#while),
             node::Stmt::For(r#for) => self.r#for(r#for),
+            node::Stmt::ForIn(r#for) => self.for_in(r#for),
             node::Stmt::Break(pos_id) => self.check_loop("Break", *pos_id),
             node::Stmt::Continue(pos_id) => self.check_loop("Continue", *pos_id),
-            node::Stmt::Syscall(_) => Ok(()) // Checked while hoisting
+            node::Stmt::Syscall(_) => Ok(()), // Checked while hoisting
         }
     }
 
@@ -244,8 +281,10 @@ impl Validate {
             node::ExprKind::CharLit(_) => Ok(Type::Char),
             node::ExprKind::BoolLit(_) => Ok(Type::Bool),
             node::ExprKind::Null => Ok(Type::Pointer(Box::new(Type::Any))),
-            node::ExprKind::ArrLit(arr_lit) => self.expr_list(&mut arr_lit.exprs, arr_lit.pos_id)
-            .map(|res| Type::Array { inner: Box::new(res.0), length: res.1 }),
+            node::ExprKind::ArrLit(arr_lit) => self.expr_list(&mut arr_lit.exprs, arr_lit.pos_id).map(|res| Type::Array {
+                inner: Box::new(res.0),
+                length: res.1,
+            }),
             node::ExprKind::ListLit(..) => unreachable!(),
             node::ExprKind::StructLit(struct_lit) => self.struct_lit(struct_lit),
             node::ExprKind::StringLit(lit, alloc_fn) => {
@@ -268,10 +307,7 @@ impl Validate {
                 }
             }
             node::ExprKind::TupleLit(exprs) => {
-                let types = exprs
-                    .iter_mut()
-                    .map(|e| self.expr(e))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let types = exprs.iter_mut().map(|e| self.expr(e)).collect::<Result<Vec<_>, _>>()?;
                 Ok(Type::Tuple(types))
             }
             node::ExprKind::Variable(pos_str) => self
@@ -328,7 +364,9 @@ impl Validate {
         if self.cur_func.is_some() {
             return Err(SemanticError::FuncInFunc(decl.name.clone()));
         }
-        if decl.generics.len() > 0 { return Ok(()); }
+        if decl.generics.len() > 0 {
+            return Ok(());
+        }
 
         // Retrieve arguments and return type
         let mut arg_types = vec![];
@@ -362,6 +400,66 @@ impl Validate {
         Ok(())
     }
 
+    fn main_fn(&mut self, decl: &mut node::MainFn) -> Result<(), SemanticError> {
+        let pos_str = PosStr {
+            str: "main".to_string(),
+            pos_id: decl.pos_id,
+        };
+        let span = Span { start: decl.pos_id, end: decl.pos_id };
+        if self.cur_func.is_some() {
+            return Err(SemanticError::FuncInFunc(pos_str));
+        }
+        let ty = if let Some(t) = &decl.decl_type { self.r#type(&t, false)? } else { Type::Void };
+        let mut arg_types = Vec::new();
+        for arg in decl.arg_types.iter() {
+            let ty = self.r#type(arg, false)?;
+            arg_types.push(ty.clone());
+        }
+        let init = self.find_fn("init", vec![], Some(Type::Void), &mut vec![], span)?;
+        let arg_parse = self.find_fn(
+            "arg_parse",
+            vec![Type::Slice {
+                inner: Box::new(Type::Slice { inner: Box::new(Type::Char) }),
+            }],
+            Some(Type::Void),
+            &mut vec![],
+            span,
+        )?;
+        let mut parse_fns = vec![];
+        for arg in arg_types.iter() {
+            parse_fns.push(self.find_fn("parse", vec![Type::Pointer(Box::new(Type::Char)), Type::Pointer(Box::new(arg.clone()))], None, &mut vec![], span)?);
+        }
+        self.symbol_table.insert(
+            "main".to_string(),
+            Symbol::MainFunc {
+                ty: ty.clone(),
+                block: crate::ir::Block::new(),
+                module: self.cur_module.clone(),
+                args: arg_types.clone(),
+                init,
+                arg_parse,
+                arg_names: decl.arg_names.iter().map(|pos_str| pos_str.str.clone()).collect(),
+                parse_fns,
+                span
+            },
+        );
+        for (name, ty) in decl.arg_names.iter().zip(arg_types) {
+            self.symbol_table.insert(name.str.clone(), Symbol::Var { ty: ty.clone() });
+        }
+
+        self.cur_func = Some("main".to_string());
+
+        self.scope(&mut decl.scope)?;
+
+        for name in decl.arg_names.iter() {
+            self.symbol_table.remove(&name.str);
+        }
+
+        self.cur_ret = Type::Void;
+        self.cur_func = None;
+        Ok(())
+    }
+
     fn type_decl(&mut self, decl: &node::TypeDecl) -> Result<(), SemanticError> {
         if self.cur_func.is_some() {
             return Err(SemanticError::TypeInFunc(decl.name.clone()));
@@ -377,7 +475,10 @@ impl Validate {
     }
 
     fn node_type(span: Span) -> node::Type {
-        node::Type { kind: node::TypeKind::Word("".to_string()), span  }
+        node::Type {
+            kind: node::TypeKind::Word("".to_string()),
+            span,
+        }
     }
 
     fn scope(&mut self, scope: &mut Vec<node::Stmt>) -> Result<(), SemanticError> {
@@ -402,10 +503,13 @@ impl Validate {
             if self.cur_ret != ty {
                 Self::type_cast(ty, self.cur_ret.clone(), span)?;
                 expr.ty = self.cur_ret.clone();
-                expr.kind = node::ExprKind::TypeCast(node::TypeCast { r#type: Self::node_type(span), expr: Box::new(expr.clone()) })
+                expr.kind = node::ExprKind::TypeCast(node::TypeCast {
+                    r#type: Self::node_type(span),
+                    expr: Box::new(expr.clone()),
+                })
             }
         } else if self.cur_ret != Type::Void {
-            return Err(SemanticError::InvalidReturn(ret.pos_id));   
+            return Err(SemanticError::InvalidReturn(ret.pos_id));
         }
         Ok(())
     }
@@ -449,7 +553,7 @@ impl Validate {
                 }
                 Err(SemanticError::InvalidGlobal(expr.span))
             }
-            _ => Err(SemanticError::InvalidGlobal(expr.span))
+            _ => Err(SemanticError::InvalidGlobal(expr.span)),
         }
     }
 
@@ -464,7 +568,7 @@ impl Validate {
                 }
             }
             ExprKind::UnExpr(un) => un.op.str == "*",
-            _ => false
+            _ => false,
         }
     }
 
@@ -546,16 +650,16 @@ impl Validate {
                     Ok(Type::Bool)
                 } else {
                     if let Ok(ty) = Self::type_cast(ty1.clone(), ty2.clone(), bin.lhs.span) {
-                        bin.lhs.kind = ExprKind::TypeCast(node::TypeCast { 
+                        bin.lhs.kind = ExprKind::TypeCast(node::TypeCast {
                             r#type: Self::node_type(bin.lhs.span),
-                            expr: bin.lhs.clone()
+                            expr: bin.lhs.clone(),
                         });
                         return Ok(ty);
                     }
                     if let Ok(ty) = Self::type_cast(ty2.clone(), ty1.clone(), bin.rhs.span) {
-                        bin.rhs.kind = ExprKind::TypeCast(node::TypeCast { 
+                        bin.rhs.kind = ExprKind::TypeCast(node::TypeCast {
                             r#type: Self::node_type(bin.rhs.span),
-                            expr: bin.rhs.clone()
+                            expr: bin.rhs.clone(),
                         });
                         return Ok(ty);
                     }
@@ -572,9 +676,9 @@ impl Validate {
                     Ok(ty1)
                 } else {
                     if let Ok(ty) = Self::type_cast(ty2.clone(), ty1.clone(), bin.rhs.span) {
-                        bin.rhs.kind = ExprKind::TypeCast(node::TypeCast { 
+                        bin.rhs.kind = ExprKind::TypeCast(node::TypeCast {
                             r#type: Self::node_type(bin.rhs.span),
-                            expr: bin.rhs.clone()
+                            expr: bin.rhs.clone(),
                         });
                         return Ok(ty);
                     }
@@ -601,7 +705,7 @@ impl Validate {
                             node::ExprKind::ArrLit(_) => Err(SemanticError::NoSlice(span, "an array literal".to_string())),
                             node::ExprKind::StringLit(_, _) => Err(SemanticError::NoSlice(span, "a string literal".to_string())),
                             node::ExprKind::UnExpr(_) => Err(SemanticError::NoSlice(span, "an unowned allocation".to_string())),
-                            _ => Ok(Type::Slice { inner: Box::new(inner) })
+                            _ => Ok(Type::Slice { inner: Box::new(inner) }),
                         }
                     } else {
                         Err(SemanticError::TypeMismatch(bin.op.clone(), ty1.clone(), ty2.clone()))
@@ -614,9 +718,7 @@ impl Validate {
                     match &ty1 {
                         Type::Tuple(v) => {
                             if let ExprKind::IntLit(i) = bin.rhs.kind {
-                                v.get(i as usize)
-                                    .cloned()
-                                    .ok_or(SemanticError::InvalidMemberAccess(bin.rhs.span))
+                                v.get(i as usize).cloned().ok_or(SemanticError::InvalidMemberAccess(bin.rhs.span))
                             } else {
                                 Err(SemanticError::InvalidMemberAccess(bin.rhs.span))
                             }
@@ -632,9 +734,7 @@ impl Validate {
                                 Err(SemanticError::InvalidMemberAccess(bin.rhs.span))
                             }
                         }
-                        Type::Array { inner, .. } | Type::Slice { inner } | Type::List { inner } => {
-                            handle_index(*inner.clone())
-                        }
+                        Type::Array { inner, .. } | Type::Slice { inner } | Type::List { inner } => handle_index(*inner.clone()),
                         _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2)),
                     }
                 }
@@ -647,12 +747,10 @@ impl Validate {
     fn un_expr(&mut self, un: &mut node::UnExpr, span: Span) -> Result<Type, SemanticError> {
         let ty = self.expr(&mut un.expr)?;
         match un.op.str.as_str() {
-            "-" => {
-                match ty {
-                    Type::Int | Type::Float => Ok(ty),
-                    _ => Err(SemanticError::UnaryTypeMismatch(span, un.op.str.clone(), ty))
-                }
-            }
+            "-" => match ty {
+                Type::Int | Type::Float => Ok(ty),
+                _ => Err(SemanticError::UnaryTypeMismatch(span, un.op.str.clone(), ty)),
+            },
             "+" => {
                 if let node::ExprKind::ArrLit(_) = un.expr.kind {
                     let Type::Array { inner, .. } = ty else {
@@ -717,7 +815,7 @@ impl Validate {
             _ => Err(SemanticError::InvalidUnaryOperator(un.op.clone())),
         }
     }
-    
+
     fn post_un_expr(&mut self, un: &mut node::UnExpr, span: Span) -> Result<Type, SemanticError> {
         let ty = self.expr(&mut un.expr)?;
         match un.op.str.as_str() {
@@ -752,7 +850,7 @@ impl Validate {
                     Err(SemanticError::UnaryTypeMismatch(span, "!".to_string(), Type::Result(Box::new(Type::Any), Box::new(Type::Any))))
                 }
             }
-            _ => Err(SemanticError::InvalidUnaryOperator(un.op.clone()))
+            _ => Err(SemanticError::InvalidUnaryOperator(un.op.clone())),
         }
     }
 
@@ -781,7 +879,10 @@ impl Validate {
             let ty2 = self.expr(&mut r#else.else_expr)?;
             if **ok != ty2 {
                 Self::type_cast(ty2, *ok.clone(), r#else.else_expr.span)?;
-                r#else.else_expr.kind = node::ExprKind::TypeCast(node::TypeCast { r#type: Self::node_type(r#else.else_expr.span), expr: r#else.else_expr.clone() })
+                r#else.else_expr.kind = node::ExprKind::TypeCast(node::TypeCast {
+                    r#type: Self::node_type(r#else.else_expr.span),
+                    expr: r#else.else_expr.clone(),
+                })
             }
             Ok(*ok.clone())
         } else {
@@ -814,7 +915,7 @@ impl Validate {
             }
         }
         if cur_type == Type::Void {
-            return Err(SemanticError::EmptyArray(Span { start: pos_id - 1, end: pos_id}));
+            return Err(SemanticError::EmptyArray(Span { start: pos_id - 1, end: pos_id }));
         }
         return Ok((cur_type, exprs.len()));
     }
@@ -822,7 +923,10 @@ impl Validate {
     fn find_fn(&mut self, func: &str, mut expected_sig: Vec<Type>, expected_ret: Option<Type>, args: &mut Vec<node::Expr>, span: Span) -> Result<String, SemanticError> {
         let mut s = func.to_string();
         let mut call = func.to_string();
-        let pos_str = PosStr { str: func.to_string(), pos_id: span.end };
+        let pos_str = PosStr {
+            str: func.to_string(),
+            pos_id: span.end,
+        };
         if let Some(sigs) = self.fn_map.get(func) {
             let mut found = false;
             for sig in sigs.iter() {
@@ -850,14 +954,14 @@ impl Validate {
                                 if let Some(ty) = generics.get(s) {
                                     let t = Type::wrap(ty, ty2);
                                     if t != *ty1 {
-                                        if Self::type_cast(ty1.clone(), t.clone(), span).is_err() { 
+                                        if Self::type_cast(ty1.clone(), t.clone(), span).is_err() {
                                             found = false;
                                             break;
                                         }
                                         let e = args.get(i).unwrap().clone();
                                         args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
                                             r#type: Self::node_type(e.span),
-                                            expr: Box::new(e)
+                                            expr: Box::new(e),
                                         });
                                         args.get_mut(i).unwrap().ty = t.clone();
                                         *ty1 = t.clone();
@@ -866,14 +970,14 @@ impl Validate {
                                     let inner = ty1.inner(depth).clone();
                                     let t = Type::wrap(&inner, ty2);
                                     if t != *ty1 {
-                                        if Self::type_cast(ty1.clone(), t.clone(), span).is_err() { 
+                                        if Self::type_cast(ty1.clone(), t.clone(), span).is_err() {
                                             found = false;
                                             break;
                                         }
                                         let e = args.get(i).unwrap().clone();
                                         args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
                                             r#type: Self::node_type(e.span),
-                                            expr: Box::new(e)
+                                            expr: Box::new(e),
                                         });
                                         args.get_mut(i).unwrap().ty = t.clone();
                                         *ty1 = t.clone();
@@ -881,14 +985,14 @@ impl Validate {
                                     generics.insert(s.clone(), inner);
                                 }
                             } else {
-                                if Self::type_cast(ty1.clone(), ty2.clone(), span).is_err() { 
+                                if Self::type_cast(ty1.clone(), ty2.clone(), span).is_err() {
                                     found = false;
                                     break;
                                 }
                                 let e = args.get(i).unwrap().clone();
                                 args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
                                     r#type: Self::node_type(e.span),
-                                    expr: Box::new(e)
+                                    expr: Box::new(e),
                                 });
                                 args.get_mut(i).unwrap().ty = ty2.clone();
                                 *ty1 = ty2.clone();
@@ -925,9 +1029,7 @@ impl Validate {
         }
         let ty;
         match self.symbol_table.get(&s) {
-            Some(Symbol::Func { ty: t, .. }) |
-            Some(Symbol::ExternFunc { ty: t, .. }) |
-            Some(Symbol::Syscall { ty: t, .. }) => {
+            Some(Symbol::Func { ty: t, .. }) | Some(Symbol::ExternFunc { ty: t, .. }) | Some(Symbol::Syscall { ty: t, .. }) => {
                 ty = t;
             }
             _ => {
@@ -947,13 +1049,27 @@ impl Validate {
         } else {
             res = ty.clone()
         }
+        if let Some(ret) = &expected_ret {
+            if res != *ret {
+                return Err(SemanticError::NoFnSig(func.to_string(), span, expected_sig, expected_ret));
+            }
+        }
         if self.symbol_table.get(&call).is_none() {
-            self.symbol_table.insert(call.clone(), Symbol::ExternFunc { ty: res.clone(), args: args.iter().map(|a| a.ty.clone()).collect() });
+            self.symbol_table.insert(
+                call.clone(),
+                Symbol::ExternFunc {
+                    ty: res,
+                    args: args.iter().map(|a| a.ty.clone()).collect(),
+                },
+            );
         }
         Ok(call)
     }
 
     fn call(&mut self, call: &mut node::Call, span: Span) -> Result<Type, SemanticError> {
+        if call.name.str == "main" {
+            return Err(SemanticError::MainFnCall(call.name.clone()));
+        }
         let mut arg_types = Vec::new();
         let mut arg_spans = Vec::new();
         for s in call.args.iter_mut() {
@@ -964,12 +1080,10 @@ impl Validate {
         call.name.str = name;
         let ty;
         match self.symbol_table.get(&call.name.str) {
-            Some(Symbol::Func { ty: t, .. }) |
-            Some(Symbol::ExternFunc { ty: t, .. }) |
-            Some(Symbol::Syscall { ty: t, .. }) => {
+            Some(Symbol::Func { ty: t, .. }) | Some(Symbol::ExternFunc { ty: t, .. }) | Some(Symbol::Syscall { ty: t, .. }) => {
                 ty = t.clone();
             }
-            _ => unreachable!()
+            _ => unreachable!(),
         }
         Ok(ty)
     }
@@ -986,7 +1100,7 @@ impl Validate {
                 }
                 match ty {
                     Type::Array { .. } | Type::Slice { .. } | Type::List { .. } => Ok(()),
-                    _ => Err(SemanticError::NoBuiltIn(span, "length".to_string(), ty))
+                    _ => Err(SemanticError::NoBuiltIn(span, "length".to_string(), ty)),
                 }?;
                 Ok(Type::Int)
             }
@@ -1018,6 +1132,13 @@ impl Validate {
                 self.expr(built_in.args.get_mut(0).unwrap())?;
                 Ok(Type::Int)
             }
+            node::BuiltInKind::Param => {
+                if built_in.args.len() != 1 {
+                    return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 1));
+                }
+                self.expr(built_in.args.get_mut(0).unwrap())?;
+                Ok(Type::Void)
+            }
         }
     }
 
@@ -1047,11 +1168,18 @@ impl Validate {
                     }
                     Err(SemanticError::InvalidType(r#type.span))
                 }
-            }
+            },
             node::TypeKind::Pointer(inner) => Ok(Type::Pointer(Box::new(self.r#type(&inner, true)?))),
-            node::TypeKind::Array(inner, len) => Ok(Type::Array { inner: Box::new(self.r#type(&inner, false)?), length: *len as usize }),
-            node::TypeKind::Slice(inner) => Ok(Type::Slice { inner: Box::new(self.r#type(inner, true)?) }),
-            node::TypeKind::List(inner) => Ok(Type::List { inner: Box::new(self.r#type(inner, true)?) }),
+            node::TypeKind::Array(inner, len) => Ok(Type::Array {
+                inner: Box::new(self.r#type(&inner, false)?),
+                length: *len as usize,
+            }),
+            node::TypeKind::Slice(inner) => Ok(Type::Slice {
+                inner: Box::new(self.r#type(inner, true)?),
+            }),
+            node::TypeKind::List(inner) => Ok(Type::List {
+                inner: Box::new(self.r#type(inner, true)?),
+            }),
             node::TypeKind::Tuple(type_list) => {
                 let mut types = Vec::new();
                 for arg in type_list.iter() {
@@ -1074,15 +1202,13 @@ impl Validate {
                 }
                 Ok(Type::Struct(map))
             }
-            node::TypeKind::Result(ty, err) => Ok(Type::Result(Box::new(self.r#type(ty, false)?), Box::new(self.r#type(err, false)?)))
+            node::TypeKind::Result(ty, err) => Ok(Type::Result(Box::new(self.r#type(ty, false)?), Box::new(self.r#type(err, false)?))),
         }
     }
 
     fn type_cast(from: Type, to: Type, span: Span) -> Result<Type, SemanticError> {
         match (&from, &to) {
-            (Type::List { inner }, Type::Pointer(i)) |
-            (Type::List { inner }, Type::Slice { inner: i }) |
-            (Type::Array { inner, .. }, Type::Slice { inner: i }) if inner == i => (),
+            (Type::List { inner }, Type::Pointer(i)) | (Type::List { inner }, Type::Slice { inner: i }) | (Type::Array { inner, .. }, Type::Slice { inner: i }) if inner == i => (),
             (Type::Int, Type::Char) | (Type::Char, Type::Int) => (),
             (Type::Struct(s1), Type::Struct(s2)) => {
                 for (n2, (t2, _)) in s2.iter() {
@@ -1138,11 +1264,7 @@ impl Validate {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
-            (Type::Pointer(p1), Type::Pointer(p2)) => {
-                if *p1.depth(0).0 != Type::Any && *p2.depth(0).0 != Type::Any  {
-                    return Err(SemanticError::InvalidCast(span, from, to));
-                }
-            }
+            (Type::Pointer(_), Type::Pointer(_)) => (),
             (Type::Slice { inner }, Type::Pointer(p)) => {
                 if inner != p {
                     return Err(SemanticError::InvalidCast(span, from, to));
@@ -1154,7 +1276,7 @@ impl Validate {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
-            _ => return Err(SemanticError::InvalidCast(span, from, to))
+            _ => return Err(SemanticError::InvalidCast(span, from, to)),
         }
         Ok(to)
     }
@@ -1175,13 +1297,40 @@ impl Validate {
     fn r#for(&mut self, r#for: &mut node::For) -> Result<(), SemanticError> {
         match &mut r#for.init {
             node::LetOrExpr::Let(r#let) => self.r#let(r#let)?,
-            node::LetOrExpr::Expr(expr) => self.expr(expr).map(|_| ())?
+            node::LetOrExpr::Expr(expr) => self.expr(expr).map(|_| ())?,
         }
         self.expr(&mut r#for.cond)?;
         self.expr(&mut r#for.incr)?;
         self.loop_count += 1;
         self.scope(&mut r#for.scope)?;
         self.loop_count -= 1;
+        Ok(())
+    }
+
+    fn for_in(&mut self, r#for: &mut node::ForIn) -> Result<(), SemanticError> {
+        let ty = self.expr(&mut r#for.expr)?;
+        let capture_ty = match ty {
+            Type::Slice { inner } => *inner,
+            other => {
+                let inner = other.depth(0).0.clone();
+                let expected = Type::Slice { inner: Box::new(inner.clone()) };
+                if Self::type_cast(other.clone(), expected.clone(), r#for.expr.span).is_ok() {
+                    r#for.expr.kind = node::ExprKind::TypeCast(node::TypeCast {
+                        r#type: Self::node_type(r#for.expr.span),
+                        expr: Box::new(r#for.expr.clone()),
+                    });
+                    r#for.expr.ty = expected.clone();
+                    inner
+                } else {
+                    return Err(SemanticError::NotIterable(r#for.expr.span, other));
+                }
+            }
+        };
+        self.symbol_table.insert(r#for.capture.str.clone(), Symbol::Var { ty: capture_ty });
+        self.loop_count += 1;
+        self.scope(&mut r#for.scope)?;
+        self.loop_count -= 1;
+        self.symbol_table.remove(&r#for.capture.str);
         Ok(())
     }
 

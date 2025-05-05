@@ -1,11 +1,8 @@
 import lib/std
 
-fn main() {
-    let path = "ttt";
-    let x = read(path) else +"";
+fn main(x: int, y: <char>, z: int) {
     print(x);
-    print(len(x));
-    push(&x, "alo\n");
-    write(path, x);
+    print(y);
+    print(z);
 }
 

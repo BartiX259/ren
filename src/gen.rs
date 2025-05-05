@@ -104,30 +104,38 @@ impl<'a> Gen<'a> {
         if let Some(_) = self.symbol_table.get("_start") {
             return Err(GenError::ReservedSymbol(OpLoc { start_id: 0, end_id: 0 }));
         }
-        if let Some(Symbol::Func { .. }) = self.symbol_table.get("main") {
+        if let Some(Symbol::MainFunc { init, arg_parse, arg_names, args, parse_fns, module, span, .. }) = self.symbol_table.get("main") {
+            self.cur_module = module.to_string();
             self.buf.push_line("global _start");
             self.buf.dedent();
             self.buf.push_line("");
             self.buf.push_line("_start:");
             self.buf.indent();
-            let mut i = 1;
-            while let Some(sym) = self.symbol_table.get(&format!("init.{i}")) {
-                let empty = match sym {
-                    Symbol::ExternFunc { args, .. } => args.is_empty(),
-                    Symbol::Func { args, .. } => args.is_empty(),
-                    _ => {
-                        i += 1;
-                        continue;
-                    }
-                };
-                if empty {
-                    self.buf.push_line(format!("call init.{i}"));
-                }
-                i += 1;
+            self.buf.push_line(format!("call {init}"));
+            self.buf.push_line(format!("mov rdi, {}", arg_names.len()));
+            self.buf.push_line("mov rsi, args.");
+            self.buf.push_line(format!("call {arg_parse}"));
+            let mut i = 0;
+            let mut total_size = 0;
+            for (ty, parse_fn) in args.iter().zip(parse_fns.iter()) {
+                i += 8;
+                let size = ty.aligned_size();
+                total_size += size;
+                self.buf.push_line(format!("sub rsp, {}", size));
+                self.buf.push_line(format!("mov rdi, [rsp+{}]", i + total_size));
+                self.buf.push_line(format!("mov rsi, rsp"));
+                self.buf.push_line(format!("call {parse_fn}"));
             }
-            self.buf.push_line("mov rdi, [rsp]");
-            self.buf.push_line("mov rsi, rsp");
-            self.buf.push_line("add rsi, 8");
+            let mut param_index = 0;
+            for ty in args.iter() {
+                let size = ty.aligned_size();
+                total_size -= size;
+                for j in (0..size).step_by(8) {
+                    let target = *self.call_order.get(param_index).ok_or(GenError::TooManyArguments(OpLoc { start_id: span.start, end_id: span.end }))?;
+                    param_index += 1;
+                    self.buf.push_line(format!("mov {target}, [rsp+{}]", total_size + j));
+                }
+            }
             self.buf.push_line("call main");
             self.buf.push_line("mov rdi, rax");
             self.buf.push_line("mov rax, 60");
@@ -145,6 +153,20 @@ impl<'a> Gen<'a> {
                 Symbol::Data { ty, str } => {
                     if let crate::types::Type::Slice { .. } = ty {
                         self.buf.push_line(format!("{} db {}", name, str));
+                    }
+                }
+                Symbol::MainFunc { arg_names, .. } => {
+                    for (i, name) in arg_names.iter().enumerate() {
+                        self.buf.push_line(format!("arg{}.name db \"{}\"", i, name));
+                    }
+                    self.buf.push("args.:");
+                    for (i, name) in arg_names.iter().enumerate() {
+                        if i == 0 {
+                            self.buf.push_line(format!("    dq {}", name.len()));
+                        } else {
+                            self.buf.push_line(format!("          dq {}", name.len()));
+                        }
+                        self.buf.push_line(format!("          dq arg{}.name", i));
                     }
                 }
                 _ => ()
@@ -177,20 +199,23 @@ impl<'a> Gen<'a> {
             self.sp = 0;
             self.arg_index = 0;
             let sym = self.symbol_table.get(&name);
-            if let Some(Symbol::Func { block, module, .. }) = sym {
-                self.cur_module = module.to_string();
-                self.buf.push_line("");
-                self.buf.push_line(format!("{}:", name));
-                self.buf.indent();
-                self.block(block.clone())?;
-                if self.buf.last_line.clone() != "ret" {
-                    if self.sp > 0 {
-                        self.buf.push_line(format!("add rsp, {}", self.sp));
+            match sym {
+                Some(Symbol::MainFunc { block, module, .. }) | Some(Symbol::Func { block, module, .. }) => {
+                    self.cur_module = module.to_string();
+                    self.buf.push_line("");
+                    self.buf.push_line(format!("{}:", name));
+                    self.buf.indent();
+                    self.block(block.clone())?;
+                    if self.buf.last_line.clone() != "ret" {
+                        if self.sp > 0 {
+                            self.buf.push_line(format!("add rsp, {}", self.sp));
+                        }
+                        self.buf.push_line("mov rax, 0");
+                        self.buf.push_line("ret");
                     }
-                    self.buf.push_line("mov rax, 0");
-                    self.buf.push_line("ret");
+                    self.buf.dedent();
                 }
-                self.buf.dedent();
+                _ => ()
             }
         }
         Ok(())
