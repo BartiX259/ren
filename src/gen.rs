@@ -104,30 +104,70 @@ impl<'a> Gen<'a> {
         if let Some(_) = self.symbol_table.get("_start") {
             return Err(GenError::ReservedSymbol(OpLoc { start_id: 0, end_id: 0 }));
         }
-        if let Some(Symbol::MainFunc { init, arg_parse, arg_names, args, parse_fns, module, span, .. }) = self.symbol_table.get("main") {
+        if let Some(Symbol::MainFunc { init, arg_parse, arg_names, args, parse_fns, print, print_help, module, span, .. }) = self.symbol_table.get("main") {
             self.cur_module = module.to_string();
             self.buf.push_line("global _start");
             self.buf.dedent();
             self.buf.push_line("");
+            if !init.is_empty() {
+                self.buf.push_line("args.fail:");
+                self.buf.indent();
+                self.buf.push_line("mov rbp, rax");
+                self.buf.push_line("mov rsi, [rbp+16]");
+                self.buf.push_line("mov rdi, [rbp+8]");
+                self.buf.push_line(format!("call {print}"));
+                self.buf.push_line("mov rdi, [rbp+32]");
+                self.buf.push_line(format!("mov rsi, {}", arg_names.len()));
+                self.buf.push_line("mov rdx, args.");
+                self.buf.push_line(format!("call {print_help}"));
+                self.buf.push_line("mov rdi, 1");
+                self.buf.push_line("mov rax, 60");
+                self.buf.push_line("syscall");
+                self.buf.dedent();
+                self.buf.push_line("");
+            }
             self.buf.push_line("_start:");
             self.buf.indent();
-            self.buf.push_line(format!("call {init}"));
-            self.buf.push_line(format!("mov rdi, {}", arg_names.len()));
-            self.buf.push_line("mov rsi, args.");
-            self.buf.push_line(format!("call {arg_parse}"));
-            let mut i = 0;
-            let mut total_size = 0;
+            if !init.is_empty() {
+                self.buf.push_line(format!("call {init}"));
+            }
+            if !arg_parse.is_empty() {
+                self.buf.push_line("mov rsi, [rsp]");
+                self.buf.push_line("mov rdx, rsp");
+                self.buf.push_line("add rdx, 8");
+                self.buf.push_line(format!("mov rcx, {}", arg_names.len()));
+                self.buf.push_line("mov r8, args.");
+                self.buf.push_line("sub rsp, 24"); // Make space for results
+                self.buf.push_line("mov rdi, rsp");
+                self.buf.push_line(format!("call {arg_parse}"));
+                self.buf.push_line("mov rbx, [rax]");
+                self.buf.push_line("test rbx, rbx");
+                self.buf.push_line("jnz args.fail");
+            }
+            let mut i = 8;
+            let mut total_size = 24;
             for (ty, parse_fn) in args.iter().zip(parse_fns.iter()) {
+                if parse_fn.is_empty() {
+                    continue;
+                }
                 i += 8;
                 let size = ty.aligned_size();
                 total_size += size;
                 self.buf.push_line(format!("sub rsp, {}", size));
-                self.buf.push_line(format!("mov rdi, [rsp+{}]", i + total_size));
-                self.buf.push_line(format!("mov rsi, rsp"));
+                self.buf.push_line("mov rdi, rax");
+                self.buf.push_line(format!("mov rsi, [rsp+{}]", i + total_size));
+                self.buf.push_line(format!("mov rdx, rsp"));
                 self.buf.push_line(format!("call {parse_fn}"));
+                self.buf.push_line("mov rbx, [rax]");
+                self.buf.push_line("test rbx, rbx");
+                self.buf.push_line("jnz args.fail");
             }
             let mut param_index = 0;
-            for ty in args.iter() {
+            total_size -= 24;
+            for (ty, parse_fn) in args.iter().zip(parse_fns.iter()) {
+                if parse_fn.is_empty() {
+                    continue;
+                }
                 let size = ty.aligned_size();
                 total_size -= size;
                 for j in (0..size).step_by(8) {
@@ -167,6 +207,9 @@ impl<'a> Gen<'a> {
                             self.buf.push_line(format!("          dq {}", name.len()));
                         }
                         self.buf.push_line(format!("          dq arg{}.name", i));
+                    }
+                    if arg_names.is_empty() {
+                        self.buf.push_line("");
                     }
                 }
                 _ => ()

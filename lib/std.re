@@ -6,20 +6,52 @@ syscall 9: mmap(*any, int, int, int, int, int) -> *any;
 syscall 10: munmap(*any, int);
 syscall 60: exit(int);
 
-pub fn arg_parse(expected: <<char>>) {
-    for a in expected {
-        print(a);
+pub fn print_help(name: *char, expected: <<char>>) {
+    print("Usage: {name} ");
+    let start = true;
+    for e in expected {
+        if start {
+            start = false;
+        } else {
+            print(" ");
+        }
+        print("[{e}]");
     }
+    print('\n');
 }
 
-pub fn parse(str: *char, res: *int) {
-    print(str);
-    *res = 75;
+pub fn arg_parse(args: <*char>, expected: <<char>>) -> int ? <char> {
+    if len(args) - 1 != len(expected) {
+        let ret = "Invalid argument count, expected {len(expected)} argument(s), got {len(args) - 1}.\n";
+        return ?ret;
+    }
+    return 0;
 }
 
-pub fn parse(str: *char, res: *<char>) {
-    let s = "xd";
-    copy(&s, res, 16);
+pub fn parse(str: *char, res: *int) -> int ? <char> {
+    *res = 0;
+    let slice = str(str);
+    let mult = 1;
+    let i = len(slice);
+    loop {
+        i -= 1;
+        if i < 0 {
+            break;
+        }
+        let temp = slice[i] - '0';
+        if temp > 9 {
+            return ?"Couldn't parse '{slice}' into an integer.\n";
+        }
+        *res += temp as int * mult;
+        mult *= 10;
+    }
+    return 0;
+}
+
+pub fn parse(str: *char, res: *<char>) -> int ? <char> {
+    let slice = str(str);
+    copy(&slice, res, 16);
+    return 0;
 }
 
 fn int2str(x: int, buf: *char) -> *char {
@@ -198,7 +230,6 @@ pub fn init() {
 }
 
 pub fn alloc(size: int) -> *any {
-    write(1, "alloc\n", 6);
     if size <= 0 {
         size = 1;
     }
@@ -246,7 +277,6 @@ fn set_forward(ptr: *any, new_loc: *any) {
 }
 
 fn collect() {
-    write(1, "gc\n", 3);
     let stack_end = sp() + 8;
     let scan = allocator.stack;
     let to_space = mmap(null, *SPACE_SIZE, 3, 34, 0, 0);

@@ -7,7 +7,7 @@ pub enum Symbol {
     Var { ty: Type },
     Func { ty: Type, block: Block, module: String, args: Vec<Type>, public: bool },
     ExternFunc { ty: Type, args: Vec<Type> },
-    MainFunc { ty: Type, block: Block, module: String, args: Vec<Type>, init: String, arg_parse: String, arg_names: Vec<String>, parse_fns: Vec<String>, span: crate::node::Span },
+    MainFunc { ty: Type, block: Block, module: String, args: Vec<Type>, init: String, arg_parse: String, print: String, print_help: String, arg_names: Vec<String>, parse_fns: Vec<String>, span: crate::node::Span },
     Syscall { id: i64, ty: Type, args: Vec<Type> },
     Data { ty: Type, str: String }
 }

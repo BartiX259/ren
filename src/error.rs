@@ -106,7 +106,7 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::NotIterable(span, ty) => {
-            eprintln!("Can't iterate over {ty}");
+            eprintln!("Can't iterate over {ty}.");
             print_module_err_span(path, span);
         }
         SemanticError::InvalidReturn(pos_id) => {

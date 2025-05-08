@@ -1,8 +1,12 @@
 import lib/std
-
-fn main(x: int, y: <char>, z: int) {
-    print(x);
-    print(y);
-    print(z);
+fn main() {
+    for x in 0..5 {
+        let z = 3;
+        if x == z {
+            continue;
+        }
+        print(x);
+    }
+    print("out");
 }
 

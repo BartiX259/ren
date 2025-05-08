@@ -415,19 +415,53 @@ impl Validate {
             let ty = self.r#type(arg, false)?;
             arg_types.push(ty.clone());
         }
-        let init = self.find_fn("init", vec![], Some(Type::Void), &mut vec![], span)?;
+        let init = self.find_fn("init", vec![], Some(Type::Void), &mut vec![], span).unwrap_or("".to_string());
         let arg_parse = self.find_fn(
             "arg_parse",
-            vec![Type::Slice {
-                inner: Box::new(Type::Slice { inner: Box::new(Type::Char) }),
-            }],
+            vec![
+                Type::Slice {
+                    inner: Box::new(Type::Pointer(Box::new(Type::Char))),
+                },
+                Type::Slice {
+                    inner: Box::new(Type::Slice { inner: Box::new(Type::Char) }),
+                },
+            ],
+            Some(Type::Result(Box::new(Type::Int), Box::new(Type::Slice { inner: Box::new(Type::Char) }))),
+            &mut vec![],
+            span,
+        ).unwrap_or("".to_string());
+        let print_help = self.find_fn(
+            "print_help",
+            vec![
+                Type::Pointer(Box::new(Type::Char)),
+                Type::Slice {
+                    inner: Box::new(Type::Slice { inner: Box::new(Type::Char) }),
+                },
+            ],
             Some(Type::Void),
             &mut vec![],
             span,
-        )?;
+        ).unwrap_or("".to_string());
+        let print = self.find_fn(
+            "print",
+            vec![
+                Type::Slice {
+                    inner: Box::new(Type::Char),
+                },
+            ],
+            Some(Type::Void),
+            &mut vec![],
+            span,
+        ).unwrap_or("".to_string());
         let mut parse_fns = vec![];
-        for arg in arg_types.iter() {
-            parse_fns.push(self.find_fn("parse", vec![Type::Pointer(Box::new(Type::Char)), Type::Pointer(Box::new(arg.clone()))], None, &mut vec![], span)?);
+        for (name, arg) in decl.arg_names.iter().zip(arg_types.iter()) {
+            parse_fns.push(self.find_fn(
+                "parse",
+                vec![Type::Pointer(Box::new(Type::Char)), Type::Pointer(Box::new(arg.clone()))],
+                Some(Type::Result(Box::new(Type::Int), Box::new(Type::Slice { inner: Box::new(Type::Char) }))),
+                &mut vec![],
+                Span { start: name.pos_id, end: name.pos_id },
+            )?);
         }
         self.symbol_table.insert(
             "main".to_string(),
@@ -438,9 +472,11 @@ impl Validate {
                 args: arg_types.clone(),
                 init,
                 arg_parse,
+                print,
+                print_help,
                 arg_names: decl.arg_names.iter().map(|pos_str| pos_str.str.clone()).collect(),
                 parse_fns,
-                span
+                span,
             },
         );
         for (name, ty) in decl.arg_names.iter().zip(arg_types) {
@@ -619,6 +655,7 @@ impl Validate {
                     (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
                     (Type::Int, Type::Char) => Ok(Type::Int),
                     (Type::Char, Type::Int) => Ok(Type::Char),
+                    (Type::Char, Type::Char) => Ok(Type::Char),
                     (Type::Pointer(p), Type::Int) => Ok(Type::Pointer(p.clone())),
                     (Type::Pointer(_), Type::Pointer(_)) => Ok(Type::Int),
                     _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2)),
@@ -1311,6 +1348,7 @@ impl Validate {
         let ty = self.expr(&mut r#for.expr)?;
         let capture_ty = match ty {
             Type::Slice { inner } => *inner,
+            Type::Range => Type::Int,
             other => {
                 let inner = other.depth(0).0.clone();
                 let expected = Type::Slice { inner: Box::new(inner.clone()) };
