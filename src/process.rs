@@ -272,7 +272,7 @@ impl Process {
                 lhs = Box::new(node::Expr {
                     ty: Type::Struct(m.clone()),
                     span: bin.lhs.span,
-                    kind: bin.lhs.kind
+                    kind: node::ExprKind::UnExpr(node::UnExpr { expr: bin.lhs.clone(), op: self.pos_str("&".to_string()) })
                 });
             }
             let node::ExprKind::Variable(pos_str) = bin.rhs.kind else {
@@ -398,7 +398,15 @@ impl Process {
                         let o: u32 = v.iter().take(i as usize).map(|ty| ty.size()).sum();
                         let mut temp = rhs;
                         temp.kind = node::ExprKind::IntLit(o as i64);
-                        ptr = lhs;
+                        if let Type::Pointer(_) = lhs.ty {
+                            ptr = lhs;
+                        } else {
+                            ptr = node::Expr {
+                                ty: lhs.ty.clone(),
+                                span: lhs.span,
+                                kind: node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(lhs), op: self.pos_str("&".to_string()) }),
+                            }
+                        }
                         offset = temp;
                     }
                     Type::Slice { .. } | Type::List { .. } => {

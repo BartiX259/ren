@@ -86,7 +86,16 @@ impl Validate {
             }
             self.hoist_func_with_types(decl, ty, types, public, is_public)?;
             if self.cur_generics.len() > 0 {
-                self.gfns += 1;
+                let mut found = false;
+                for (name, _) in self.gfns.iter() {
+                    if *name == decl.name.str {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    self.gfns.push((decl.name.str.clone(), 1));
+                }
                 self.cur_generics.clear();
             }
         } else if let node::Stmt::Syscall(decl) = stmt_ref {

@@ -231,7 +231,8 @@ impl<'a> Gen<'a> {
     }
 
     fn functions(&mut self) -> Result<(), GenError> {
-        let binding: Vec<String> = self.symbol_table.keys().cloned().collect();
+        let mut binding: Vec<String> = self.symbol_table.keys().cloned().collect();
+        binding.sort();
         for name in binding {
             for r in self.regs.iter_mut() {
                 r.term = None;

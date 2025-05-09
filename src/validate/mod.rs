@@ -6,13 +6,14 @@ use std::collections::HashMap;
 mod hoist;
 
 /// Validate the ast, return a symbol table if successful
-pub fn validate(module: &mut node::Module, public: Vec<&PublicSymbols>, gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>) -> Result<(PublicSymbols, usize), SemanticError> {
+pub fn validate(module: &mut node::Module, public: Vec<&PublicSymbols>, gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>, gfns: &mut Vec<(String, usize)>) -> Result<PublicSymbols, SemanticError> {
     let mut val = Validate::new();
     for syms in public {
         val.symbol_table.extend(syms.symbol_table.clone());
         val.fn_map.extend(syms.fn_map.clone());
     }
     val.gcalls = gcalls.clone();
+    val.gfns = gfns.drain(..).collect();
     val.cur_module = module.path.clone();
     for stmt in module.stmts.iter_mut() {
         val.hoist_type(stmt, false)?;
@@ -24,20 +25,19 @@ pub fn validate(module: &mut node::Module, public: Vec<&PublicSymbols>, gcalls: 
         val.stmt(stmt)?;
     }
     gcalls.extend(val.gcalls[gcalls.len()..].to_vec());
-    Ok((
-        PublicSymbols {
-            symbol_table: val.symbol_table,
-            fn_map: val.fn_map,
-        },
-        val.gfns,
-    ))
+    *gfns = val.gfns;
+    Ok(PublicSymbols {
+        symbol_table: val.symbol_table,
+        fn_map: val.fn_map,
+    })
 }
 
-pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>) -> Result<(PublicSymbols, node::Module), SemanticError> {
+pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>, gfns: &mut Vec<(String, usize)>) -> Result<(PublicSymbols, node::Module), SemanticError> {
     let mut val = Validate::new();
     let mut new_mod = node::Module { path: module.path, stmts: Vec::new() };
     let mut to_remove = Vec::new();
     val.symbol_table = symbols.symbol_table;
+    val.gfns = gfns.drain(..).collect();
     val.fn_map = symbols.fn_map;
     for stmt in module.stmts.into_iter() {
         let mut stmt_ref = &stmt;
@@ -109,6 +109,7 @@ pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(S
     for g in val.gcalls {
         gcalls.push(g);
     }
+    *gfns = val.gfns;
     Ok((
         PublicSymbols {
             symbol_table: val.symbol_table,
@@ -153,8 +154,9 @@ pub fn clean_up(module: node::Module, symbols: PublicSymbols) -> (node::Module, 
     (new_mod, val.symbol_table)
 }
 
-pub fn hoist_public(module: &mut node::Module, public: &HashMap<String, PublicSymbols>) -> Result<PublicSymbols, SemanticError> {
+pub fn hoist_public(module: &mut node::Module, public: &HashMap<String, PublicSymbols>, gfns: &mut Vec<(String, usize)>) -> Result<PublicSymbols, SemanticError> {
     let mut val = Validate::new();
+    val.gfns = gfns.to_vec();
     for (_, syms) in public {
         val.fn_map.extend(syms.fn_map.clone());
     }
@@ -171,6 +173,7 @@ pub fn hoist_public(module: &mut node::Module, public: &HashMap<String, PublicSy
             }
         }
     }
+    gfns.extend(val.gfns[gfns.len()..].to_vec());
     Ok(PublicSymbols {
         symbol_table: val.symbol_table,
         fn_map: val.fn_map,
@@ -223,7 +226,7 @@ pub enum SemanticError {
 struct Validate {
     symbol_table: HashMap<String, Symbol>,
     fn_map: HashMap<String, Vec<(Vec<Type>, usize)>>,
-    gfns: usize,
+    gfns: Vec<(String, usize)>,
     gcalls: Vec<(String, HashMap<String, Type>, usize)>,
     cur_module: String,
     symbol_stack: Vec<Vec<String>>,
@@ -238,7 +241,7 @@ impl Validate {
         Self {
             symbol_table: HashMap::new(),
             fn_map: HashMap::new(),
-            gfns: 0,
+            gfns: Vec::new(),
             gcalls: Vec::new(),
             cur_module: String::new(),
             symbol_stack: Vec::new(),
@@ -416,43 +419,39 @@ impl Validate {
             arg_types.push(ty.clone());
         }
         let init = self.find_fn("init", vec![], Some(Type::Void), &mut vec![], span).unwrap_or("".to_string());
-        let arg_parse = self.find_fn(
-            "arg_parse",
-            vec![
-                Type::Slice {
-                    inner: Box::new(Type::Pointer(Box::new(Type::Char))),
-                },
-                Type::Slice {
-                    inner: Box::new(Type::Slice { inner: Box::new(Type::Char) }),
-                },
-            ],
-            Some(Type::Result(Box::new(Type::Int), Box::new(Type::Slice { inner: Box::new(Type::Char) }))),
-            &mut vec![],
-            span,
-        ).unwrap_or("".to_string());
-        let print_help = self.find_fn(
-            "print_help",
-            vec![
-                Type::Pointer(Box::new(Type::Char)),
-                Type::Slice {
-                    inner: Box::new(Type::Slice { inner: Box::new(Type::Char) }),
-                },
-            ],
-            Some(Type::Void),
-            &mut vec![],
-            span,
-        ).unwrap_or("".to_string());
-        let print = self.find_fn(
-            "print",
-            vec![
-                Type::Slice {
-                    inner: Box::new(Type::Char),
-                },
-            ],
-            Some(Type::Void),
-            &mut vec![],
-            span,
-        ).unwrap_or("".to_string());
+        let arg_parse = self
+            .find_fn(
+                "arg_parse",
+                vec![
+                    Type::Slice {
+                        inner: Box::new(Type::Pointer(Box::new(Type::Char))),
+                    },
+                    Type::Slice {
+                        inner: Box::new(Type::Slice { inner: Box::new(Type::Char) }),
+                    },
+                ],
+                Some(Type::Result(Box::new(Type::Int), Box::new(Type::Slice { inner: Box::new(Type::Char) }))),
+                &mut vec![],
+                span,
+            )
+            .unwrap_or("".to_string());
+        let print_help = self
+            .find_fn(
+                "print_help",
+                vec![
+                    Type::Pointer(Box::new(Type::Char)),
+                    Type::Slice {
+                        inner: Box::new(Type::Slice { inner: Box::new(Type::Char) }),
+                    },
+                ],
+                Some(Type::Void),
+                &mut vec![],
+                span,
+            )
+            .unwrap_or("".to_string());
+        let print = self
+            .find_fn("print", vec![Type::Slice { inner: Box::new(Type::Char) }], Some(Type::Void), &mut vec![], span)
+            .unwrap_or("".to_string());
         let mut parse_fns = vec![];
         for (name, arg) in decl.arg_names.iter().zip(arg_types.iter()) {
             parse_fns.push(self.find_fn(
@@ -1055,9 +1054,18 @@ impl Validate {
                         }
                     }
                     if !found {
-                        let id = self.gcalls.len();
-                        self.gcalls.push((s.clone(), generics, id));
-                        call = format!("{}.{}", s, id);
+                        for (name, id) in self.gfns.iter_mut() {
+                            if *name == s {
+                                self.gcalls.push((s.clone(), generics, *id));
+                                call = format!("{}.{}", s, id);
+                                *id += 1;
+                                found = true;
+                                break;
+                            }
+                        }
+                        if !found {
+                            panic!("{s} {:?}", self.gfns)
+                        }
                     }
                 } else {
                     call = s.clone();

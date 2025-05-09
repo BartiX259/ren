@@ -103,6 +103,21 @@ pub fn str(x: *char) -> <char> {
     return (len, x);
 }
 
+pub fn str<T>(x: <T>) -> <char> {
+    let s = +"[";
+    let start = true;
+    for el in x {
+        if start {
+            start = false;
+        } else {
+            push(&s, ", ");
+        }
+        push(&s, str(el));
+    }
+    push(&s, ']');
+    return s;
+}
+
 pub fn print<T>(msg: T) {
     let sl = str(msg);
     write(1, sl as *char, len(sl));
@@ -165,7 +180,7 @@ pub fn push<T>(list: *[T], sl: <T>) {
 pub fn split<T>(sl: <T>, split: T) -> [<T>] {
 	let base = 0;
 	decl res: [<T>];
-	for let i = 0; i < len(sl); i += 1 {
+	for i in 0..len(sl) {
 		if sl[i] == split {
 			let s = sl[base..i];
 			push(&res, s);

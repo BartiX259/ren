@@ -56,8 +56,12 @@ fn main() -> ExitCode {
     }
 
     let mut public_map = HashMap::new();
+    let mut generic_fns = Vec::new();
+    let mut is_generic_vec = Vec::new();
+
     for module in modules.iter_mut() {
-        match validate::hoist_public(module, &public_map) {
+        let before = generic_fns.len();
+        match validate::hoist_public(module, &public_map, &mut generic_fns) {
             Ok(res) => { 
                 let binding = module.path.clone();
                 public_map.insert(binding, res);
@@ -67,27 +71,29 @@ fn main() -> ExitCode {
                 return ExitCode::from(1);
             }
         }
+        is_generic_vec.push(before != generic_fns.len());
     }
 
     let mut files = Vec::new();
     let mut generic_calls = Vec::new();
     let mut unresolved = Vec::new();
 
-    for (mut module, imports) in modules.into_iter().zip(import_names.into_iter()) {
+    for (mut module, (imports, is_generic)) in modules.into_iter().zip(import_names.into_iter().zip(is_generic_vec.into_iter())) {
         let mut pub_symbols = Vec::new();
         for path in imports {
             if let Some(symbols) = public_map.get(&path) {
                 pub_symbols.push(symbols);
             }
         }
-        let (syms, gfns) = match validate::validate(&mut module, pub_symbols, &mut generic_calls) {
+        let syms = match validate::validate(&mut module, pub_symbols, &mut generic_calls, &mut generic_fns) {
             Ok(res) => res,
             Err(e) => {
                 error::sematic_err(&module.path, e);
                 return ExitCode::from(1);
             }
         };
-        if gfns > 0 {
+
+        if is_generic {
             unresolved.push((module, syms));
             continue;
         }
@@ -112,7 +118,7 @@ fn main() -> ExitCode {
 
         for (module, syms) in drained {
             let path = module.path.clone();
-            match validate::resolve(module, syms, &mut generic_calls) {
+            match validate::resolve(module, syms, &mut generic_calls, &mut generic_fns) {
                 Ok((ir, resolved_module)) => {
                     // println!("{generic_calls:?}");
                     resolved_modules.push((resolved_module, ir));

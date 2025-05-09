@@ -1,6 +1,5 @@
 mod salloc;
 
-use core::panic;
 use std::collections::HashMap;
 
 use crate::ir::{Block, Symbol, Term, Op, OpLoc};
@@ -69,6 +68,9 @@ impl<'a> Lower<'a> {
     fn clear_res(&mut self) {
         match self.cur_block.as_mut().unwrap().ops.last_mut() {
             Some(Op::BinOp { res, .. }) | Some(Op::Store { res, .. }) | Some(Op::Call { res, .. }) => {
+                if *res == Some(Term::Temp(self.temp_count)) {
+                    self.temp_count -= 1;
+                }
                 *res = None;
             }
             _ => ()
@@ -866,7 +868,6 @@ impl<'a> Lower<'a> {
         let e = self.label_count;
         self.loop_start.push(c);
         self.loop_exit.push((e, self.scope_depth));
-        self.stack_count += 1;
         match &r#for.expr.ty {
             Type::Slice { inner } => self.for_in_slice(r#for, st, inner, s, i, c),
             Type::Range => self.for_in_range(r#for, st, s, i, c),
@@ -884,6 +885,7 @@ impl<'a> Lower<'a> {
         let ptr = Term::Pointer(self.pointer_count);
         let pa = Term::PointerArithmetic(self.pointer_count);
         self.push_op(Op::Own { res: ptr.clone(), term: sl.clone(), offset: 8 }, r#for.pos_id);
+        self.stack_count += 1;
         let el = Term::Stack(self.stack_count);
         self.push_op(Op::Decl { term: el.clone(), size: inner.aligned_size() }, r#for.pos_id);
         let size = Term::IntLit(inner.size() as i64);
@@ -946,8 +948,12 @@ impl<'a> Lower<'a> {
                 self.temp_count += 1;
                 self.push_op(Op::Decl { term: s.clone(), size: 16 }, id);
                 self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 0, op: "=".to_string(), term: Term::IntLit(*length as i64), size: to.size() }, id);
-                self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r, size }, id);
-                self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: Term::Temp(self.temp_count), size: to.size() }, id);
+                if let Term::Pointer(p) = r {
+                    self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: Term::PointerArithmetic(p), size: 8 }, id);
+                } else {
+                    self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: r, size }, id);
+                    self.push_op(Op::Store { res: None, ptr: s.clone(), offset: 8, op: "=".to_string(), term: Term::Temp(self.temp_count), size: to.size() }, id);
+                }
                 res = s;
             }
             (Type::Slice { .. }, Type::Pointer(_)) => {
