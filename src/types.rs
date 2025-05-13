@@ -16,7 +16,7 @@ pub enum Type {
     Slice { inner: Box<Type> },
     Struct(HashMap<String, (Type, u32)>),
     Tuple(Vec<Type>),
-    Enum(Vec<String>),
+    Enum(Vec<(String, Option<Type>)>),
     Result(Box<Type>, Box<Type>)
 }
 
@@ -28,7 +28,15 @@ impl Type {
             Type::Tuple(tys) => tys.iter().map(|ty| ty.size()).sum(),
             Type::Result(ty, err) => ty.size().max(err.size()) + 8,
             Type::Range | Type::Slice { .. } | Type::List { .. } => 16,
-            Type::Enum(vars) => (vars.len() as f64).log2().ceil() as u32 / 8 + 1,
+            Type::Enum(variants) => {
+                let max_variant_size = variants.iter()
+                    .map(|(_, opt_ty)| opt_ty.as_ref().map_or(0, |ty| ty.size()))
+                    .max()
+                    .unwrap_or(0); // In case Enum is empty
+                let tag_bits = (variants.len() as f64).log2().ceil() as u32;
+                let tag_size = ((tag_bits + 7) / 8).max(1); // At least 1 byte
+                max_variant_size + tag_size
+            }
             Type::Int | Type::Float | Type::Pointer(_) => 8,
             Type::Char | Type::Bool | Type::Any | Type::Void => 1,
             Type::Generic(_) => panic!("Generic size called")

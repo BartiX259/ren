@@ -253,11 +253,18 @@ impl Process {
         }
         if bin.op.str == "." { // Member access -> add &, apply offset and dereference
             if let Type::Enum(vars) = &bin.lhs.ty {
-                let node::ExprKind::Variable(pos_str) = &bin.rhs.kind else {
-                    panic!("Member access rhs not an identifier");
-                };
-                let i = vars.iter().position(|s| *s == pos_str.str).unwrap();
-                return node::ExprKind::IntLit(i as i64);
+                if let node::ExprKind::Variable(pos_str) = &bin.rhs.kind {
+                    let i = vars.iter().position(|(s, _)| *s == pos_str.str).unwrap();
+                    return node::ExprKind::IntLit(i as i64);
+                } else if let node::ExprKind::Call(call) = &bin.rhs.kind {
+                    let i = vars.iter().position(|(s, _)| *s == call.name.str).unwrap();
+                    let mut i_expr = bin.rhs.clone();
+                    i_expr.ty = Type::Int;
+                    i_expr.kind = node::ExprKind::IntLit(i as i64);
+                    return node::ExprKind::TupleLit(vec![*i_expr, self.expr(call.args.get(0).unwrap().clone())])
+                } else {
+                    unreachable!();
+                }
             }
             let lhs;
             let map;

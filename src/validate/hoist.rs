@@ -31,7 +31,18 @@ impl Validate {
                 if self.symbol_table.contains_key(&e.name.str) {
                     return Err(SemanticError::SymbolExists(e.name.clone()));
                 }
-                let ty = Type::Enum(e.variants.iter().map(|p| p.str.clone()).collect());
+                let ty = Type::Enum(
+                    e.variants
+                        .iter()
+                        .map(|(p, t)| {
+                            let typ = t
+                                .as_ref()
+                                .map(|tt| self.r#type(tt, false))
+                                .transpose()?; // Converts Option<Result<T>> to Result<Option<T>>
+                            Ok((p.str.clone(), typ))
+                        })
+                        .collect::<Result<_, _>>()? // Collect into Result<Vec<_>, _>
+                );
                 self.symbol_table.insert(e.name.str.clone(), Symbol::Type { ty });
             }
             node::Stmt::Let(decl) => {

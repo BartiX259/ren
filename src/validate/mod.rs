@@ -611,13 +611,21 @@ impl Validate {
     fn bin_expr(&mut self, bin: &mut node::BinExpr, span: Span) -> Result<Type, SemanticError> {
         if bin.op.str == "." {
             if let ExprKind::Variable(e) = &bin.lhs.kind {
-                if let Some(Symbol::Type { ty }) = self.symbol_table.get(&e.str) {
+                if let Some(Symbol::Type { ty }) = self.symbol_table.get(&e.str).cloned() {
                     if let Type::Enum(vars) = ty {
-                        let ExprKind::Variable(pos_str) = &bin.rhs.kind else {
-                            return Err(SemanticError::InvalidMemberAccess(bin.rhs.span));
-                        };
-                        if !vars.contains(&pos_str.str) {
-                            return Err(SemanticError::InvalidMemberAccess(bin.rhs.span));
+                        if let ExprKind::Variable(pos_str) = &bin.rhs.kind {
+                            let Some(_) = vars.iter().position(|(p, ty)| *p == pos_str.str && ty.is_none()) else {
+                                return Err(SemanticError::InvalidMemberAccess(bin.rhs.span));
+                            };
+                        } else if let ExprKind::Call(call) = &mut bin.rhs.kind {
+                            if call.args.len() != 1 {
+                                return Err(SemanticError::InvalidArgCount(bin.rhs.span, call.args.len(), 1));
+                            }
+                            let mut arg = call.args.get_mut(0).unwrap();
+                            let t = Some(self.expr(&mut arg)?);
+                            let Some(_) = vars.iter().position(|(p, ty)| *p == call.name.str && *ty == t) else {
+                                return Err(SemanticError::InvalidMemberAccess(bin.rhs.span));
+                            };
                         }
                         bin.lhs.ty = Type::Enum(vars.to_vec());
                         return Ok(Type::Enum(vars.to_vec()));

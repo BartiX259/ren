@@ -35,7 +35,7 @@ pub struct TypeDecl {
 #[derive(Debug, Clone)]
 pub struct Enum {
     pub name: PosStr,
-    pub variants: Vec<PosStr>
+    pub variants: Vec<(PosStr, Option<Type>)>
 }
 #[derive(Debug, Clone)]
 pub struct Call {

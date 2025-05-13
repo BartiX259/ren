@@ -1,7 +1,6 @@
 use crate::helpers::VecIter;
 use crate::node::{self, ExprKind, PosStr, Span};
 use crate::tokenize::Token;
-use crate::validate::SemanticError;
 
 /// Parse tokens into the ast
 pub fn parse(token_res: Vec<Token>, parent: Option<String>) -> Result<(Vec<node::Stmt>, Vec<node::Import>), ParseError> {
@@ -48,24 +47,7 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
             }
         }
         Some(Token::Type) => Ok(node::Stmt::TypeDecl(parse_type_decl(tokens)?)),
-        Some(Token::Enum) => {
-            tokens.next();
-            let tok = check_none(tokens, "a word")?;
-            let Token::Word { value } = tok else {
-                return Err(unexp(tok, tokens.prev_index(), "a word"));
-            };
-            let name = PosStr { str: value, pos_id: tokens.prev_index() };
-            let tok = check_none(tokens, "'{'")?;
-            let Token::OpenCurly = tok else {
-                return Err(unexp(tok, tokens.prev_index(), "'{'"));
-            };
-            let variants = parse_words(tokens);
-            let tok = check_none(tokens, "'}'")?;
-            let Token::CloseCurly = tok else {
-                return Err(unexp(tok, tokens.prev_index(), "'}'"));
-            };
-            Ok(node::Stmt::Enum(node::Enum { name, variants }))
-        }
+        Some(Token::Enum) => Ok(node::Stmt::Enum(parse_enum(tokens)?)),
         Some(Token::Pub) => Ok(node::Stmt::Decorator(parse_decorator(tokens)?)),
         Some(Token::Return) => {
             tokens.next();
@@ -669,25 +651,50 @@ fn parse_type_decl(tokens: &mut VecIter<Token>) -> Result<node::TypeDecl, ParseE
     })
 }
 
-fn parse_words(tokens: &mut VecIter<Token>) -> Vec<node::PosStr> {
-    let mut res = Vec::new();
+fn parse_enum(tokens: &mut VecIter<Token>) -> Result<node::Enum, ParseError> {
+    tokens.next();
+    let tok = check_none(tokens, "a word")?;
+    let Token::Word { value } = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "a word"));
+    };
+    let name = PosStr { str: value, pos_id: tokens.prev_index() };
+    let tok = check_none(tokens, "'{'")?;
+    let Token::OpenCurly = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "'{'"));
+    };
+    let mut variants = Vec::new();
     loop {
+        let pos_str;
         match tokens.peek() {
             Some(Token::Word { value }) => {
-                res.push(PosStr {
+                pos_str = PosStr {
                     str: value.to_string(),
                     pos_id: tokens.current_index()
-                });
+                };
             }
             _ => break
         }
         tokens.next();
+        let mut ty = None;
+        if let Some(Token::OpenParen) = tokens.peek() {
+            tokens.next();
+            ty = Some(parse_type(tokens)?);
+            let tok = check_none(tokens, "')'")?;
+            let Token::CloseParen = tok else {
+                return Err(unexp(tok, tokens.prev_index(), "')'"));
+            };
+        }
+        variants.push((pos_str, ty));
         let Some(Token::Comma) = tokens.peek() else {
             break;
         };
         tokens.next();
     }
-    res
+    let tok = check_none(tokens, "'}'")?;
+    let Token::CloseCurly = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "'}'"));
+    };
+    Ok(node::Enum { name, variants })
 }
 
 fn parse_decorator(tokens: &mut VecIter<Token>) -> Result<node::Decorator, ParseError> {

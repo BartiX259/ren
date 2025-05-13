@@ -168,7 +168,7 @@ impl<'a> Lower<'a> {
     }
     fn make_stack(&mut self, term: Term, ty: &Type, pos_id: usize) -> Term {
         let res;
-        let size = ty.size();
+        let size = ty.aligned_size();
         if let Term::Double(_) = term {
             self.stack_count += 1;
             res = Term::Stack(self.stack_count);
@@ -185,7 +185,14 @@ impl<'a> Lower<'a> {
                 self.push_op(Op::Decl { term: res.clone(), size }, pos_id);
                 self.push_op(Op::Copy { from: term, to: res.clone(), size: Term::IntLit(size as i64) }, pos_id);
             } else {
-                res = term;
+                if matches!(term, Term::IntLit(_)) {
+                    self.stack_count += 1;
+                    res = Term::Stack(self.stack_count);
+                    self.push_op(Op::Decl { term: res.clone(), size }, pos_id);
+                    self.push_op(Op::Store { res: None, ptr: res.clone(), offset: 0, op: "=".to_string(), term, size: 8 }, pos_id);
+                } else {
+                    res = term;
+                }
             }
         } else if let Term::Pointer(_) = term {
             self.stack_count += 1;
