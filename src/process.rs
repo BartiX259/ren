@@ -252,6 +252,13 @@ impl Process {
             return node::ExprKind::TupleLit(vec![self.expr(*bin.lhs), self.expr(*bin.rhs)]);
         }
         if bin.op.str == "." { // Member access -> add &, apply offset and dereference
+            if let Type::Enum(vars) = &bin.lhs.ty {
+                let node::ExprKind::Variable(pos_str) = &bin.rhs.kind else {
+                    panic!("Member access rhs not an identifier");
+                };
+                let i = vars.iter().position(|s| *s == pos_str.str).unwrap();
+                return node::ExprKind::IntLit(i as i64);
+            }
             let lhs;
             let map;
             if let Type::Pointer(p) = &bin.lhs.ty {

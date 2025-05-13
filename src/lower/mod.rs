@@ -90,6 +90,7 @@ impl<'a> Lower<'a> {
             node::Stmt::Fn(decl) => self.r#fn(decl),
             node::Stmt::MainFn(_) => unreachable!(),
             node::Stmt::TypeDecl(_) => (),
+            node::Stmt::Enum(_) => (),
             node::Stmt::Decorator(dec) => self.stmt(dec.inner.as_ref()),
             node::Stmt::Ret(ret) => self.ret(ret),
             node::Stmt::If(r#if) => self.r#if(r#if),

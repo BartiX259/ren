@@ -252,6 +252,12 @@ impl fmt::Display for node::TypeDecl {
     }
 }
 
+impl fmt::Display for node::Enum {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "enum {}", self.name)
+    }
+}
+
 impl fmt::Display for node::Fn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "fn {}", self.name)?;
@@ -447,6 +453,7 @@ impl fmt::Display for node::Stmt {
             node::Stmt::Fn(sfn) => write!(f, "{}", sfn),
             node::Stmt::MainFn(mfn) => write!(f, "{}", mfn),
             node::Stmt::TypeDecl(td) => write!(f, "{}", td),
+            node::Stmt::Enum(e) => write!(f, "{}", e),
             node::Stmt::Decorator(dec) => write!(f, "{}", dec),
             node::Stmt::Ret(r) => write!(f, "{}", r),
             node::Stmt::If(sif) => write!(f, "{}", sif),

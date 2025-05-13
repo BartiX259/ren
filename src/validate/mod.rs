@@ -264,7 +264,8 @@ impl Validate {
             node::Stmt::Decl(decl) => self.r#decl(decl),
             node::Stmt::Fn(decl) => self.r#fn(decl),
             node::Stmt::MainFn(decl) => self.main_fn(decl),
-            node::Stmt::TypeDecl(decl) => self.type_decl(decl),
+            node::Stmt::TypeDecl(decl) => self.type_decl(&decl.name),
+            node::Stmt::Enum(e) => self.type_decl(&e.name),
             node::Stmt::Decorator(dec) => self.decorator(dec),
             node::Stmt::Ret(ret) => self.ret(ret),
             node::Stmt::If(r#if) => self.r#if(r#if),
@@ -495,9 +496,9 @@ impl Validate {
         Ok(())
     }
 
-    fn type_decl(&mut self, decl: &node::TypeDecl) -> Result<(), SemanticError> {
+    fn type_decl(&mut self, pos_str: &PosStr) -> Result<(), SemanticError> {
         if self.cur_func.is_some() {
-            return Err(SemanticError::TypeInFunc(decl.name.clone()));
+            return Err(SemanticError::TypeInFunc(pos_str.clone()));
         }
         Ok(())
     }
@@ -608,6 +609,22 @@ impl Validate {
     }
 
     fn bin_expr(&mut self, bin: &mut node::BinExpr, span: Span) -> Result<Type, SemanticError> {
+        if bin.op.str == "." {
+            if let ExprKind::Variable(e) = &bin.lhs.kind {
+                if let Some(Symbol::Type { ty }) = self.symbol_table.get(&e.str) {
+                    if let Type::Enum(vars) = ty {
+                        let ExprKind::Variable(pos_str) = &bin.rhs.kind else {
+                            return Err(SemanticError::InvalidMemberAccess(bin.rhs.span));
+                        };
+                        if !vars.contains(&pos_str.str) {
+                            return Err(SemanticError::InvalidMemberAccess(bin.rhs.span));
+                        }
+                        bin.lhs.ty = Type::Enum(vars.to_vec());
+                        return Ok(Type::Enum(vars.to_vec()));
+                    }
+                }
+            }
+        }
         let ty1 = self.expr(&mut bin.lhs)?;
         if bin.op.str == "." {
             let ExprKind::Variable(pos_str) = &bin.rhs.kind else {

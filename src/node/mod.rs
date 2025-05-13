@@ -33,6 +33,11 @@ pub struct TypeDecl {
     pub r#type: Type
 }
 #[derive(Debug, Clone)]
+pub struct Enum {
+    pub name: PosStr,
+    pub variants: Vec<PosStr>
+}
+#[derive(Debug, Clone)]
 pub struct Call {
     pub name: PosStr,
     pub args: Vec<Expr>,
@@ -251,7 +256,8 @@ pub enum Stmt {
     ForIn(ForIn),
     Break(usize),
     Continue(usize),
-    Syscall(Syscall)
+    Syscall(Syscall),
+    Enum(Enum)
 }
 #[derive(Debug)]
 pub struct Module {

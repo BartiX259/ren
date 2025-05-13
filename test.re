@@ -1,7 +1,11 @@
 import lib/std
 
+enum animal {
+    dog,
+    cat
+}
+
 fn main() {
-    let a = ["a", "b", "c"];
-    a[1] = "d";
-    print(a);
+    let a = animal.dog;
+    print(animal.cat == animal.cat);
 }
