@@ -218,7 +218,7 @@ impl<'a> Lower<'a> {
                         let id = self.pointer_count;
                         self.var_map.insert(s.str.clone(), Term::Pointer(id));
                         self.push_op(Op::Arg { term: Term::Pointer(id), double: false }, s.pos_id);
-                    } else if let Some(_) = ty.dereference() {
+                    } else if let Type::Pointer(_) = ty {
                         self.pointer_count += 1;
                         let id = self.pointer_count;
                         self.var_map.insert(s.str.clone(), Term::Pointer(id));
@@ -335,18 +335,22 @@ impl<'a> Lower<'a> {
             if u.op.str == "*" && bin.is_assign() {
                 let term = self.expr(&bin.rhs);
                 let ptr = self.expr(&u.expr);
-                self.temp_count += 1;
-                self.push_op(
-                    Op::Store {
-                        res: Some(Term::Temp(self.temp_count)),
-                        ptr,
-                        offset: 0,
-                        op: bin.op.str.clone(),
-                        term,
-                        size
-                    },
-                    u.op.pos_id,
-                );
+                if bin.rhs.ty.size() > 8 {
+                    self.push_op(Op::Copy { from: term, to: ptr, size: Term::IntLit(bin.rhs.ty.size() as i64) }, u.op.pos_id);
+                } else {
+                    self.temp_count += 1;
+                    self.push_op(
+                        Op::Store {
+                            res: Some(Term::Temp(self.temp_count)),
+                            ptr,
+                            offset: 0,
+                            op: bin.op.str.clone(),
+                            term,
+                            size
+                        },
+                        u.op.pos_id,
+                    );
+                }
                 return Term::Temp(self.temp_count);
             }
         }

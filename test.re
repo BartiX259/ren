@@ -1,5 +1,7 @@
 import lib/std
+
 fn main() {
-    let s = "akl jladlasjdljl adj lkadj zx";
-    print(split(s, ' '));
+    let a = ["a", "b", "c"];
+    a[1] = "d";
+    print(a);
 }

@@ -734,22 +734,8 @@ fn r#type(start: usize, end: usize, kind: node::TypeKind) -> node::Type {
 fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
     let start = tokens.current_index();
     let tok = check_none(tokens, "a type")?;
-    let ty = if let Token::Word { value } = &tok {
-        let ty = r#type(start, start, node::TypeKind::Word(value.clone()));
-        if let Some(Token::OpenSquare) = tokens.peek() {
-            tokens.next();
-            let tok = check_none(tokens, "a length")?;
-            let Token::IntLit { value: len } = tok else {
-                return Err(unexp(tok, tokens.prev_index(), "a length"));
-            };
-            let cl = check_none(tokens, "']'")?;
-            let Token::CloseSquare = cl else {
-                return Err(unexp(cl, tokens.prev_index(), "']'"));
-            };
-            Ok(r#type(start, tokens.prev_index(), node::TypeKind::Array(Box::new(ty), len)))
-        } else {
-            Ok(ty)
-        }
+    let mut ty = if let Token::Word { value } = &tok {
+        Ok(r#type(start, start, node::TypeKind::Word(value.clone())))
     } else if let Token::Op { value } = &tok {
         if value == "*" {
             Ok(r#type(start, tokens.prev_index(), node::TypeKind::Pointer(Box::new(parse_type(tokens)?))))
@@ -790,11 +776,23 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
         Err(unexp(tok, tokens.prev_index(), "a type"))
     }?;
     // Post
+    if let Some(Token::OpenSquare) = tokens.peek() {
+        tokens.next();
+        let tok = check_none(tokens, "a length")?;
+        let Token::IntLit { value: len } = tok else {
+            return Err(unexp(tok, tokens.prev_index(), "a length"));
+        };
+        let cl = check_none(tokens, "']'")?;
+        let Token::CloseSquare = cl else {
+            return Err(unexp(cl, tokens.prev_index(), "']'"));
+        };
+        ty = r#type(start, tokens.prev_index(), node::TypeKind::Array(Box::new(ty), len))
+    }
     if let Some(Token::Op { value }) = tokens.peek() {
         if value == "?" {
             tokens.next();
             let err = parse_type(tokens)?;
-            return Ok(r#type(start, tokens.prev_index(), node::TypeKind::Result(Box::new(ty), Box::new(err))));
+            ty = r#type(start, tokens.prev_index(), node::TypeKind::Result(Box::new(ty), Box::new(err)));
         }
     }
     Ok(ty)

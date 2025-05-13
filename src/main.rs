@@ -120,7 +120,7 @@ fn main() -> ExitCode {
             let path = module.path.clone();
             match validate::resolve(module, syms, &mut generic_calls, &mut generic_fns) {
                 Ok((ir, resolved_module)) => {
-                    // println!("{generic_calls:?}");
+                    println!("{generic_calls:?}");
                     resolved_modules.push((resolved_module, ir));
                 }
                 Err(e) => {
