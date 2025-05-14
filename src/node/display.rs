@@ -140,31 +140,6 @@ impl fmt::Display for node::UnExpr {
     }
 }
 
-impl fmt::Display for node::ElseScope {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}", self.expr, self.pos_str)?;
-        if let Some(capture) = &self.capture {
-            write!(f, " |{}|", capture)?;
-        }
-        write!(f, " {{")?;
-        if !self.scope.is_empty() {
-            for stmt_in_scope in &self.scope {
-                let formatted_stmt = format!("{}", stmt_in_scope);
-                write!(f, "\n{}", indent_lines(&formatted_stmt, INDENT))?;
-            }
-            write!(f, "\n}}")
-        } else {
-            write!(f, "}}")
-        }
-    }
-}
-
-impl fmt::Display for node::ElseExpr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({} {} {})", self.expr, self.pos_str, self.else_expr)
-    }
-}
-
 impl fmt::Display for node::TypeCast {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "({} as {})", self.expr, self.r#type) // self.r#type is node::Type
@@ -213,9 +188,8 @@ impl fmt::Display for node::Expr {
             node::ExprKind::BinExpr(bin_expr) => write!(f, "{}", bin_expr),
             node::ExprKind::UnExpr(un_expr) => write!(f, "{}", un_expr),
             node::ExprKind::PostUnExpr(un_expr) => write!(f, "({}{})", un_expr.expr, un_expr.op),
-            node::ExprKind::ElseScope(else_scope) => write!(f, "{}", else_scope),
-            node::ExprKind::ElseExpr(else_expr) => write!(f, "{}", else_expr),
             node::ExprKind::TypeCast(type_cast) => write!(f, "{}", type_cast),
+            _ => todo!()
         }
     }
 }
@@ -464,6 +438,7 @@ impl fmt::Display for node::Stmt {
             node::Stmt::Break(_pos_id) => write!(f, "break;"),
             node::Stmt::Continue(_pos_id) => write!(f, "continue;"),
             node::Stmt::Syscall(sc) => write!(f, "{}", sc),
+            _ => todo!()
         }
     }
 }

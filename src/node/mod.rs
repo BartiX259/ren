@@ -28,6 +28,13 @@ pub struct Decl {
     pub ty: types::Type
 }
 #[derive(Debug, Clone)]
+pub struct Unpack {
+    pub lhs: PosStr,
+    pub rhs: Option<PosStr>,
+    pub brackets: Option<PosStr>,
+    pub expr: Expr
+}
+#[derive(Debug, Clone)]
 pub struct TypeDecl {
     pub name: PosStr,
     pub r#type: Type
@@ -113,14 +120,14 @@ pub struct UnExpr {
 }
 #[derive(Debug, Clone)]
 pub struct ElseScope {
-    pub expr: Box<Expr>,
+    pub unpack: Unpack,
     pub capture: Option<PosStr>,
     pub pos_str: PosStr,
     pub scope: Vec<Stmt>
 }
 #[derive(Debug, Clone)]
 pub struct ElseExpr {
-    pub expr: Box<Expr>,
+    pub unpack: Unpack,
     pub pos_str: PosStr,
     pub else_expr: Box<Expr>
 }
@@ -235,8 +242,6 @@ pub enum ExprKind {
     BinExpr(BinExpr),
     UnExpr(UnExpr),
     PostUnExpr(UnExpr),
-    ElseScope(ElseScope),
-    ElseExpr(ElseExpr),
     TypeCast(TypeCast)
 }
 #[derive(Debug, Clone)]
@@ -244,6 +249,8 @@ pub enum Stmt {
     Expr(Expr),
     Let(Let),
     Decl(Decl),
+    LetElseExpr(ElseExpr),
+    LetElseScope(ElseScope),
     Fn(Fn),
     MainFn(MainFn),
     TypeDecl(TypeDecl),

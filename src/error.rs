@@ -109,6 +109,14 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Can't iterate over {ty}.");
             print_module_err_span(path, span);
         }
+        SemanticError::NotUnwrappable(pos_str) => {
+            eprintln!("Can't unwrap {}.", pos_str.str);
+            print_module_err_id(path, pos_str.pos_id);
+        }
+        SemanticError::NoCapture(span) => {
+            eprintln!("There is no capture.");
+            print_module_err_span(path, span);
+        }
         SemanticError::InvalidReturn(pos_id) => {
             eprintln!("Invalid return statement.");
             print_module_err_id(path, pos_id);

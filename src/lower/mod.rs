@@ -87,6 +87,8 @@ impl<'a> Lower<'a> {
             }
             node::Stmt::Let(decl) => self.r#let(decl),
             node::Stmt::Decl(decl) => self.r#decl(decl),
+            node::Stmt::LetElseExpr(r#else) => self.else_expr(r#else),
+            node::Stmt::LetElseScope(r#else) => self.else_scope(r#else),
             node::Stmt::Fn(decl) => self.r#fn(decl),
             node::Stmt::MainFn(_) => unreachable!(),
             node::Stmt::TypeDecl(_) => (),
@@ -133,8 +135,6 @@ impl<'a> Lower<'a> {
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr, expr.ty.size()),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, &expr.ty),
             node::ExprKind::PostUnExpr(un_expr) => self.post_un_expr(un_expr),
-            node::ExprKind::ElseScope(r#else) => self.else_scope(r#else),
-            node::ExprKind::ElseExpr(r#else) => self.else_expr(r#else),
             node::ExprKind::TypeCast(cast) => self.type_cast(cast, &expr.ty)
         }
     }
@@ -551,7 +551,29 @@ impl<'a> Lower<'a> {
         Term::Temp(self.temp_count)
     }
 
-    fn unwrap(&mut self, t: Term, pos_id: usize) -> (Term, Term, u16) {
+    fn unpack(&mut self, unpack: &node::Unpack) -> (Term, Term, u16) {
+        let t = self.expr(&unpack.expr);
+        let mut cmp = None;
+        if let Some(name) = &unpack.rhs {
+            let Type::Enum(vars) = &unpack.expr.ty else {
+                panic!("Not enum {}", unpack.expr.ty);
+            };
+            let Some(pos) = vars.iter().position(|(p, ty)| *p == name.str && ty.is_some() == unpack.brackets.is_some()) else {
+                unreachable!();
+            };
+            cmp = Some(Term::IntLit(pos as i64));
+            if let Some(s) = &unpack.brackets {
+                // let t1 = self.make_stack(t.clone(), &unpack.expr.ty, unpack.lhs.pos_id);
+                self.stack_count += 1;
+                let t2 = Term::Stack(self.stack_count);
+                self.push_op(Op::Own { res: t2.clone(), term: t.clone(), offset: 8 }, unpack.lhs.pos_id);
+                self.var_map.insert(s.str.clone(), t2);
+            }
+        }
+        self.unwrap(t, cmp, unpack.lhs.pos_id)
+    }
+
+    fn unwrap(&mut self, t: Term, cmp: Option<Term>, pos_id: usize) -> (Term, Term, u16) {
         self.label_count += 1;
         let ret_label = self.label_count;
         self.label_count += 1;
@@ -584,7 +606,13 @@ impl<'a> Lower<'a> {
             panic!("Not temp or double");
         }
         self.push_op(Op::BeginScope, pos_id);
-        self.push_op(Op::CondJump { label: ret_label, cond: s.clone() }, pos_id);
+        if let Some(c) = cmp {
+            self.temp_count += 1;
+            self.push_op(Op::BinOp { res: Some(Term::Temp(self.temp_count)), lhs: s.clone(), op: "!=".to_string(), rhs: c, size: 8 }, pos_id);
+            self.push_op(Op::CondJump { label: ret_label, cond: Term::Temp(self.temp_count) }, pos_id);
+        } else {
+            self.push_op(Op::CondJump { label: ret_label, cond: s.clone() }, pos_id);
+        }
         self.push_op(Op::Jump { label: ok_label }, pos_id);
         self.push_op(Op::Label { label: ret_label }, pos_id);
         (s, inner, ok_label)
@@ -597,7 +625,7 @@ impl<'a> Lower<'a> {
             let Type::Result(_, err) = &un.expr.ty else {
                 unreachable!();
             };
-            let (_, inner, ok_label) = self.unwrap(t, un.op.pos_id);
+            let (_, inner, ok_label) = self.unwrap(t, None, un.op.pos_id);
             let panic = un.op.str.split("!").last().unwrap();
             self.push_op(Op::BeginCall { params: vec![] }, un.op.pos_id);
             for p in self.param(inner.clone(), err.size(), err.aligned_size(), un.op.pos_id) {
@@ -609,7 +637,7 @@ impl<'a> Lower<'a> {
         }
         else { match un.op.str.as_str() {
             "?" => {
-                let (s, inner, ok_label) = self.unwrap(t, un.op.pos_id);
+                let (s, inner, ok_label) = self.unwrap(t, None, un.op.pos_id);
                 if let Some(r) = self.ret_salloc.clone() {
                     self.push_op(Op::Copy { from: s, to: r.clone(), size: Term::IntLit(inner_size as i64) }, un.op.pos_id);
                     self.push_op(Op::Return { term: Some(r) }, un.op.pos_id);
@@ -624,9 +652,8 @@ impl<'a> Lower<'a> {
         }}
     }
 
-    fn else_scope(&mut self, r#else: &node::ElseScope) -> Term {
-        let t = self.expr(&r#else.expr);
-        let (_, inner, ok_label) = self.unwrap(t, r#else.pos_str.pos_id);
+    fn else_scope(&mut self, r#else: &node::ElseScope) {
+        let (_, inner, ok_label) = self.unpack(&r#else.unpack);
         if let Some(c) = &r#else.capture {
             self.var_map.insert(c.str.clone(), inner.clone());
         }
@@ -635,18 +662,15 @@ impl<'a> Lower<'a> {
             self.var_map.remove(&c.str);
         }
         self.push_op(Op::Label { label: ok_label }, r#else.pos_str.pos_id);
-        inner
     }
 
-    fn else_expr(&mut self, r#else: &node::ElseExpr) -> Term {
-        let t = self.expr(&r#else.expr);
-        let (_, inner, ok_label) = self.unwrap(t, r#else.pos_str.pos_id);
+    fn else_expr(&mut self, r#else: &node::ElseExpr) {
+        let (_, inner, ok_label) = self.unpack(&r#else.unpack);
         self.push_op(Op::BeginScope, r#else.pos_str.pos_id);
         let els = self.expr(&r#else.else_expr);
         self.push_op(Op::Copy { from: els, to: inner.clone(), size: Term::IntLit(r#else.else_expr.ty.size() as i64) }, r#else.pos_str.pos_id);
         self.push_op(Op::EndScope, r#else.pos_str.pos_id);
         self.push_op(Op::Label { label: ok_label }, r#else.pos_str.pos_id);
-        inner
     }
 
     fn param(&mut self, term: Term, size: u32, aligned: u32, pos_id: usize) -> Vec<Term> {

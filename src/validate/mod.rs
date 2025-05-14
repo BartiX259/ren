@@ -6,7 +6,12 @@ use std::collections::HashMap;
 mod hoist;
 
 /// Validate the ast, return a symbol table if successful
-pub fn validate(module: &mut node::Module, public: Vec<&PublicSymbols>, gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>, gfns: &mut Vec<(String, usize)>) -> Result<PublicSymbols, SemanticError> {
+pub fn validate(
+    module: &mut node::Module,
+    public: Vec<&PublicSymbols>,
+    gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>,
+    gfns: &mut Vec<(String, usize)>,
+) -> Result<PublicSymbols, SemanticError> {
     let mut val = Validate::new();
     for syms in public {
         val.symbol_table.extend(syms.symbol_table.clone());
@@ -32,7 +37,12 @@ pub fn validate(module: &mut node::Module, public: Vec<&PublicSymbols>, gcalls: 
     })
 }
 
-pub fn resolve(module: node::Module, symbols: PublicSymbols, gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>, gfns: &mut Vec<(String, usize)>) -> Result<(PublicSymbols, node::Module), SemanticError> {
+pub fn resolve(
+    module: node::Module,
+    symbols: PublicSymbols,
+    gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>,
+    gfns: &mut Vec<(String, usize)>,
+) -> Result<(PublicSymbols, node::Module), SemanticError> {
     let mut val = Validate::new();
     let mut new_mod = node::Module { path: module.path, stmts: Vec::new() };
     let mut to_remove = Vec::new();
@@ -192,6 +202,8 @@ pub enum SemanticError {
     UndeclaredSymbol(PosStr),
     TypeMismatch(PosStr, Type, Type),
     NotIterable(Span, Type),
+    NotUnwrappable(PosStr),
+    NoCapture(Span),
     InvalidReturn(usize),
     NotInLoop(String, usize),
     InvalidAssign(Span),
@@ -262,6 +274,8 @@ impl Validate {
             node::Stmt::Expr(expr) => self.expr(expr).map(|_| ()),
             node::Stmt::Let(decl) => self.r#let(decl),
             node::Stmt::Decl(decl) => self.r#decl(decl),
+            node::Stmt::LetElseExpr(else_expr) => self.else_expr(else_expr),
+            node::Stmt::LetElseScope(else_scope) => self.else_scope(else_scope),
             node::Stmt::Fn(decl) => self.r#fn(decl),
             node::Stmt::MainFn(decl) => self.main_fn(decl),
             node::Stmt::TypeDecl(decl) => self.type_decl(&decl.name),
@@ -328,8 +342,6 @@ impl Validate {
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr, expr.span),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, expr.span),
             node::ExprKind::PostUnExpr(un_expr) => self.post_un_expr(un_expr, expr.span),
-            node::ExprKind::ElseScope(r#else) => self.else_scope(r#else),
-            node::ExprKind::ElseExpr(r#else) => self.else_expr(r#else),
             node::ExprKind::TypeCast(cast) => {
                 let from = self.expr(&mut cast.expr)?;
                 let to = self.r#type(&cast.r#type, false)?;
@@ -362,6 +374,30 @@ impl Validate {
             self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
         }
         Ok(())
+    }
+
+    fn unpack(&mut self, unpack: &mut node::Unpack) -> Result<Option<Type>, SemanticError> {
+        let Some(s) = self.symbol_table.get(&unpack.lhs.str) else {
+            return Err(SemanticError::UndeclaredSymbol(unpack.lhs.clone()));
+        };
+        let mut res = None;
+        if let Some(rhs) = &unpack.rhs {
+            let Symbol::Type { ty } = s else { return Err(SemanticError::NotUnwrappable(unpack.lhs.clone())) };
+            let Type::Enum(vars) = ty else { return Err(SemanticError::NotUnwrappable(unpack.lhs.clone())) };
+            let Some(pos) = vars.iter().position(|(p, ty)| *p == rhs.str && ty.is_some() == unpack.brackets.is_some()) else {
+                return Err(SemanticError::InvalidMemberAccess(Span {
+                    start: rhs.pos_id,
+                    end: rhs.pos_id,
+                }));
+            };
+            if let Some(s) = &unpack.brackets {
+                let ty = vars.get(pos).unwrap().1.clone().unwrap();
+                res = Some(ty.clone());
+                self.push_symbol(s.str.clone(), Symbol::Var { ty });
+            }
+        }
+        self.expr(&mut unpack.expr)?;
+        Ok(res)
     }
 
     fn r#fn(&mut self, decl: &mut node::Fn) -> Result<(), SemanticError> {
@@ -915,40 +951,42 @@ impl Validate {
         }
     }
 
-    fn else_scope(&mut self, r#else: &mut node::ElseScope) -> Result<Type, SemanticError> {
-        let ty = self.expr(&mut r#else.expr)?;
-        if let Type::Result(ok, err) = ty {
-            if let Some(c) = &r#else.capture {
-                if self.symbol_table.contains_key(&c.str) {
-                    return Err(SemanticError::SymbolExists(c.clone()));
-                }
-                self.push_symbol(c.str.clone(), Symbol::Var { ty: *err });
+    fn else_scope(&mut self, r#else: &mut node::ElseScope) -> Result<(), SemanticError> {
+        self.unpack(&mut r#else.unpack)?;
+        if let Some(c) = &r#else.capture {
+            let Type::Result(_, err) = &r#else.unpack.expr.ty else {
+                return Err(SemanticError::TypeMismatch(
+                    r#else.pos_str.clone(),
+                    r#else.unpack.expr.ty.clone(),
+                    Type::Result(Box::new(Type::Any), Box::new(Type::Any)),
+                ));
+            };
+            if self.symbol_table.contains_key(&c.str) {
+                return Err(SemanticError::SymbolExists(c.clone()));
             }
-            self.scope(&mut r#else.scope)?;
-            if let Some(c) = &r#else.capture {
-                self.symbol_table.remove(&c.str);
-            }
-            Ok(*ok)
-        } else {
-            Err(SemanticError::TypeMismatch(r#else.pos_str.clone(), ty, Type::Result(Box::new(Type::Any), Box::new(Type::Any))))
+            self.push_symbol(c.str.clone(), Symbol::Var { ty: *err.clone() });
         }
+        self.scope(&mut r#else.scope)?;
+        if let Some(c) = &r#else.capture {
+            self.symbol_table.remove(&c.str);
+        }
+        Ok(())
     }
 
-    fn else_expr(&mut self, r#else: &mut node::ElseExpr) -> Result<Type, SemanticError> {
-        let ty = self.expr(&mut r#else.expr)?;
-        if let Type::Result(ok, _) = &ty {
-            let ty2 = self.expr(&mut r#else.else_expr)?;
-            if **ok != ty2 {
-                Self::type_cast(ty2, *ok.clone(), r#else.else_expr.span)?;
-                r#else.else_expr.kind = node::ExprKind::TypeCast(node::TypeCast {
-                    r#type: Self::node_type(r#else.else_expr.span),
-                    expr: r#else.else_expr.clone(),
-                })
-            }
-            Ok(*ok.clone())
-        } else {
-            Err(SemanticError::TypeMismatch(r#else.pos_str.clone(), ty, Type::Result(Box::new(Type::Any), Box::new(Type::Any))))
+    fn else_expr(&mut self, r#else: &mut node::ElseExpr) -> Result<(), SemanticError> {
+        let opt_ty = self.unpack(&mut r#else.unpack)?;
+        let Some(ty) = opt_ty else {
+            return Err(SemanticError::NoCapture(r#else.else_expr.span));
+        };
+        let ty2 = self.expr(&mut r#else.else_expr)?;
+        if ty != ty2 {
+            Self::type_cast(ty2, ty.clone(), r#else.else_expr.span)?;
+            r#else.else_expr.kind = node::ExprKind::TypeCast(node::TypeCast {
+                r#type: Self::node_type(r#else.else_expr.span),
+                expr: r#else.else_expr.clone(),
+            })
         }
+        Ok(())
     }
     fn struct_lit(&mut self, lit: &mut node::StructLit) -> Result<Type, SemanticError> {
         let mut i = 0;
@@ -1115,7 +1153,7 @@ impl Validate {
             let Some((_, map, _)) = self.gcalls.get(index) else {
                 panic!("no gcall");
             };
-            res = Type::wrap(map.get(g).unwrap(), ty);
+            res = Type::wrap(map.get(g).unwrap(), &ty);
         } else {
             res = ty.clone()
         }

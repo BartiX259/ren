@@ -6,6 +6,9 @@ enum animal {
 }
 
 fn main() {
-    let a = animal.dog("asd");
-    print(a == animal.cat);
+    let a = animal.cat;
+    let animal.dog(t) = a else {
+        return;
+    };
+    print(t);
 }

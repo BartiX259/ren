@@ -32,7 +32,7 @@ pub enum ParseError {
 
 fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
     match tokens.peek() {
-        Some(Token::Let) => Ok(node::Stmt::Let(parse_let(tokens)?)),
+        Some(Token::Let) => Ok(parse_let(tokens)?),
         Some(Token::Decl) => Ok(node::Stmt::Decl(parse_decl(tokens)?)),
         Some(Token::Fn) => {
             tokens.next();
@@ -142,42 +142,6 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
                 r#type: ty,
                 expr: Box::new(lhs),
             }));
-            continue;
-        } else if let Token::Else = tok {
-            let prec = op_prec("else");
-            if prec < min_prec {
-                break;
-            }
-            tokens.next();
-            let pos_str = PosStr {
-                str: "else".to_string(),
-                pos_id: tokens.prev_index()
-            };
-            let is_scope = if let Some(Token::OpenCurly) = tokens.peek() { true }
-            else if let Some(Token::OpenCurly) = tokens.peek2() { true }
-            else { false };
-            if is_scope {
-                let mut capture = None;
-                if let Some(Token::Word { value }) = tokens.peek() {
-                    capture = Some(PosStr { str: value.clone(), pos_id: tokens.current_index() });
-                    tokens.next();
-                }
-                let scope = parse_scope(tokens)?;
-                let lhs = root;
-                root = expr(start, tokens.prev_index(), node::ExprKind::ElseScope(node::ElseScope {
-                    expr: Box::new(lhs),
-                    pos_str,
-                    capture,
-                    scope
-                }));
-            } else {
-                let lhs = root;
-                root = expr(start, tokens.prev_index(), node::ExprKind::ElseExpr(node::ElseExpr {
-                    expr: Box::new(lhs),
-                    pos_str,
-                    else_expr: Box::new(parse_expr(tokens, 0)?)
-                }));
-            }
             continue;
         } else {
             break;
@@ -392,29 +356,96 @@ fn parse_array_access(tokens: &mut VecIter<Token>, root: node::Expr, start: usiz
     Ok(access_expr)
 }
 
-fn parse_let(tokens: &mut VecIter<Token>) -> Result<node::Let, ParseError> {
+fn parse_let(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
     tokens.next();
     let tok = check_none(tokens, "an identifier")?;
-    let Token::Word { value: name } = tok else {
+    let Token::Word { value } = tok else {
         return Err(unexp(tok, tokens.prev_index(), "an identifier"));
     };
-    let tok = check_none(tokens, "'='")?;
-    if let Token::Op { value } = &tok {
-        if value != "=" {
+    let name = PosStr { str: value, pos_id: tokens.prev_index() };
+    let mut name_rhs = None;
+    let mut name_brackets = None;
+    loop {
+        let tok = check_none(tokens, "'='")?;
+        if tok == (Token::Op { value: "=".to_string() }) {
+            break;
+        } else if tok == (Token::Op { value: ".".to_string() }) {
+            if name_rhs.is_some() {
+                return Err(unexp(tok, tokens.prev_index(), "'='"));
+            }
+            let tok = check_none(tokens, "a word")?;
+            let Token::Word { value } = tok else {
+                return Err(unexp(tok, tokens.prev_index(), "a word"));
+            };
+            name_rhs = Some(PosStr { str: value, pos_id: tokens.prev_index() });
+        } else if tok == Token::OpenParen {
+            if name_rhs.is_none() {
+                return Err(unexp(tok, tokens.prev_index(), "'.' or '='"));
+            }
+            if name_brackets.is_some() {
+                return Err(unexp(tok, tokens.prev_index(), "'='"));
+            }
+            let tok = check_none(tokens, "a word")?;
+            let Token::Word { value } = tok else {
+                return Err(unexp(tok, tokens.prev_index(), "a word"));
+            };
+            name_brackets = Some(PosStr { str: value, pos_id: tokens.prev_index() });
+            let tok = check_none(tokens, "')'")?;
+            if tok != Token::CloseParen {
+                return Err(unexp(tok, tokens.prev_index(), "')'"));
+            }
+        } else {
             return Err(unexp(tok, tokens.prev_index(), "'='"));
-        }
-        let res = Ok(node::Let {
-            name: PosStr {
-                str: name,
-                pos_id: tokens.prev_index() - 1,
-            },
-            expr: parse_expr(tokens, 0)?,
-        });
-        check_semi(tokens)?;
-        return res;
-    } else {
-        return Err(unexp(tok, tokens.prev_index(), "'='"));
+        };
     }
+    let expr = parse_expr(tokens, 0)?;
+    let res;
+    if let Some(Token::Else) = tokens.peek() {
+        tokens.next();
+        let pos_str = PosStr {
+            str: "else".to_string(),
+            pos_id: tokens.prev_index()
+        };
+        let unpack = node::Unpack {
+            lhs: name,
+            rhs: name_rhs,
+            brackets: name_brackets,
+            expr
+        };
+        let is_scope = if let Some(Token::OpenCurly) = tokens.peek() { true }
+        else if let Some(Token::OpenCurly) = tokens.peek2() { true }
+        else { false };
+        if is_scope {
+            let mut capture = None;
+            if let Some(Token::Word { value }) = tokens.peek() {
+                capture = Some(PosStr { str: value.clone(), pos_id: tokens.current_index() });
+                tokens.next();
+            }
+            let scope = parse_scope(tokens)?;
+            res = node::Stmt::LetElseScope(node::ElseScope {
+                unpack,
+                capture,
+                pos_str,
+                scope,
+            })
+        } else {
+            res = node::Stmt::LetElseExpr(node::ElseExpr {
+                unpack,
+                pos_str,
+                else_expr: Box::new(parse_expr(tokens, 0)?)
+            })
+        }
+    } else if name_rhs.is_some() {
+        let tok = check_none(tokens, "'else'")?;
+        return Err(unexp(tok, tokens.prev_index(), "'else'"));
+    } else {
+        res = node::Stmt::Let(node::Let {
+            name,
+            expr,
+        });
+    }
+    check_semi(tokens)?;
+    return Ok(res);
 }
 fn parse_decl(tokens: &mut VecIter<Token>) -> Result<node::Decl, ParseError> {
     tokens.next();
@@ -762,7 +793,11 @@ fn parse_for(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
     }
     let init;
     if let Some(Token::Let) = tokens.peek() {
-        init = node::LetOrExpr::Let(parse_let(tokens)?);
+        let l = parse_let(tokens)?;
+        let node::Stmt::Let(lt) = l else {
+            panic!("Can't unpack");
+        };
+        init = node::LetOrExpr::Let(lt);
     } else {
         init = node::LetOrExpr::Expr(parse_expr(tokens, 0)?);
         check_semi(tokens)?;

@@ -33,6 +33,12 @@ impl Process {
                 name: decl.name,
                 expr: self.expr(decl.expr)
             }),
+            node::Stmt::LetElseScope(r#else) => node::Stmt::LetElseScope(node::ElseScope {
+                unpack: self.unpack(r#else.unpack),
+                capture: r#else.capture,
+                pos_str: r#else.pos_str,
+                scope: self.scope(r#else.scope)
+            }),
             node::Stmt::Fn(decl) => node::Stmt::Fn(node::Fn {
                 name: decl.name,
                 arg_names: decl.arg_names,
@@ -122,21 +128,6 @@ impl Process {
                 expr: Box::new(self.expr(*un.expr)),
                 op: un.op
             }),
-            node::ExprKind::ElseScope(r#else) => {
-                node::ExprKind::ElseScope(node::ElseScope {
-                    expr: Box::new(self.expr(*r#else.expr)),
-                    capture: r#else.capture,
-                    pos_str: r#else.pos_str,
-                    scope: self.scope(r#else.scope),
-                })
-            }
-            node::ExprKind::ElseExpr(r#else) => {
-                node::ExprKind::ElseExpr(node::ElseExpr {
-                    expr: Box::new(self.expr(*r#else.expr)),
-                    pos_str: r#else.pos_str,
-                    else_expr: Box::new(self.expr(*r#else.else_expr))
-                })
-            }
             node::ExprKind::TypeCast(cast) => node::ExprKind::TypeCast(node::TypeCast { r#type: cast.r#type, expr: Box::new(self.expr(*cast.expr)) }),
             node::ExprKind::BuiltIn(built_in) => node::ExprKind::BuiltIn(node::BuiltIn { kind: built_in.kind, args: self.expr_list(built_in.args) }),
             _ => expr.kind
@@ -155,6 +146,10 @@ impl Process {
             self.push(new_stmt);
         }
         return self.stmts.pop().unwrap();
+    }
+
+    fn unpack(&mut self, unpack: node::Unpack) -> node::Unpack {
+        node::Unpack { lhs: unpack.lhs, rhs: unpack.rhs, brackets: unpack.brackets, expr: self.expr(unpack.expr) }
     }
 
     fn r#if(&mut self, r#if: node::If) -> node::If {
