@@ -524,6 +524,10 @@ impl<'a> Gen<'a> {
                 }
                 ir::Op::EndLoop => self.restore_regs(),
                 ir::Op::BeginScope => self.saved_sps.push(self.sp),
+                ir::Op::BeginScopeOffset(i) => {
+                    self.saved_sps.push(self.sp);
+                    self.sp += i;
+                }
                 ir::Op::EndScope => self.restore_sp(0),
                 ir::Op::BreakScope { depth } => self.restore_sp(depth),
             }

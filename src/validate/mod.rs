@@ -377,11 +377,11 @@ impl Validate {
     }
 
     fn unpack(&mut self, unpack: &mut node::Unpack) -> Result<Option<Type>, SemanticError> {
-        let Some(s) = self.symbol_table.get(&unpack.lhs.str) else {
-            return Err(SemanticError::UndeclaredSymbol(unpack.lhs.clone()));
-        };
         let mut res = None;
         if let Some(rhs) = &unpack.rhs {
+            let Some(s) = self.symbol_table.get(&unpack.lhs.str).cloned() else {
+                return Err(SemanticError::UndeclaredSymbol(unpack.lhs.clone()));
+            };
             let Symbol::Type { ty } = s else { return Err(SemanticError::NotUnwrappable(unpack.lhs.clone())) };
             let Type::Enum(vars) = ty else { return Err(SemanticError::NotUnwrappable(unpack.lhs.clone())) };
             let Some(pos) = vars.iter().position(|(p, ty)| *p == rhs.str && ty.is_some() == unpack.brackets.is_some()) else {
@@ -395,8 +395,21 @@ impl Validate {
                 res = Some(ty.clone());
                 self.push_symbol(s.str.clone(), Symbol::Var { ty });
             }
+            let ty = self.expr(&mut unpack.expr)?;
+            let pos_str = PosStr { str: "let unpack".to_string(), pos_id: unpack.lhs.pos_id - 1 };
+            let Type::Enum(vars2) = &ty else { return Err(SemanticError::TypeMismatch(pos_str, Type::Enum(vars), ty)); };
+            if vars != *vars2 {
+                return Err(SemanticError::TypeMismatch(pos_str, Type::Enum(vars), ty));
+            }
+        } else {
+            let ty = self.expr(&mut unpack.expr)?;
+            if let Type::Result(ok, _) = &ty {
+                res = Some(*ok.clone());
+                self.push_symbol(unpack.lhs.str.clone(), Symbol::Var { ty: *ok.clone() });
+            } else {
+                return Err(SemanticError::NotUnwrappable(unpack.lhs.clone()))
+            }
         }
-        self.expr(&mut unpack.expr)?;
         Ok(res)
     }
 
@@ -587,8 +600,10 @@ impl Validate {
     }
 
     fn r#if(&mut self, r#if: &mut node::If) -> Result<(), SemanticError> {
-        if let Some(e) = &mut r#if.expr {
-            self.expr(e)?;
+        match &mut r#if.cond {
+            node::IfKind::Expr(expr) => self.expr(expr).map(|_| ())?,
+            node::IfKind::Unpack(unpack) => self.unpack(unpack).map(|_| ())?,
+            node::IfKind::None => ()
         }
         self.scope(&mut r#if.scope)?;
         if let Some(i) = &mut r#if.els {

@@ -140,11 +140,7 @@ impl<'a> Lower<'a> {
     }
 
     fn r#let(&mut self, decl: &node::Let) {
-        let mut r = self.expr(&decl.expr);
-        if let Some(ret) = &self.stack_return {
-            r = ret.clone();
-            self.clear_res();
-        }
+        let r = self.expr(&decl.expr);
         if r.is_stack() && !self.is_var(&r) {
             self.var_map.insert(decl.name.str.clone(), r);
         } else {
@@ -178,21 +174,22 @@ impl<'a> Lower<'a> {
             self.pointer_count += 1;
             res = Term::Pointer(self.pointer_count);
             self.push_op(Op::Let { term, res: res.clone() }, pos_id);
+        } else if let Some(s) = &self.stack_return {
+            res = s.clone();
+            self.clear_res();
         } else if size > 8 {
             if self.is_var(&term) {
                 self.stack_count += 1;
                 res = Term::Stack(self.stack_count);
                 self.push_op(Op::Decl { term: res.clone(), size }, pos_id);
                 self.push_op(Op::Copy { from: term, to: res.clone(), size: Term::IntLit(size as i64) }, pos_id);
+            } else if matches!(term, Term::IntLit(_)) {
+                self.stack_count += 1;
+                res = Term::Stack(self.stack_count);
+                self.push_op(Op::Decl { term: res.clone(), size }, pos_id);
+                self.push_op(Op::Store { res: None, ptr: res.clone(), offset: 0, op: "=".to_string(), term, size: 8 }, pos_id);
             } else {
-                if matches!(term, Term::IntLit(_)) {
-                    self.stack_count += 1;
-                    res = Term::Stack(self.stack_count);
-                    self.push_op(Op::Decl { term: res.clone(), size }, pos_id);
-                    self.push_op(Op::Store { res: None, ptr: res.clone(), offset: 0, op: "=".to_string(), term, size: 8 }, pos_id);
-                } else {
-                    res = term;
-                }
+                res = term;
             }
         } else if let Term::Pointer(_) = term {
             self.stack_count += 1;
@@ -241,7 +238,7 @@ impl<'a> Lower<'a> {
             }
             _ => panic!("Couldn't find symbol '{}'", decl.name.str)
         }
-        self.scope(&decl.scope);
+        self.scope(&decl.scope, 0);
         self.ret_salloc = None;
         // println!("VAR MAP {}", decl.name.str);
         // println!("{:?}", self.var_map);
@@ -252,8 +249,12 @@ impl<'a> Lower<'a> {
         self.cur_block = None;
     }
 
-    fn scope(&mut self, scope: &Vec<node::Stmt>) {
-        self.push_op(Op::BeginScope, 0);
+    fn scope(&mut self, scope: &Vec<node::Stmt>, offset: i64) {
+        if offset != 0 {
+            self.push_op(Op::BeginScopeOffset(offset), 0);
+        } else {
+            self.push_op(Op::BeginScope, 0);
+        }
         self.scope_depth += 1;
         for s in scope.iter() {
             self.stmt(s);
@@ -304,23 +305,31 @@ impl<'a> Lower<'a> {
         }
         let mut has_else = false;
         for i in if_chain.iter() {
-            if let Some(e) = &i.expr {
-                self.push_op(Op::BeginScope, r#if.pos_id);
-                let r = self.expr(e);
-                self.label_count += 1;
-                labels.push(self.label_count);
-                self.push_op(
-                    Op::CondJump {
-                        cond: r,
-                        label: self.label_count,
-                    },
-                    i.pos_id,
-                );
-            } else {
-                self.label_count += 1;
-                labels.push(self.label_count);
-                self.push_op(Op::Jump { label: self.label_count }, i.pos_id);
-                has_else = true;
+            match &i.cond {
+                node::IfKind::Expr(expr) => {
+                    self.push_op(Op::BeginScope, r#if.pos_id);
+                    let r = self.expr(expr);
+                    self.label_count += 1;
+                    labels.push(self.label_count);
+                    self.push_op(
+                        Op::CondJump {
+                            cond: r,
+                            label: self.label_count,
+                        },
+                        i.pos_id,
+                    );
+                }
+                node::IfKind::Unpack(unpack) => {
+                    let (s, inner, ok_label) = self.unpack(unpack, true);
+                    self.push_op(Op::EndScope, i.pos_id);
+                    labels.push(ok_label);
+                }
+                node::IfKind::None => {
+                    self.label_count += 1;
+                    labels.push(self.label_count);
+                    self.push_op(Op::Jump { label: self.label_count }, i.pos_id);
+                    has_else = true;
+                }
             }
         }
         self.label_count += 1;
@@ -330,7 +339,10 @@ impl<'a> Lower<'a> {
         }
         for (i, l) in if_chain.iter().zip(labels) {
             self.push_op(Op::Label { label: l }, i.pos_id);
-            self.scope(&i.scope);
+            let offset = if let node::IfKind::Unpack(u) = &i.cond {
+                u.expr.ty.aligned_size() as i64
+            } else { 0 };
+            self.scope(&i.scope, offset);
             if l != end_label - 1 {
                 self.push_op(Op::Jump { label: end_label }, i.pos_id);
             }
@@ -551,8 +563,11 @@ impl<'a> Lower<'a> {
         Term::Temp(self.temp_count)
     }
 
-    fn unpack(&mut self, unpack: &node::Unpack) -> (Term, Term, u16) {
-        let t = self.expr(&unpack.expr);
+    fn unpack(&mut self, unpack: &node::Unpack, insert_scope: bool) -> (Term, Term, u16) {
+        if insert_scope {
+            self.push_op(Op::BeginScope, unpack.lhs.pos_id);
+        }
+        let mut t = self.expr(&unpack.expr);
         let mut cmp = None;
         if let Some(name) = &unpack.rhs {
             let Type::Enum(vars) = &unpack.expr.ty else {
@@ -562,12 +577,22 @@ impl<'a> Lower<'a> {
                 unreachable!();
             };
             cmp = Some(Term::IntLit(pos as i64));
+            t = self.make_stack(t, &unpack.expr.ty, unpack.lhs.pos_id);
             if let Some(s) = &unpack.brackets {
-                // let t1 = self.make_stack(t.clone(), &unpack.expr.ty, unpack.lhs.pos_id);
                 self.stack_count += 1;
                 let t2 = Term::Stack(self.stack_count);
                 self.push_op(Op::Own { res: t2.clone(), term: t.clone(), offset: 8 }, unpack.lhs.pos_id);
                 self.var_map.insert(s.str.clone(), t2);
+            }
+        } else {
+            if let Type::Result(ok, err) = &unpack.expr.ty {
+                t = self.make_stack(t, &unpack.expr.ty, unpack.lhs.pos_id);
+                self.stack_count += 1;
+                let t2 = Term::Stack(self.stack_count);
+                self.push_op(Op::Own { res: t2.clone(), term: t.clone(), offset: 8 }, unpack.lhs.pos_id);
+                self.var_map.insert(unpack.lhs.str.clone(), t2);
+            } else {
+                unreachable!();
             }
         }
         self.unwrap(t, cmp, unpack.lhs.pos_id)
@@ -603,7 +628,7 @@ impl<'a> Lower<'a> {
             inner = Term::Stack(self.stack_count);
             self.push_op(Op::Own { res: inner.clone(), term: s.clone(), offset: 8 }, pos_id);
         } else {
-            panic!("Not temp or double");
+            panic!("Not temp or double {t:?}");
         }
         self.push_op(Op::BeginScope, pos_id);
         if let Some(c) = cmp {
@@ -653,11 +678,11 @@ impl<'a> Lower<'a> {
     }
 
     fn else_scope(&mut self, r#else: &node::ElseScope) {
-        let (_, inner, ok_label) = self.unpack(&r#else.unpack);
+        let (_, inner, ok_label) = self.unpack(&r#else.unpack, false);
         if let Some(c) = &r#else.capture {
             self.var_map.insert(c.str.clone(), inner.clone());
         }
-        self.scope(&r#else.scope);
+        self.scope(&r#else.scope, 0);
         if let Some(c) = &r#else.capture {
             self.var_map.remove(&c.str);
         }
@@ -665,7 +690,7 @@ impl<'a> Lower<'a> {
     }
 
     fn else_expr(&mut self, r#else: &node::ElseExpr) {
-        let (_, inner, ok_label) = self.unpack(&r#else.unpack);
+        let (_, inner, ok_label) = self.unpack(&r#else.unpack, false);
         self.push_op(Op::BeginScope, r#else.pos_str.pos_id);
         let els = self.expr(&r#else.else_expr);
         self.push_op(Op::Copy { from: els, to: inner.clone(), size: Term::IntLit(r#else.else_expr.ty.size() as i64) }, r#else.pos_str.pos_id);
@@ -824,7 +849,7 @@ impl<'a> Lower<'a> {
         self.loop_exit.push((e, self.scope_depth));
         self.push_op(Op::Label {label: s }, r#loop.pos_id);
         self.push_op(Op::BeginLoop, 0);
-        self.scope(&r#loop.scope);
+        self.scope(&r#loop.scope, 0);
         self.push_op(Op::EndLoop, 0);
         self.push_op(Op::Jump { label: s }, r#loop.pos_id);
         self.push_op(Op::Label { label: e }, r#loop.pos_id);
@@ -841,7 +866,7 @@ impl<'a> Lower<'a> {
         self.push_op(Op::Jump { label: c }, r#while.pos_id);
         self.push_op(Op::Label { label: s }, r#while.pos_id);
         self.push_op(Op::BeginLoop, r#while.pos_id);
-        self.scope(&r#while.scope);
+        self.scope(&r#while.scope, 0);
         self.push_op(Op::EndLoop, r#while.pos_id);
         self.push_op(Op::Label { label: c }, r#while.pos_id);
         self.push_op(Op::BeginScope, r#while.pos_id);
@@ -872,7 +897,7 @@ impl<'a> Lower<'a> {
         self.loop_exit.push((e, self.scope_depth));
         self.push_op(Op::Label { label: s }, r#for.pos_id);
         self.push_op(Op::BeginLoop, 0);
-        self.scope(&r#for.scope);
+        self.scope(&r#for.scope, 0);
         self.push_op(Op::EndLoop, 0);
         self.push_op(Op::Label { label: c }, r#for.pos_id);
         self.push_op(Op::NaturalFlow, r#for.pos_id);
@@ -930,7 +955,7 @@ impl<'a> Lower<'a> {
         self.push_op(Op::Label { label: s }, r#for.pos_id);
         self.push_op(Op::BeginLoop, 0);
         self.push_op(Op::Copy { from: ptr, to: el, size: size.clone() }, r#for.pos_id);
-        self.scope(&r#for.scope);
+        self.scope(&r#for.scope, 0);
         self.push_op(Op::EndLoop, 0);
         self.push_op(Op::Label { label: c }, r#for.pos_id);
         self.push_op(Op::NaturalFlow, r#for.pos_id);
@@ -955,7 +980,7 @@ impl<'a> Lower<'a> {
         self.push_op(Op::Jump { label: i }, r#for.pos_id);
         self.push_op(Op::Label { label: s }, r#for.pos_id);
         self.push_op(Op::BeginLoop, 0);
-        self.scope(&r#for.scope);
+        self.scope(&r#for.scope, 0);
         self.push_op(Op::EndLoop, 0);
         self.push_op(Op::Label { label: c }, r#for.pos_id);
         self.push_op(Op::NaturalFlow, r#for.pos_id);

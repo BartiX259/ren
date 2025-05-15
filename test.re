@@ -2,13 +2,18 @@ import lib/std
 
 enum animal {
     dog(<char>),
-    cat
+    cat,
+    gif
 }
 
 fn main() {
-    let a = animal.cat;
-    let animal.dog(t) = a else {
-        return;
-    };
-    print(t);
+    let c = animal.cat;
+    if let animal.cat = c {
+        print("cat");
+    } else if let animal.dog(a) = c {
+        print_stack(0, 12);
+        print(a);
+    } else {
+        print("xaxa");
+    }
 }

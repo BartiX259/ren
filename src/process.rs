@@ -153,9 +153,14 @@ impl Process {
     }
 
     fn r#if(&mut self, r#if: node::If) -> node::If {
+        let cond = match r#if.cond {
+            node::IfKind::Expr(expr) => node::IfKind::Expr(self.expr(expr)),
+            node::IfKind::Unpack(unpack) => node::IfKind::Unpack(self.unpack(unpack)),
+            node::IfKind::None => node::IfKind::None,
+        };
         return node::If {
             pos_id: r#if.pos_id,
-            expr: self.opt_expr(r#if.expr),
+            cond,
             scope: self.scope(r#if.scope),
             els: r#if.els.map(|e| Box::new(self.r#if(*e)))
         };

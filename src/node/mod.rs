@@ -1,5 +1,5 @@
 use crate::types;
-mod display;
+//mod display;
 
 #[derive(Debug, Clone)]
 pub struct PosStr {
@@ -138,9 +138,16 @@ pub struct Ret {
 }
 
 #[derive(Debug, Clone)]
+pub enum IfKind {
+    Expr(Expr),
+    Unpack(Unpack),
+    None
+}
+
+#[derive(Debug, Clone)]
 pub struct If {
     pub pos_id: usize,
-    pub expr: Option<Expr>,
+    pub cond: IfKind,
     pub scope: Vec<Stmt>,
     pub els: Option<Box<If>>
 }
