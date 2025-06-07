@@ -174,7 +174,7 @@ pub fn push<T>(list: *[T], sl: <T>) {
 		*(list as **any + 1) = new_ptr;
     }
 	copy(sl as *T, ptr as *T + len(list), add_size);
-	*(list as *any as *int) += len(sl);
+	*(list as *int) += len(sl);
 }
 
 pub fn split<T>(sl: <T>, split: T) -> [<T>] {

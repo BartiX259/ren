@@ -112,6 +112,7 @@ pub enum Token {
     In,
     Syscall,
     Enum,
+    Extern,
     Pub,
     Semi,
     Colon,
@@ -154,6 +155,7 @@ impl Token {
             Token::In => "in".to_string(),
             Token::Syscall => "syscall".to_string(),
             Token::Enum => "enum".to_string(),
+            Token::Extern => "extern".to_string(),
             Token::Pub => "pub".to_string(),
             Token::Semi => ";".to_string(),
             Token::Colon => ":".to_string(),
@@ -204,6 +206,7 @@ impl Token {
             "in" => Some(Token::In),
             "syscall" => Some(Token::Syscall),
             "enum" => Some(Token::Enum),
+            "extern" => Some(Token::Extern),
             "pub" => Some(Token::Pub),
             _ => None,
         }

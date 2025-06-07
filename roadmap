@@ -1,4 +1,6 @@
-- Enums
+- Hashmaps
+- Tests
+- Optionals
 - Peephole optimization (remove temporary stack variables)
 - Custom iterators
 - Improve arg parsing

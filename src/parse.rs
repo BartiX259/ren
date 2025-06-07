@@ -48,6 +48,7 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
         }
         Some(Token::Type) => Ok(node::Stmt::TypeDecl(parse_type_decl(tokens)?)),
         Some(Token::Enum) => Ok(node::Stmt::Enum(parse_enum(tokens)?)),
+        Some(Token::Extern) => Ok(node::Stmt::Extern(parse_extern(tokens)?)),
         Some(Token::Pub) => Ok(node::Stmt::Decorator(parse_decorator(tokens)?)),
         Some(Token::Return) => {
             tokens.next();
@@ -732,6 +733,18 @@ fn parse_enum(tokens: &mut VecIter<Token>) -> Result<node::Enum, ParseError> {
     Ok(node::Enum { name, variants })
 }
 
+
+fn parse_extern(tokens: &mut VecIter<Token>) -> Result<node::Extern, ParseError> {
+    tokens.next();
+    let tok = check_none(tokens, "'fn'")?;
+    let Token::Fn = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "'fn'"));
+    };
+    let (name, types, decl_type) = parse_fn_sig(tokens)?;
+    check_semi(tokens)?;
+    Ok(node::Extern { name, types, decl_type })
+}
+
 fn parse_decorator(tokens: &mut VecIter<Token>) -> Result<node::Decorator, ParseError> {
     let mut kinds = Vec::new();
     let mut pos_ids = Vec::new();
@@ -894,19 +907,10 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
     Ok(ty)
 }
 
-fn parse_syscall(tokens: &mut VecIter<Token>) -> Result<node::Syscall, ParseError> {
-    tokens.next();
-    let tok = check_none(tokens, "the syscall id")?;
-    let Token::IntLit { value: id } = tok else {
-        return Err(unexp(tok, tokens.prev_index(), "the syscall id"));
-    };
-    let tok = check_none(tokens, "':'")?;
-    let Token::Colon = tok else {
-        return Err(unexp(tok, tokens.prev_index(), "':'"));
-    };
-    let tok = check_none(tokens, "the syscall name")?;
+fn parse_fn_sig(tokens: &mut VecIter<Token>) -> Result<(PosStr, Vec<node::Type>, Option<node::Type>), ParseError> {
+    let tok = check_none(tokens, "a name")?;
     let Token::Word { value: name_str } = tok else {
-        return Err(unexp(tok, tokens.prev_index(), "the syscall name"));
+        return Err(unexp(tok, tokens.prev_index(), "a name"));
     };
     let name = PosStr { str: name_str, pos_id: tokens.prev_index() };
     let tok = check_none(tokens, "'('")?;
@@ -925,6 +929,20 @@ fn parse_syscall(tokens: &mut VecIter<Token>) -> Result<node::Syscall, ParseErro
     } else {
         decl_type = None;
     }
+    Ok((name, types, decl_type))
+}
+
+fn parse_syscall(tokens: &mut VecIter<Token>) -> Result<node::Syscall, ParseError> {
+    tokens.next();
+    let tok = check_none(tokens, "the syscall id")?;
+    let Token::IntLit { value: id } = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "the syscall id"));
+    };
+    let tok = check_none(tokens, "':'")?;
+    let Token::Colon = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "':'"));
+    };
+    let (name, types, decl_type) = parse_fn_sig(tokens)?;
     check_semi(tokens)?;
     Ok(node::Syscall { id, name, types, decl_type })
 }

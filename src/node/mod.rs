@@ -185,6 +185,13 @@ pub struct ForIn {
 }
 
 #[derive(Debug, Clone)]
+pub struct Extern {
+    pub name: PosStr,
+    pub types: Vec<Type>,
+    pub decl_type: Option<Type>,
+}
+
+#[derive(Debug, Clone)]
 pub struct ArrLit {
     pub exprs: Vec<Expr>,
     pub pos_id: usize
@@ -271,7 +278,8 @@ pub enum Stmt {
     Break(usize),
     Continue(usize),
     Syscall(Syscall),
-    Enum(Enum)
+    Enum(Enum),
+    Extern(Extern)
 }
 #[derive(Debug)]
 pub struct Module {

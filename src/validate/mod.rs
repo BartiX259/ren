@@ -289,6 +289,7 @@ impl Validate {
             node::Stmt::ForIn(r#for) => self.for_in(r#for),
             node::Stmt::Break(pos_id) => self.check_loop("Break", *pos_id),
             node::Stmt::Continue(pos_id) => self.check_loop("Continue", *pos_id),
+            node::Stmt::Extern(ext) => self.r#extern(ext),
             node::Stmt::Syscall(_) => Ok(()), // Checked while hoisting
         }
     }
@@ -1455,6 +1456,25 @@ impl Validate {
         self.scope(&mut r#for.scope)?;
         self.loop_count -= 1;
         self.symbol_table.remove(&r#for.capture.str);
+        Ok(())
+    }
+
+    fn r#extern(&mut self, ext: &mut node::Extern) -> Result<(), SemanticError> {
+        if self.cur_func.is_some() {
+            return Err(SemanticError::FuncInFunc(ext.name.clone()));
+        }
+        let ty;
+        if let Some(t) = &ext.decl_type {
+            ty = self.r#type(t, false)?;
+        } else {
+            ty = Type::Void;
+        }
+        let mut args = Vec::new();
+        for arg in ext.types.iter() {
+            let ty = self.r#type(arg, false)?;
+            args.push(ty.clone());
+        }
+        self.symbol_table.insert(ext.name.str.clone(), Symbol::ExternFunc { ty, args });
         Ok(())
     }
 
