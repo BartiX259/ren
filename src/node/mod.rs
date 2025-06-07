@@ -59,7 +59,8 @@ pub enum TypeKind {
     List(Box<Type>),
     Tuple(Vec<Type>),
     Struct(Vec<PosStr>, Vec<Type>),
-    Result(Box<Type>, Box<Type>)
+    Result(Box<Type>, Box<Type>),
+    Option(Box<Type>)
 }
 #[derive(Debug, Clone)]
 pub struct Type {
@@ -228,6 +229,12 @@ pub struct BuiltIn {
     pub args: Vec<Expr>
 }
 #[derive(Debug, Clone)]
+pub struct Ternary {
+    pub cond: Box<Expr>,
+    pub yes: Box<Expr>,
+    pub no: Box<Expr>
+}
+#[derive(Debug, Clone)]
 pub struct TypeCast {
     pub r#type: Type,
     pub expr: Box<Expr>
@@ -245,6 +252,7 @@ pub enum ExprKind {
     CharLit(u32),
     BoolLit(bool),
     Null,
+    None,
     ArrLit(ArrLit),
     ListLit(ArrLit, String),
     StructLit(StructLit),

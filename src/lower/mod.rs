@@ -119,6 +119,7 @@ impl<'a> Lower<'a> {
             node::ExprKind::CharLit(val) => Term::IntLit(*val as i64),
             node::ExprKind::BoolLit(val) => Term::IntLit(*val as i64),
             node::ExprKind::Null => Term::IntLit(0),
+            node::ExprKind::None => self.none(&expr.ty, expr.span.end),
             node::ExprKind::Variable(pos_str) => {
                 if let Some(var) = self.var_map.get(&pos_str.str) {
                     var.clone()
@@ -286,7 +287,7 @@ impl<'a> Lower<'a> {
                 self.salloc_offset = 0;
             } else {
                 let r = self.expr(expr);
-                if expr.ty.size() > 8 {
+                if expr.ty.size() > 8 && !matches!(r, Term::Double(_)) {
                     self.double_count += 1;
                     self.push_op(Op::Read { res: Term::Double(self.double_count), ptr: r, offset: 0, size: 16 }, ret.pos_id);
                     self.push_op(Op::Return { term: Some(Term::Double(self.double_count))  }, ret.pos_id);
@@ -324,7 +325,7 @@ impl<'a> Lower<'a> {
                     );
                 }
                 node::IfKind::Unpack(unpack) => {
-                    let (s, inner, ok_label) = self.unpack(unpack, true);
+                    let (_, _, ok_label) = self.unpack(unpack, true);
                     self.push_op(Op::EndScope, i.pos_id);
                     labels.push(ok_label);
                 }
@@ -617,7 +618,7 @@ impl<'a> Lower<'a> {
                 self.var_map.insert(s.str.clone(), t2);
             }
         } else {
-            if let Type::Result(ok, err) = &unpack.expr.ty {
+            if matches!(&unpack.expr.ty, Type::Result(_, _) | Type::Option(_)) {
                 t = self.make_stack(t, &unpack.expr.ty, unpack.lhs.pos_id);
                 self.stack_count += 1;
                 let t2 = Term::Stack(self.stack_count);
@@ -627,10 +628,10 @@ impl<'a> Lower<'a> {
                 unreachable!();
             }
         }
-        self.unwrap(t, cmp, unpack.lhs.pos_id)
+        self.unwrap(t, cmp, unpack.expr.ty.aligned_size(), unpack.lhs.pos_id)
     }
 
-    fn unwrap(&mut self, t: Term, cmp: Option<Term>, pos_id: usize) -> (Term, Term, u16) {
+    fn unwrap(&mut self, t: Term, cmp: Option<Term>, aligned: u32, pos_id: usize) -> (Term, Term, u16) {
         self.label_count += 1;
         let ret_label = self.label_count;
         self.label_count += 1;
@@ -659,6 +660,14 @@ impl<'a> Lower<'a> {
             self.stack_count += 1;
             inner = Term::Stack(self.stack_count);
             self.push_op(Op::Own { res: inner.clone(), term: s.clone(), offset: 8 }, pos_id);
+        } else if let Term::Pointer(_) = t {
+            self.stack_count += 1;
+            s = Term::Stack(self.stack_count);
+            self.stack_count += 1;
+            inner = Term::Stack(self.stack_count);
+            self.push_op(Op::Decl { term: s.clone(), size: aligned }, pos_id);
+            self.push_op(Op::Copy { from: t, to: s.clone(), size: Term::IntLit(aligned as i64) }, pos_id);
+            self.push_op(Op::Own { res: inner.clone(), term: s.clone(), offset: 8 }, pos_id);
         } else {
             panic!("Not temp or double {t:?}");
         }
@@ -678,23 +687,29 @@ impl<'a> Lower<'a> {
     fn post_un_expr(&mut self, un: &node::UnExpr) -> Term {
         let t = self.expr(&un.expr);
         let inner_size = un.expr.ty.size();
+        let aligned = un.expr.ty.aligned_size();
         if un.op.str.starts_with("!") {
-            let Type::Result(_, err) = &un.expr.ty else {
-                unreachable!();
-            };
-            let (_, inner, ok_label) = self.unwrap(t, None, un.op.pos_id);
+            let (_, inner, ok_label) = self.unwrap(t, None, aligned, un.op.pos_id);
             let panic = un.op.str.split("!").last().unwrap();
             self.push_op(Op::BeginCall { params: vec![] }, un.op.pos_id);
-            for p in self.param(inner.clone(), err.size(), err.aligned_size(), un.op.pos_id) {
-                self.push_op(Op::Param { term: p }, un.op.pos_id);
+            if let Type::Result(_, err) = &un.expr.ty {
+                for p in self.param(inner.clone(), err.size(), err.aligned_size(), un.op.pos_id) {
+                    self.push_op(Op::Param { term: p }, un.op.pos_id);
+                }
+                self.push_op(Op::Call { res: None, func: panic.to_string() }, un.op.pos_id);
+                self.push_op(Op::Label { label: ok_label }, un.op.pos_id);
+                inner
+            } else if let Type::Option(_) = &un.expr.ty {
+                self.push_op(Op::Call { res: None, func: panic.to_string() }, un.op.pos_id);
+                self.push_op(Op::Label { label: ok_label }, un.op.pos_id);
+                inner
+            } else {
+                unreachable!();
             }
-            self.push_op(Op::Call { res: None, func: panic.to_string() }, un.op.pos_id);
-            self.push_op(Op::Label { label: ok_label }, un.op.pos_id);
-            inner
         }
         else { match un.op.str.as_str() {
             "?" => {
-                let (s, inner, ok_label) = self.unwrap(t, None, un.op.pos_id);
+                let (s, inner, ok_label) = self.unwrap(t, None, aligned, un.op.pos_id);
                 if let Some(r) = self.ret_salloc.clone() {
                     self.push_op(Op::Copy { from: s, to: r.clone(), size: Term::IntLit(inner_size as i64) }, un.op.pos_id);
                     self.push_op(Op::Return { term: Some(r) }, un.op.pos_id);
@@ -757,6 +772,7 @@ impl<'a> Lower<'a> {
                     self.temp_count += 1;
                     self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: term.clone(), offset: 0, size: size }, pos_id);
                     if size > 8 {
+                        // panic!("{:?}", term);
                         self.temp_count += 1;
                         self.push_op(Op::Read { res: Term::Temp(self.temp_count), ptr: term, offset: 8, size: size - 8 }, pos_id);
                         params.push(Term::Temp(self.temp_count - 1));
@@ -1094,7 +1110,18 @@ impl<'a> Lower<'a> {
                     res = s;
                 }
             }
-            (_, Type::Result(ok, _)) => {
+            (Type::Option(lhs), Type::Option(rhs)) => {
+                if lhs.aligned_size() >= rhs.aligned_size() {
+                    res = r;
+                } else {
+                    self.stack_count += 1;
+                    let s = Term::Stack(self.stack_count);
+                    self.push_op(Op::Decl { term: s.clone(), size: rhs.aligned_size() }, id);
+                    self.push_op(Op::Copy { from: r, to: s.clone(), size: Term::IntLit(rhs.aligned_size() as i64) }, id);
+                    res = s;
+                }
+            }
+            (_, Type::Result(ok, _) | Type::Option(ok)) => {
                 self.stack_count += 1;
                 let s = Term::Stack(self.stack_count);
                 self.push_op(Op::Decl { term: s.clone(), size: to.aligned_size() }, id);

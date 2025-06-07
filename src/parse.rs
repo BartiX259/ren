@@ -173,6 +173,7 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
         Token::True => Ok(expr(start, start, node::ExprKind::BoolLit(true))),
         Token::False => Ok(expr(start, start, node::ExprKind::BoolLit(false))),
         Token::Null => Ok(expr(start, start, node::ExprKind::Null)),
+        Token::None => Ok(expr(start, start, node::ExprKind::None)),
         Token::Word { value } => { // Term
             let pos_str = PosStr {
                 str: value.clone(),
@@ -862,6 +863,8 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
                 return Err(unexp(cl, tokens.prev_index(), "'>>'"));
             };
             Ok(r#type(start, tokens.prev_index(), node::TypeKind::Slice(Box::new(r#type(start, tokens.prev_index(), node::TypeKind::Slice(Box::new(ty)))))))
+        } else if value == "?" {
+            Ok(r#type(start, tokens.prev_index(), node::TypeKind::Option(Box::new(parse_type(tokens)?))))
         } else {
             Err(unexp(tok, tokens.prev_index(), "a type"))
         }

@@ -4,3 +4,12 @@
 - Peephole optimization (remove temporary stack variables)
 - Custom iterators
 - Improve arg parsing
+
+Std library:
+- hashmaps
+- lists
+- strings
+- filesystem
+- user input
+- math?
+

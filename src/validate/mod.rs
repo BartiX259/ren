@@ -300,6 +300,7 @@ impl Validate {
             node::ExprKind::CharLit(_) => Ok(Type::Char),
             node::ExprKind::BoolLit(_) => Ok(Type::Bool),
             node::ExprKind::Null => Ok(Type::Pointer(Box::new(Type::Any))),
+            node::ExprKind::None => Ok(Type::Option(Box::new(Type::Int))),
             node::ExprKind::ArrLit(arr_lit) => self.expr_list(&mut arr_lit.exprs, arr_lit.pos_id).map(|res| Type::Array {
                 inner: Box::new(res.0),
                 length: res.1,
@@ -404,11 +405,12 @@ impl Validate {
             }
         } else {
             let ty = self.expr(&mut unpack.expr)?;
-            if let Type::Result(ok, _) = &ty {
-                res = Some(*ok.clone());
-                self.push_symbol(unpack.lhs.str.clone(), Symbol::Var { ty: *ok.clone() });
-            } else {
-                return Err(SemanticError::NotUnwrappable(unpack.lhs.clone()))
+            match &ty {
+                Type::Result(ok, _) | Type::Option(ok) => {
+                    res = Some(*ok.clone());
+                    self.push_symbol(unpack.lhs.str.clone(), Symbol::Var { ty: *ok.clone() });
+                }
+                _ => return Err(SemanticError::NotUnwrappable(unpack.lhs.clone()))
             }
         }
         Ok(res)
@@ -588,11 +590,11 @@ impl Validate {
             let ty = self.expr(expr)?;
             if self.cur_ret != ty {
                 Self::type_cast(ty, self.cur_ret.clone(), span)?;
-                expr.ty = self.cur_ret.clone();
                 expr.kind = node::ExprKind::TypeCast(node::TypeCast {
                     r#type: Self::node_type(span),
                     expr: Box::new(expr.clone()),
-                })
+                });
+                expr.ty = self.cur_ret.clone();
             }
         } else if self.cur_ret != Type::Void {
             return Err(SemanticError::InvalidReturn(ret.pos_id));
@@ -939,28 +941,44 @@ impl Validate {
                         if err == *e2 {
                             ok = true;
                         }
+                    } else if let Type::Option(_) = &self.cur_ret {
+                        ok = true
                     }
                     if ok {
                         Ok(*ty)
                     } else {
                         Err(SemanticError::InvalidReturn(un.op.pos_id))
                     }
+                } else if let Type::Option(opt) = ty {
+                    let mut ok = false;
+                    if let Type::Option(_) = &self.cur_ret {
+                        ok = true;
+                    }
+                    if ok {
+                        Ok(*opt)
+                    } else {
+                        Err(SemanticError::InvalidReturn(un.op.pos_id))
+                    }
                 } else {
-                    Err(SemanticError::UnaryTypeMismatch(span, "?".to_string(), Type::Result(Box::new(Type::Any), Box::new(Type::Any))))
+                    Err(SemanticError::UnaryTypeMismatch(span, "?".to_string(), ty))
                 }
             }
             "!" => {
                 if let Type::Result(ty, err) = ty {
-                    let call = if let Ok(call) = self.find_fn("panic", vec![*err], None, &mut vec![], span) {
-                        call
+                    let call;
+                    if let Ok(c) = self.find_fn("panic", vec![*err], None, &mut vec![], span) {
+                        call = c; 
                     } else {
-                        let call = self.find_fn("panic", vec![], None, &mut vec![], span)?;
-                        call
-                    };
+                        call = self.find_fn("panic", vec![], None, &mut vec![], span)?;
+                    }
+                    un.op.str += &call;
+                    Ok(*ty)
+                } else if let Type::Option(ty) = ty {
+                    let call = self.find_fn("panic", vec![], None, &mut vec![], span)?;
                     un.op.str += &call;
                     Ok(*ty)
                 } else {
-                    Err(SemanticError::UnaryTypeMismatch(span, "!".to_string(), Type::Result(Box::new(Type::Any), Box::new(Type::Any))))
+                    Err(SemanticError::UnaryTypeMismatch(span, "!".to_string(), ty))
                 }
             }
             _ => Err(SemanticError::InvalidUnaryOperator(un.op.clone())),
@@ -1327,6 +1345,7 @@ impl Validate {
                 Ok(Type::Struct(map))
             }
             node::TypeKind::Result(ty, err) => Ok(Type::Result(Box::new(self.r#type(ty, false)?), Box::new(self.r#type(err, false)?))),
+            node::TypeKind::Option(ty) => Ok(Type::Option(Box::new(self.r#type(ty, false)?))),
         }
     }
 
@@ -1397,6 +1416,12 @@ impl Validate {
             (Type::Pointer(_), Type::Int) => (),
             (ty, Type::Result(ok, _)) => {
                 if *ty != **ok {
+                    return Err(SemanticError::InvalidCast(span, from, to));
+                }
+            }
+            (Type::Option(_), Type::Option(_)) => (),
+            (ty, Type::Option(opt)) => {
+                if *ty != **opt {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }

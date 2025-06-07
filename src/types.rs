@@ -17,7 +17,8 @@ pub enum Type {
     Struct(HashMap<String, (Type, u32)>),
     Tuple(Vec<Type>),
     Enum(Vec<(String, Option<Type>)>),
-    Result(Box<Type>, Box<Type>)
+    Result(Box<Type>, Box<Type>),
+    Option(Box<Type>),
 }
 
 impl Type {
@@ -27,6 +28,7 @@ impl Type {
             Type::Array { inner, length } => *length as u32 * inner.size(),
             Type::Tuple(tys) => tys.iter().map(|ty| ty.size()).sum(),
             Type::Result(ty, err) => ty.size().max(err.size()) + 8,
+            Type::Option(ty) => ty.size() + 8,
             Type::Range | Type::Slice { .. } | Type::List { .. } => 16,
             Type::Enum(variants) => {
                 let max_variant_size = variants.iter()
@@ -64,19 +66,19 @@ impl Type {
     pub fn inner(&self, max_depth: usize) -> &Type {
         if max_depth == 0 { return self; }
         match self {
-            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p }  => p.inner(max_depth - 1),
+            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p } | Type::Option(p)  => p.inner(max_depth - 1),
             _ => self
         }
     }
     pub fn inner_mut(&mut self) -> &mut Type {
         match self {
-            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p }  => p.inner_mut(),
+            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p } | Type::Option(p)  => p.inner_mut(),
             _ => self
         }
     }
     pub fn depth(&self, zero: usize) -> (&Type, usize) {
         match self {
-            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p }  => p.depth(zero + 1),
+            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p } | Type::Option(p)  => p.depth(zero + 1),
             _ => (self, zero)
         }
     }
@@ -138,7 +140,8 @@ impl Display for Type {
                 write!(f, ")")
             }
             Type::Enum(_) => write!(f, "enum"),
-            Type::Result(ty, err) => write!(f, "{ty} ? {err}")
+            Type::Result(ty, err) => write!(f, "{ty} ? {err}"),
+            Type::Option(ty) => write!(f, "?{ty}")
         }
     }
 }

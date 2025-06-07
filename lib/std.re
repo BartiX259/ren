@@ -103,6 +103,14 @@ pub fn str(x: *char) -> <char> {
     return (len, x);
 }
 
+pub fn str<T>(x: ?T) -> <char> {
+    if let s = x {
+        return str(s);
+    } else {
+        return "none";
+    }
+}
+
 pub fn str<T>(x: <T>) -> <char> {
     let s = +"[";
     let start = true;

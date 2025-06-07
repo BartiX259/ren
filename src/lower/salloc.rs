@@ -4,6 +4,24 @@ use crate::node::{self, StringFragment};
 use crate::types::Type;
 
 impl<'a> Lower<'a> {
+    pub fn none(&mut self, ty: &Type, pos_id: usize) -> Term {
+        let ptr;
+        if let Some(p) = &self.cur_salloc {
+            ptr = p.clone();
+        } else {
+            self.stack_count += 1;
+            ptr = Term::Stack(self.stack_count);
+            self.push_op(
+                Op::Decl {
+                    term: ptr.clone(),
+                    size: ty.aligned_size()
+                },
+                pos_id
+            );
+        }
+        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: 0, op: "=".to_string(), term: Term::IntLit(1), size: 8 }, pos_id);
+        return ptr;
+    }
     pub fn arr_lit(&mut self, arr_lit: &node::ArrLit, expr: &node::Expr) -> Term {
         let ptr;
         let Some(inner) = expr.ty.dereference() else {
