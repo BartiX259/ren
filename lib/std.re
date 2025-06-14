@@ -39,7 +39,7 @@ pub fn parse(str: *char, res: *int) -> int ? <char> {
             break;
         }
         let temp = slice[i] - '0';
-        if temp > 9 {
+        if temp > 9 || temp < 0 {
             return ?"Couldn't parse '{slice}' into an integer.\n";
         }
         *res += temp as int * mult;
@@ -52,6 +52,47 @@ pub fn parse(str: *char, res: *<char>) -> int ? <char> {
     let slice = str(str);
     copy(&slice, res, 16);
     return 0;
+}
+
+fn shift_args(argc: *int, argv: **char, start: int, count: int) {
+    for i in start..*argc-count {
+        let ptr = argv + i;
+        *ptr = argv[i+count];
+    }
+    *argc -= count;
+}
+
+pub fn parse_opt<T>(argc: *int, argv: **char, name: <char>, opt: *?T) -> int ? <char> {
+    let flag = +"--";
+    push(&flag, name);
+    for i in 0..*argc {
+        let arg = argv[i];
+        if cmp(arg, flag) {
+            *(opt as *int) = 0;
+            if i >= argc {
+                return ?"Optional argument required for '{name}'.\n";
+            }
+            let res = parse(argv[i+1], (opt as *int + 1) as *T);
+            shift_args(argc, argv, i, 2);
+            return res;
+        }
+    }
+    *(opt as *int) = 1;
+    return 0;
+}
+
+pub fn cmp(l: *char, r: <char>) -> bool {
+    let found = true;
+    for i in 0..len(r) {
+        if l[i] != r[i] {
+            found = false;
+            break;
+        }
+    }
+    if found && l[len(r)] == 0 {
+        return true;
+    }
+    return false;
 }
 
 fn int2str(x: int, buf: *char) -> *char {

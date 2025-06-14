@@ -32,7 +32,7 @@ fn reg(name: &str) -> Reg {
 struct ProgState {
     regs: Vec<Reg>,
     param_index: usize,
-    sp: i64
+    sp: i64,
 }
 
 struct Gen<'a> {
@@ -104,80 +104,175 @@ impl<'a> Gen<'a> {
         if let Some(_) = self.symbol_table.get("_start") {
             return Err(GenError::ReservedSymbol(OpLoc { start_id: 0, end_id: 0 }));
         }
-        if let Some(Symbol::MainFunc { init, arg_parse, arg_names, args, parse_fns, print, print_help, module, span, .. }) = self.symbol_table.get("main") {
+        if let Some(Symbol::MainFunc {
+            init,
+            arg_parse,
+            arg_names,
+            args,
+            parse_fns,
+            print,
+            print_help,
+            module,
+            span,
+            ..
+        }) = self.symbol_table.get("main")
+        {
             self.cur_module = module.to_string();
             self.buf.push_line("global _start");
             self.buf.dedent();
             self.buf.push_line("");
+
+            // The `args.fail` block is called on any parsing error.
             if !init.is_empty() {
                 self.buf.push_line("args.fail:");
                 self.buf.indent();
-                self.buf.push_line("mov rbp, rax");
-                self.buf.push_line("mov rsi, [rbp+16]");
-                self.buf.push_line("mov rdi, [rbp+8]");
+                self.buf.push_line("mov rsi, [rax+16]"); // Error message
+                self.buf.push_line("mov rdi, [rax+8]"); // Error code
                 self.buf.push_line(format!("call {print}"));
-                self.buf.push_line("mov rdi, [rbp+32]");
+                self.buf.push_line("mov rdi, [rbp+8]"); // Program name
                 self.buf.push_line(format!("mov rsi, {}", arg_names.len()));
-                self.buf.push_line("mov rdx, args.");
+                self.buf.push_line("mov rdx, args."); // Argument metadata
                 self.buf.push_line(format!("call {print_help}"));
-                self.buf.push_line("mov rdi, 1");
+                self.buf.push_line("mov rdi, 1"); // Exit with error code 1
                 self.buf.push_line("mov rax, 60");
                 self.buf.push_line("syscall");
                 self.buf.dedent();
                 self.buf.push_line("");
             }
+
             self.buf.push_line("_start:");
             self.buf.indent();
+
+            const ARG_PARSE_RESULT_SIZE: u32 = 24;
+            let mut big_args_size = 0;
+            let mut small_args_size = 0;
+
+            // Separate arguments into flags and positionals to handle them in two stages.
+            let mut flags = Vec::new();
+            let mut positionals = Vec::new();
+            let mut reg_info = vec![0; args.len()];
+            let mut current_offset = ARG_PARSE_RESULT_SIZE;
+
+            // Small args
+            for (i, (ty, parse_fn)) in args.iter().zip(parse_fns.iter()).enumerate() {
+                if parse_fn.is_empty() {
+                    continue;
+                }
+                let size = ty.aligned_size();
+                if size <= 16 {
+                    let item = (ty, parse_fn, i, current_offset);
+                    small_args_size += size;
+                    if parse_fn.contains("opt") {
+                        flags.push(item);
+                    } else {
+                        positionals.push(item);
+                    }
+                    reg_info[i] = current_offset;
+                    current_offset += size;
+                }
+            }
+
+            // Big args
+            for (i, (ty, parse_fn)) in args.iter().zip(parse_fns.iter()).enumerate() {
+                if parse_fn.is_empty() {
+                    continue;
+                }
+                let size = ty.aligned_size();
+                if size > 16 {
+                    let item = (ty, parse_fn, i, current_offset);
+                    big_args_size += size;
+                    if parse_fn.contains("opt") {
+                        flags.push(item);
+                    } else {
+                        positionals.push(item);
+                    }
+                    reg_info[i] = current_offset;
+                    current_offset += size;
+                }
+            }
+
             if !init.is_empty() {
                 self.buf.push_line(format!("call {init}"));
             }
+
+            self.buf.push_line("mov rbp, rsp");
+            self.buf.push_line(format!("sub rsp, {}", small_args_size + big_args_size + ARG_PARSE_RESULT_SIZE));
+            self.buf.push_line("");
+
+            if !flags.is_empty() {
+                self.buf.push_line(";; Flag Parsing");
+                for (_, parse_fn, arg_idx, stack_offset) in &flags {
+                    self.buf.push_line("mov rdi, rsp"); // rdi: error struct
+                    self.buf.push_line("mov rsi, rbp"); // rsi: &argc
+                    self.buf.push_line("mov rdx, rbp"); // rdx: argv
+                    self.buf.push_line("add rdx, 8");
+                    self.buf.push_line(format!("mov rcx, [args.+{}]", arg_idx * 16)); // rcx: start index for search
+                    self.buf.push_line(format!("mov r8, [args.+{}]", arg_idx * 16 + 8)); // r8: end index for search
+                    self.buf.push_line(format!("lea r9, [rsp+{}]", stack_offset)); // r9: pointer to final value destination
+                    self.buf.push_line(format!("call {}", parse_fn));
+                    self.buf.push_line("mov rbx, [rax]"); // check error pointer
+                    self.buf.push_line("test rbx, rbx");
+                    self.buf.push_line("jnz args.fail");
+                    self.buf.push_line("");
+                }
+            }
+
             if !arg_parse.is_empty() {
-                self.buf.push_line("mov rsi, [rsp]");
-                self.buf.push_line("mov rdx, rsp");
+                self.buf.push_line("; Positional Argument Parsing");
+                self.buf.push_line("mov rdi, rsp"); // rdi: error struct
+                self.buf.push_line("mov rsi, [rbp]"); // rsi: argc
+                self.buf.push_line("mov rdx, rbp"); // rdx: argv
                 self.buf.push_line("add rdx, 8");
-                self.buf.push_line(format!("mov rcx, {}", arg_names.len()));
-                self.buf.push_line("mov r8, args.");
-                self.buf.push_line("sub rsp, 24"); // Make space for results
-                self.buf.push_line("mov rdi, rsp");
-                self.buf.push_line(format!("call {arg_parse}"));
+                self.buf.push_line(format!("mov rcx, {}", positionals.len())); // rcx: Number of positionals to find
+                self.buf.push_line("mov r8, args."); // r8: Pointer to all argument metadata
+                self.buf.push_line(format!("call {}", arg_parse));
                 self.buf.push_line("mov rbx, [rax]");
                 self.buf.push_line("test rbx, rbx");
                 self.buf.push_line("jnz args.fail");
+                self.buf.push_line("");
             }
-            let mut i = 8;
-            let mut total_size = 24;
-            for (ty, parse_fn) in args.iter().zip(parse_fns.iter()) {
-                if parse_fn.is_empty() {
-                    continue;
+
+            if !positionals.is_empty() {
+                self.buf.push_line(";; Positional Value Conversion");
+                for (i, (_, parse_fn, _, stack_offset)) in positionals.iter().enumerate() {
+                    // The value parser function signature is: (err_ptr, string_to_parse_ptr, value_dest_ptr)
+                    // It uses registers: rdi, rsi, rdx
+                    self.buf.push_line(format!(";; Convert positional argument {}", i));
+                    self.buf.push_line("mov rdi, rsp"); // rdi: Use top of stack for temporary error struct
+                    self.buf.push_line(format!("mov rsi, [rbp+{}]", i * 8 + 16)); // rsi: Pointer to the string to parse
+                    self.buf.push_line(format!("lea rdx, [rsp+{}]", stack_offset)); // rdx: Pointer to final value destination
+                    self.buf.push_line(format!("call {}", parse_fn));
+                    self.buf.push_line("mov rbx, [rax]");
+                    self.buf.push_line("test rbx, rbx");
+                    self.buf.push_line("jnz args.fail");
+                    self.buf.push_line("");
                 }
-                i += 8;
-                let size = ty.aligned_size();
-                total_size += size;
-                self.buf.push_line(format!("sub rsp, {}", size));
-                self.buf.push_line("mov rdi, rax");
-                self.buf.push_line(format!("mov rsi, [rsp+{}]", i + total_size));
-                self.buf.push_line(format!("mov rdx, rsp"));
-                self.buf.push_line(format!("call {parse_fn}"));
-                self.buf.push_line("mov rbx, [rax]");
-                self.buf.push_line("test rbx, rbx");
-                self.buf.push_line("jnz args.fail");
             }
+
+            self.buf.push_line(";; Load registers for main function call");
             let mut param_index = 0;
-            total_size -= 24;
-            for (ty, parse_fn) in args.iter().zip(parse_fns.iter()) {
-                if parse_fn.is_empty() {
-                    continue;
-                }
+            for (ty, offset) in args.iter().zip(reg_info) {
                 let size = ty.aligned_size();
-                total_size -= size;
                 for j in (0..size).step_by(8) {
-                    let target = *self.call_order.get(param_index).ok_or(GenError::TooManyArguments(OpLoc { start_id: span.start, end_id: span.end }))?;
+                    let target = *self.call_order.get(param_index).ok_or(GenError::TooManyArguments(OpLoc {
+                        start_id: span.start,
+                        end_id: span.end,
+                    }))?;
                     param_index += 1;
-                    self.buf.push_line(format!("mov {target}, [rsp+{}]", total_size + j));
+                    if size > 16 {
+                        self.buf.push_line(format!("mov {}, rsp", target));
+                        self.buf.push_line(format!("add {}, {}", target, offset + j));
+                        break;
+                    } else {
+                        self.buf.push_line(format!("mov {}, [rsp+{}]", target, offset + j));
+                    }
                 }
             }
+
+            self.buf.push_line(";; Restore stack pointer before calling main");
+            self.buf.push_line(format!("add rsp, {}", small_args_size + ARG_PARSE_RESULT_SIZE));
             self.buf.push_line("call main");
-            self.buf.push_line("mov rdi, rax");
+            self.buf.push_line("mov rdi, rax"); // Exit with main's return code
             self.buf.push_line("mov rax, 60");
             self.buf.push_line("syscall");
         }
@@ -212,7 +307,7 @@ impl<'a> Gen<'a> {
                         self.buf.push_line("");
                     }
                 }
-                _ => ()
+                _ => (),
             }
         }
     }
@@ -225,7 +320,7 @@ impl<'a> Gen<'a> {
                         self.buf.push_line(format!("{} dq {}", name, str));
                     }
                 }
-                _ => ()
+                _ => (),
             }
         }
     }
@@ -259,7 +354,7 @@ impl<'a> Gen<'a> {
                     }
                     self.buf.dedent();
                 }
-                _ => ()
+                _ => (),
             }
         }
         Ok(())
@@ -283,7 +378,7 @@ impl<'a> Gen<'a> {
                     if let Term::IntLit(_) = from {
                         self.store(from, "=".to_string(), to, 0, None, 8)?;
                         self.buf.comment(format!("{op_clone:?}"));
-                        continue; 
+                        continue;
                     }
                     if let Some(t) = from.stack_arithmetic() {
                         self.free_reg(&"rsi".to_string())?;
@@ -369,7 +464,8 @@ impl<'a> Gen<'a> {
                 }
                 ir::Op::BeginCall { params: args } => {
                     let mut saved = Vec::new();
-                    for r in self.regs.iter_mut() { // Save registers
+                    for r in self.regs.iter_mut() {
+                        // Save registers
                         if r.locked {
                             saved.push(r.clone());
                             self.buf.push_line(format!("push {}", r.name));
@@ -380,7 +476,11 @@ impl<'a> Gen<'a> {
                         r.term = None;
                         r.locked = false;
                     }
-                    self.saved_states.push(ProgState { regs: saved, param_index: self.param_index, sp: self.sp });
+                    self.saved_states.push(ProgState {
+                        regs: saved,
+                        param_index: self.param_index,
+                        sp: self.sp,
+                    });
                     self.params.push(args);
                     self.param_index = 0;
                 }
@@ -489,7 +589,7 @@ impl<'a> Gen<'a> {
                     self.clear_reg(&r1);
                     self.clear_reg(&r2);
                 }
-                ir::Op::Return { term }=> {
+                ir::Op::Return { term } => {
                     if let Some(t) = term {
                         if let Some((t1, t2)) = self.doubles.get(&t).cloned() {
                             self.swap_regs("rax".to_string(), t1);
@@ -557,7 +657,10 @@ impl<'a> Gen<'a> {
     }
 
     fn clear_reg(&mut self, reg: &String) {
-        self.get_reg(reg).map(|r| { r.term = None; r.locked = false; });
+        self.get_reg(reg).map(|r| {
+            r.term = None;
+            r.locked = false;
+        });
     }
 
     fn restore_regs(&mut self) {
@@ -579,7 +682,11 @@ impl<'a> Gen<'a> {
         }
     }
     fn restore_sp(&mut self, depth: usize) {
-        if let Some(sp) = if depth == 0 { self.saved_sps.pop() } else { self.saved_sps.get(self.saved_sps.len() - depth).cloned() } {
+        if let Some(sp) = if depth == 0 {
+            self.saved_sps.pop()
+        } else {
+            self.saved_sps.get(self.saved_sps.len() - depth).cloned()
+        } {
             if self.sp != sp {
                 if self.buf.last_line != "ret" {
                     self.buf.push_line(format!("add rsp, {}", self.sp - sp));
@@ -798,7 +905,7 @@ impl<'a> Gen<'a> {
             "%" => {
                 self.bin_rax("div", &mut r1, &mut r2, size)?;
                 r1 = "rdx".to_string();
-            },
+            }
             ">" => self.cond("setg", &r1, &r2, size),
             "<" => self.cond("setl", &r1, &r2, size),
             ">=" => self.cond("setge", &r1, &r2, size),
@@ -849,7 +956,7 @@ impl<'a> Gen<'a> {
         let d = Self::reg_name(&r, size);
         match op.as_str() {
             "-" => self.buf.push_line(format!("neg {}", d)),
-            "*" => { 
+            "*" => {
                 self.buf.push_line(format!("mov {}, [{}]", d, r));
                 if d != r {
                     self.buf.push_line(format!("movzx {}, {}", r, d));
@@ -889,7 +996,7 @@ impl<'a> Gen<'a> {
         let s = Self::word_size_name(size);
         if let Some((t1, t2)) = self.doubles.get(&term).cloned() {
             self.buf.push_line(format!("mov {s} [{}{}], {}", p, self.fmt_offset(offset), t1));
-            self.buf.push_line(format!("mov {s} [{}{}], {}", p, self.fmt_offset(offset+8), t2));
+            self.buf.push_line(format!("mov {s} [{}{}], {}", p, self.fmt_offset(offset + 8), t2));
             self.clear_reg(&t1);
             self.clear_reg(&t2);
             return Ok(());
@@ -1000,7 +1107,7 @@ impl<'a> Gen<'a> {
             self.save_reg(&t1, &res);
             self.lock_reg(&t1, true);
             let t2 = self.get_free_reg()?;
-            self.buf.push_line(format!("mov {}, [{}{}]", t2, r, self.fmt_offset(offset+8)));
+            self.buf.push_line(format!("mov {}, [{}{}]", t2, r, self.fmt_offset(offset + 8)));
             self.save_reg(&t2, &res);
             self.lock_reg(&t2, true);
             self.doubles.insert(res, (t1, t2));
@@ -1098,25 +1205,54 @@ impl<'a> Gen<'a> {
         let r;
         match size {
             1 => match base {
-                "rax" => "al", "rbx" => "bl", "rcx" => "cl", "rdx" => "dl",
-                "rsi" => "sil", "rdi" => "dil", "rbp" => "bpl", "rsp" => "spl",
-                _ if base.starts_with("r") => { r = format!("{}b", base); r.as_str() },
+                "rax" => "al",
+                "rbx" => "bl",
+                "rcx" => "cl",
+                "rdx" => "dl",
+                "rsi" => "sil",
+                "rdi" => "dil",
+                "rbp" => "bpl",
+                "rsp" => "spl",
+                _ if base.starts_with("r") => {
+                    r = format!("{}b", base);
+                    r.as_str()
+                }
                 _ => base,
-            }.to_string(),
+            }
+            .to_string(),
             2 => match base {
-                "rax" => "ax", "rbx" => "bx", "rcx" => "cx", "rdx" => "dx",
-                "rsi" => "si", "rdi" => "di", "rbp" => "bp", "rsp" => "sp",
-                _ if base.starts_with("r") => { r = format!("{}w", base); r.as_str() },
+                "rax" => "ax",
+                "rbx" => "bx",
+                "rcx" => "cx",
+                "rdx" => "dx",
+                "rsi" => "si",
+                "rdi" => "di",
+                "rbp" => "bp",
+                "rsp" => "sp",
+                _ if base.starts_with("r") => {
+                    r = format!("{}w", base);
+                    r.as_str()
+                }
                 _ => base,
-            }.to_string(),
+            }
+            .to_string(),
             3 | 4 => match base {
-                "rax" => "eax", "rbx" => "ebx", "rcx" => "ecx", "rdx" => "edx",
-                "rsi" => "esi", "rdi" => "edi", "rbp" => "ebp", "rsp" => "esp",
-                _ if base.starts_with("r") => { r = format!("{}d", base); r.as_str() },
+                "rax" => "eax",
+                "rbx" => "ebx",
+                "rcx" => "ecx",
+                "rdx" => "edx",
+                "rsi" => "esi",
+                "rdi" => "edi",
+                "rbp" => "ebp",
+                "rsp" => "esp",
+                _ if base.starts_with("r") => {
+                    r = format!("{}d", base);
+                    r.as_str()
+                }
                 _ => base,
-            }.to_string(),
+            }
+            .to_string(),
             _ => base.to_string(),
         }
     }
-
 }

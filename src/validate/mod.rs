@@ -387,10 +387,7 @@ impl Validate {
             let Symbol::Type { ty } = s else { return Err(SemanticError::NotUnwrappable(unpack.lhs.clone())) };
             let Type::Enum(vars) = ty else { return Err(SemanticError::NotUnwrappable(unpack.lhs.clone())) };
             let Some(pos) = vars.iter().position(|(p, ty)| *p == rhs.str && ty.is_some() == unpack.brackets.is_some()) else {
-                return Err(SemanticError::InvalidMemberAccess(Span {
-                    start: rhs.pos_id,
-                    end: rhs.pos_id,
-                }));
+                return Err(SemanticError::InvalidMemberAccess(Span { start: rhs.pos_id, end: rhs.pos_id }));
             };
             if let Some(s) = &unpack.brackets {
                 let ty = vars.get(pos).unwrap().1.clone().unwrap();
@@ -398,8 +395,13 @@ impl Validate {
                 self.push_symbol(s.str.clone(), Symbol::Var { ty });
             }
             let ty = self.expr(&mut unpack.expr)?;
-            let pos_str = PosStr { str: "let unpack".to_string(), pos_id: unpack.lhs.pos_id - 1 };
-            let Type::Enum(vars2) = &ty else { return Err(SemanticError::TypeMismatch(pos_str, Type::Enum(vars), ty)); };
+            let pos_str = PosStr {
+                str: "let unpack".to_string(),
+                pos_id: unpack.lhs.pos_id - 1,
+            };
+            let Type::Enum(vars2) = &ty else {
+                return Err(SemanticError::TypeMismatch(pos_str, Type::Enum(vars), ty));
+            };
             if vars != *vars2 {
                 return Err(SemanticError::TypeMismatch(pos_str, Type::Enum(vars), ty));
             }
@@ -410,7 +412,7 @@ impl Validate {
                     res = Some(*ok.clone());
                     self.push_symbol(unpack.lhs.str.clone(), Symbol::Var { ty: *ok.clone() });
                 }
-                _ => return Err(SemanticError::NotUnwrappable(unpack.lhs.clone()))
+                _ => return Err(SemanticError::NotUnwrappable(unpack.lhs.clone())),
             }
         }
         Ok(res)
@@ -507,13 +509,28 @@ impl Validate {
             .unwrap_or("".to_string());
         let mut parse_fns = vec![];
         for (name, arg) in decl.arg_names.iter().zip(arg_types.iter()) {
-            parse_fns.push(self.find_fn(
-                "parse",
-                vec![Type::Pointer(Box::new(Type::Char)), Type::Pointer(Box::new(arg.clone()))],
-                Some(Type::Result(Box::new(Type::Int), Box::new(Type::Slice { inner: Box::new(Type::Char) }))),
-                &mut vec![],
-                Span { start: name.pos_id, end: name.pos_id },
-            )?);
+            if let Type::Option(_) = &arg {
+                parse_fns.push(self.find_fn(
+                    "parse_opt",
+                    vec![
+                        Type::Pointer(Box::new(Type::Int)),
+                        Type::Pointer(Box::new(Type::Pointer(Box::new(Type::Char)))),
+                        Type::Slice { inner: Box::new(Type::Char) },
+                        Type::Pointer(Box::new(arg.clone())),
+                    ],
+                    Some(Type::Result(Box::new(Type::Int), Box::new(Type::Slice { inner: Box::new(Type::Char) }))),
+                    &mut vec![],
+                    Span { start: name.pos_id, end: name.pos_id },
+                )?);
+            } else {
+                parse_fns.push(self.find_fn(
+                    "parse",
+                    vec![Type::Pointer(Box::new(Type::Char)), Type::Pointer(Box::new(arg.clone()))],
+                    Some(Type::Result(Box::new(Type::Int), Box::new(Type::Slice { inner: Box::new(Type::Char) }))),
+                    &mut vec![],
+                    Span { start: name.pos_id, end: name.pos_id },
+                )?);
+            }
         }
         self.symbol_table.insert(
             "main".to_string(),
@@ -606,7 +623,7 @@ impl Validate {
         match &mut r#if.cond {
             node::IfKind::Expr(expr) => self.expr(expr).map(|_| ())?,
             node::IfKind::Unpack(unpack) => self.unpack(unpack).map(|_| ())?,
-            node::IfKind::None => ()
+            node::IfKind::None => (),
         }
         self.scope(&mut r#if.scope)?;
         if let Some(i) = &mut r#if.els {
@@ -967,7 +984,7 @@ impl Validate {
                 if let Type::Result(ty, err) = ty {
                     let call;
                     if let Ok(c) = self.find_fn("panic", vec![*err], None, &mut vec![], span) {
-                        call = c; 
+                        call = c;
                     } else {
                         call = self.find_fn("panic", vec![], None, &mut vec![], span)?;
                     }
@@ -1122,7 +1139,10 @@ impl Validate {
                                     found = false;
                                     break;
                                 }
-                                let e = args.get(i).unwrap().clone();
+                                let Some(e) = args.get(i).cloned() else {
+                                    found = false;
+                                    break;
+                                };
                                 args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
                                     r#type: Self::node_type(e.span),
                                     expr: Box::new(e),
