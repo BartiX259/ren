@@ -66,21 +66,12 @@ pub fn resolve(
                         let mut ty = Type::Void;
                         let mut types = Vec::new();
                         if let Some(decl_type) = &decl.decl_type {
-                            ty = val.r#type(decl_type, false)?;
-                            if let (Type::Generic(s), _) = &ty.depth(0) {
-                                if let Some(inner) = map.get(s) {
-                                    ty = Type::wrap(inner, &ty);
-                                }
-                            }
+                            let generic_ty = val.r#type(decl_type, false)?;
+                            ty = generic_ty.substitute_generics(map);
                         }
-                        for ty in decl.arg_types.iter() {
-                            let mut ty = val.r#type(ty, false)?;
-                            if let (Type::Generic(s), _) = &ty.depth(0) {
-                                if let Some(inner) = map.get(s) {
-                                    ty = Type::wrap(inner, &ty);
-                                }
-                            }
-                            types.push(ty.clone());
+                        for ty_node in decl.arg_types.iter() {
+                            let generic_ty = val.r#type(ty_node, false)?;
+                            types.push(generic_ty.substitute_generics(map));
                         }
                         let mut new_decl = decl.clone();
                         for (k, v) in map {
@@ -1091,67 +1082,37 @@ impl Validate {
                 let mut generics = HashMap::new();
                 let mut id = -1;
                 for sig in sigs {
-                    // Implicit casting and generics
-                    let tys = sig.0.iter();
+                    let tys = &sig.0;
                     if expected_sig.len() != tys.len() {
                         continue;
                     }
                     found = true;
                     generics.clear();
-                    for (i, (ty1, ty2)) in expected_sig.iter_mut().zip(tys).enumerate() {
-                        if ty1 != ty2 {
-                            if let (Type::Generic(s), depth) = ty2.depth(0) {
-                                if let Some(ty) = generics.get(s) {
-                                    let t = Type::wrap(ty, ty2);
-                                    if t != *ty1 {
-                                        if Self::type_cast(ty1.clone(), t.clone(), span).is_err() {
-                                            found = false;
-                                            break;
-                                        }
-                                        let e = args.get(i).unwrap().clone();
-                                        args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
-                                            r#type: Self::node_type(e.span),
-                                            expr: Box::new(e),
-                                        });
-                                        args.get_mut(i).unwrap().ty = t.clone();
-                                        *ty1 = t.clone();
-                                    }
-                                } else {
-                                    let inner = ty1.inner(depth).clone();
-                                    let t = Type::wrap(&inner, ty2);
-                                    if t != *ty1 {
-                                        if Self::type_cast(ty1.clone(), t.clone(), span).is_err() {
-                                            found = false;
-                                            break;
-                                        }
-                                        let e = args.get(i).unwrap().clone();
-                                        args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
-                                            r#type: Self::node_type(e.span),
-                                            expr: Box::new(e),
-                                        });
-                                        args.get_mut(i).unwrap().ty = t.clone();
-                                        *ty1 = t.clone();
-                                    }
-                                    generics.insert(s.clone(), inner);
-                                }
+
+                    for (i, (ty1, ty2)) in expected_sig.iter_mut().zip(tys.iter()).enumerate() {
+                        if *ty1 != *ty2 {
+                            let mut temp_generics = generics.clone();
+                            if ty2.match_generics(ty1, &mut temp_generics).is_ok() {
+                                generics = temp_generics;
                             } else {
-                                if Self::type_cast(ty1.clone(), ty2.clone(), span).is_err() {
+                                // match failed. maybe we can cast?
+                                let substituted_ty2 = ty2.substitute_generics(&generics);
+                                if Self::type_cast(ty1.clone(), substituted_ty2.clone(), span).is_ok() {
+                                    let e = args.get(i).unwrap().clone();
+                                    args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
+                                        r#type: Self::node_type(e.span),
+                                        expr: Box::new(e),
+                                    });
+                                    args.get_mut(i).unwrap().ty = substituted_ty2.clone();
+                                    *ty1 = substituted_ty2.clone();
+                                } else {
                                     found = false;
                                     break;
                                 }
-                                let Some(e) = args.get(i).cloned() else {
-                                    found = false;
-                                    break;
-                                };
-                                args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
-                                    r#type: Self::node_type(e.span),
-                                    expr: Box::new(e),
-                                });
-                                args.get_mut(i).unwrap().ty = ty2.clone();
-                                *ty1 = ty2.clone();
                             }
                         }
                     }
+
                     if found {
                         id = sig.1 as i64;
                         break;
@@ -1201,16 +1162,13 @@ impl Validate {
                 return Err(SemanticError::UndeclaredSymbol(pos_str));
             }
         }
-        let res;
-        if let (Type::Generic(g), _) = ty.depth(0) {
-            let index = call.split(".").last().unwrap().parse::<usize>().unwrap();
-            let Some((_, map, _)) = self.gcalls.get(index) else {
-                panic!("no gcall");
-            };
-            res = Type::wrap(map.get(g).unwrap(), &ty);
-        } else {
-            res = ty.clone()
+        let mut generics = HashMap::new();
+        let sigs = self.fn_map.get(func).unwrap();
+        let sig = sigs.iter().find(|(_, id)| s.ends_with(&format!(".{}", id))).unwrap();
+        for (arg_ty, param_ty) in expected_sig.iter().zip(sig.0.iter()) {
+            param_ty.match_generics(arg_ty, &mut generics).ok();
         }
+        let res = ty.substitute_generics(&generics);
         if let Some(ret) = &expected_ret {
             if res != *ret {
                 return Err(SemanticError::NoFnSig(func.to_string(), span, expected_sig, expected_ret));
@@ -1358,9 +1316,14 @@ impl Validate {
                     if map.contains_key(&node_name.str) {
                         return Err(SemanticError::SymbolExists(node_name.clone()));
                     }
-                    let add = ty.size();
-                    map.insert(node_name.str.clone(), (ty, i));
-                    i += add;
+                    if let Type::Generic(_) = ty {
+                        map.insert(node_name.str.clone(), (ty, i));
+                        i += 1;
+                    } else {
+                        let add = ty.size();
+                        map.insert(node_name.str.clone(), (ty, i));
+                        i += add;
+                    }
                 }
                 Ok(Type::Struct(map))
             }
@@ -1482,7 +1445,7 @@ impl Validate {
             Type::Slice { inner } => *inner,
             Type::Range => Type::Int,
             other => {
-                let inner = other.depth(0).0.clone();
+                let inner = other.inner(1).clone();
                 let expected = Type::Slice { inner: Box::new(inner.clone()) };
                 if Self::type_cast(other.clone(), expected.clone(), r#for.expr.span).is_ok() {
                     r#for.expr.kind = node::ExprKind::TypeCast(node::TypeCast {

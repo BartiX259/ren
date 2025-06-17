@@ -584,6 +584,11 @@ impl<'a> Lower<'a> {
             self.push_op(Op::Copy { from: term, to: t2, size: Term::IntLit(err.aligned_size() as i64) }, un.op.pos_id);
             return s;
         }
+        if un.op.str == "&" {
+            if let Term::Pointer(_) = term {
+                return term;
+            }
+        }
         self.temp_count += 1;
         self.push_op(
             Op::UnOp {

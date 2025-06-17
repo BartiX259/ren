@@ -19,6 +19,7 @@ pub enum Type {
     Enum(Vec<(String, Option<Type>)>),
     Result(Box<Type>, Box<Type>),
     Option(Box<Type>),
+    HashMap { key: Box<Type>, value: Box<Type> },
 }
 
 impl Type {
@@ -30,6 +31,7 @@ impl Type {
             Type::Result(ty, err) => ty.size().max(err.size()) + 8,
             Type::Option(ty) => ty.size() + 8,
             Type::Range | Type::Slice { .. } | Type::List { .. } => 16,
+            Type::HashMap {..} => 8,
             Type::Enum(variants) => {
                 let max_variant_size = variants.iter()
                     .map(|(_, opt_ty)| opt_ty.as_ref().map_or(0, |ty| ty.size()))
@@ -70,30 +72,119 @@ impl Type {
             _ => self
         }
     }
-    pub fn inner_mut(&mut self) -> &mut Type {
-        match self {
-            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p } | Type::Option(p)  => p.inner_mut(),
-            _ => self
-        }
-    }
-    pub fn depth(&self, zero: usize) -> (&Type, usize) {
-        match self {
-            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p } | Type::Option(p)  => p.depth(zero + 1),
-            _ => (self, zero)
-        }
-    }
-    pub fn wrap(inner: &Type, outer: &Type) -> Type {
-        let mut new = outer.clone();
-        *new.inner_mut() = inner.clone();
-        new
-    }
-
     pub fn salloc(&self) -> bool {
         match self {
             Type::Array { .. } | Type::Struct(_) | Type::Tuple(_) | Type::Slice { .. } | Type::List { .. } | Type::Range => true,
             _ => false
         }
     }
+    pub fn match_generics(&self, expected: &Type, generics: &mut HashMap<String, Type>) -> Result<(), String> {
+        match (self, expected) {
+            (Type::Generic(name), other) => {
+                match generics.get(name) {
+                    Some(existing) => {
+                        if existing != other {
+                            return Err(format!("Conflicting generic binding for {}: {} vs {}", name, existing, other));
+                        }
+                    }
+                    None => {
+                        generics.insert(name.clone(), other.clone());
+                    }
+                }
+                Ok(())
+            }
+            (Type::Pointer(a), Type::Pointer(b)) |
+            (Type::Option(a), Type::Option(b)) |
+            (Type::List { inner: a }, Type::List { inner: b }) |
+            (Type::Slice { inner: a }, Type::Slice { inner: b }) => {
+                a.match_generics(b, generics)
+            }
+            (Type::Array { inner: a, length: len1 }, Type::Array { inner: b, length: len2 }) => {
+                if len1 != len2 {
+                    return Err("Array lengths differ".to_string());
+                }
+                a.match_generics(b, generics)
+            }
+            (Type::Struct(a_fields), Type::Struct(b_fields)) => {
+                if a_fields.len() != b_fields.len() {
+                    return Err("Struct field count mismatch".to_string());
+                }
+                for (name, (a_ty, _)) in a_fields {
+                    let Some((b_ty, _)) = b_fields.get(name) else {
+                        return Err(format!("Struct field name mismatch: missing field {}", name));
+                    };
+                    a_ty.match_generics(b_ty, generics)?;
+                }
+                Ok(())
+            }
+            (Type::Tuple(a), Type::Tuple(b)) => {
+                if a.len() != b.len() {
+                    return Err("Tuple lengths differ".to_string());
+                }
+                for (x, y) in a.iter().zip(b.iter()) {
+                    x.match_generics(y, generics)?;
+                }
+                Ok(())
+            }
+            (Type::Result(ok1, err1), Type::Result(ok2, err2)) => {
+                ok1.match_generics(ok2, generics)?;
+                err1.match_generics(err2, generics)
+            }
+            (Type::HashMap { key: k1, value: v1 }, Type::HashMap { key: k2, value: v2 }) => {
+                k1.match_generics(k2, generics)?;
+                v1.match_generics(v2, generics)
+            }
+            _ => {
+                if self == expected {
+                    Ok(())
+                } else {
+                    Err(format!("Type mismatch: {} vs {}", self, expected))
+                }
+            }
+        }
+    }
+        pub fn substitute_generics(&self, generics: &HashMap<String, Type>) -> Type {
+            match self {
+                Type::Generic(s) => generics.get(s).cloned().unwrap_or_else(|| self.clone()),
+                Type::Pointer(inner) => Type::Pointer(Box::new(inner.substitute_generics(generics))),
+                Type::Option(inner) => Type::Option(Box::new(inner.substitute_generics(generics))),
+                Type::List { inner } => Type::List {
+                    inner: Box::new(inner.substitute_generics(generics)),
+                },
+                Type::Slice { inner } => Type::Slice {
+                    inner: Box::new(inner.substitute_generics(generics)),
+                },
+                Type::Array { inner, length } => Type::Array {
+                    inner: Box::new(inner.substitute_generics(generics)),
+                    length: *length,
+                },
+                Type::Tuple(items) => Type::Tuple(
+                    items.iter().map(|t| t.substitute_generics(generics)).collect()
+                ),
+                Type::Result(ok, err) => Type::Result(
+                    Box::new(ok.substitute_generics(generics)),
+                    Box::new(err.substitute_generics(generics)),
+                ),
+                Type::HashMap { key, value } => Type::HashMap {
+                    key: Box::new(key.substitute_generics(generics)),
+                    value: Box::new(value.substitute_generics(generics)),
+                },
+                Type::Struct(fields) => {
+                    let mut i = 0;
+                    let mut map: HashMap<String, (Type, u32)> = HashMap::new();
+                    let mut items: Vec<_> = fields.iter().collect();
+                    items.sort_by_key(|(_, (_, offset))| *offset);
+                    for (name, (ty, _)) in items {
+                        let new_ty = ty.substitute_generics(generics);
+                        let add = new_ty.size();
+                        map.insert(name.clone(), (new_ty, i));
+                        i += add;
+                    }
+                    Type::Struct(map)
+                },
+                _ => self.clone(),
+            }
+        }
 }
 
 impl Display for Type {
@@ -141,7 +232,8 @@ impl Display for Type {
             }
             Type::Enum(_) => write!(f, "enum"),
             Type::Result(ty, err) => write!(f, "{ty} ? {err}"),
-            Type::Option(ty) => write!(f, "?{ty}")
+            Type::Option(ty) => write!(f, "?{ty}"),
+            Type::HashMap { key, value } => write!(f, "{{{key}: {value}}}")
         }
     }
 }
