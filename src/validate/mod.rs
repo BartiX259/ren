@@ -321,6 +321,24 @@ impl Validate {
                 let types = exprs.iter_mut().map(|e| self.expr(e)).collect::<Result<Vec<_>, _>>()?;
                 Ok(Type::Tuple(types))
             }
+            node::ExprKind::MapLit(map) => {
+                let key_ty = self.expr_list(&mut map.keys, map.pos_id)?.0;
+                let val_ty = self.expr_list(&mut map.values, map.pos_id)?.0;
+                let init_fn = self.find_fn(
+                    "init_map",
+                    vec![Type::Slice {
+                        inner: Box::new(Type::Tuple(vec![key_ty.clone(), val_ty.clone()])),
+                    }],
+                    Some(Type::Pointer(Box::new(Type::Any))),
+                    &mut vec![],
+                    Span { start: map.pos_id, end: map.pos_id },
+                )?;
+                map.init_fn = init_fn;
+                Ok(Type::HashMap {
+                    key: Box::new(key_ty),
+                    value: Box::new(val_ty),
+                })
+            }
             node::ExprKind::Variable(pos_str) => self
                 .symbol_table
                 .get(&pos_str.str)
@@ -1366,30 +1384,30 @@ impl Validate {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
-            (Type::Struct(s), other) => {
-                let first = s.iter().find(|(_, (_, offset))| *offset == 0);
-                let mut ok = false;
-                if let Some((_, (ty, _))) = first {
-                    if ty == other {
-                        ok = true;
-                    }
-                }
-                if !ok {
-                    return Err(SemanticError::InvalidCast(span, from, to));
-                }
-            }
-            (Type::Tuple(tys), other) => {
-                let first = tys.get(0);
-                let mut ok = false;
-                if let Some(ty) = first {
-                    if ty == other {
-                        ok = true;
-                    }
-                }
-                if !ok {
-                    return Err(SemanticError::InvalidCast(span, from, to));
-                }
-            }
+            // (Type::Struct(s), other) => {
+            //     let first = s.iter().find(|(_, (_, offset))| *offset == 0);
+            //     let mut ok = false;
+            //     if let Some((_, (ty, _))) = first {
+            //         if ty == other {
+            //             ok = true;
+            //         }
+            //     }
+            //     if !ok {
+            //         return Err(SemanticError::InvalidCast(span, from, to));
+            //     }
+            // }
+            // (Type::Tuple(tys), other) => {
+            //     let first = tys.get(0);
+            //     let mut ok = false;
+            //     if let Some(ty) = first {
+            //         if ty == other {
+            //             ok = true;
+            //         }
+            //     }
+            //     if !ok {
+            //         return Err(SemanticError::InvalidCast(span, from, to));
+            //     }
+            // }
             (Type::Pointer(_), Type::Pointer(_)) => (),
             (Type::Slice { inner }, Type::Pointer(p)) => {
                 if inner != p {

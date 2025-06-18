@@ -9,11 +9,14 @@ pub struct PosStr {
 #[derive(Debug, Clone, Copy)]
 pub struct Span {
     pub start: usize,
-    pub end: usize
+    pub end: usize,
 }
 impl Span {
     pub fn add(&self, other: Span) -> Span {
-        Span { start: self.start.min(other.start), end: self.end.max(other.end) }
+        Span {
+            start: self.start.min(other.start),
+            end: self.end.max(other.end),
+        }
     }
 }
 #[derive(Debug, Clone)]
@@ -25,24 +28,24 @@ pub struct Let {
 pub struct Decl {
     pub name: PosStr,
     pub r#type: Type,
-    pub ty: types::Type
+    pub ty: types::Type,
 }
 #[derive(Debug, Clone)]
 pub struct Unpack {
     pub lhs: PosStr,
     pub rhs: Option<PosStr>,
     pub brackets: Option<PosStr>,
-    pub expr: Expr
+    pub expr: Expr,
 }
 #[derive(Debug, Clone)]
 pub struct TypeDecl {
     pub name: PosStr,
-    pub r#type: Type
+    pub r#type: Type,
 }
 #[derive(Debug, Clone)]
 pub struct Enum {
     pub name: PosStr,
-    pub variants: Vec<(PosStr, Option<Type>)>
+    pub variants: Vec<(PosStr, Option<Type>)>,
 }
 #[derive(Debug, Clone)]
 pub struct Call {
@@ -60,12 +63,12 @@ pub enum TypeKind {
     Tuple(Vec<Type>),
     Struct(Vec<PosStr>, Vec<Type>),
     Result(Box<Type>, Box<Type>),
-    Option(Box<Type>)
+    Option(Box<Type>),
 }
 #[derive(Debug, Clone)]
 pub struct Type {
     pub kind: TypeKind,
-    pub span: Span
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -88,14 +91,14 @@ pub struct MainFn {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum DecoratorKind {
-    Pub
+    Pub,
 }
 #[derive(Debug, Clone)]
 pub struct Decorator {
     pub kinds: Vec<DecoratorKind>,
     pub pos_ids: Vec<usize>,
     pub span: Span,
-    pub inner: Box<Stmt>
+    pub inner: Box<Stmt>,
 }
 #[derive(Debug, Clone)]
 pub struct BinExpr {
@@ -124,13 +127,13 @@ pub struct ElseScope {
     pub unpack: Unpack,
     pub capture: Option<PosStr>,
     pub pos_str: PosStr,
-    pub scope: Vec<Stmt>
+    pub scope: Vec<Stmt>,
 }
 #[derive(Debug, Clone)]
 pub struct ElseExpr {
     pub unpack: Unpack,
     pub pos_str: PosStr,
-    pub else_expr: Box<Expr>
+    pub else_expr: Box<Expr>,
 }
 #[derive(Debug, Clone)]
 pub struct Ret {
@@ -142,7 +145,7 @@ pub struct Ret {
 pub enum IfKind {
     Expr(Expr),
     Unpack(Unpack),
-    None
+    None,
 }
 
 #[derive(Debug, Clone)]
@@ -150,12 +153,12 @@ pub struct If {
     pub pos_id: usize,
     pub cond: IfKind,
     pub scope: Vec<Stmt>,
-    pub els: Option<Box<If>>
+    pub els: Option<Box<If>>,
 }
 #[derive(Debug, Clone)]
 pub enum LetOrExpr {
     Let(Let),
-    Expr(Expr)
+    Expr(Expr),
 }
 #[derive(Debug, Clone)]
 pub struct Loop {
@@ -182,7 +185,7 @@ pub struct ForIn {
     pub pos_id: usize,
     pub capture: PosStr,
     pub expr: Expr,
-    pub scope: Vec<Stmt>
+    pub scope: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone)]
@@ -195,7 +198,14 @@ pub struct Extern {
 #[derive(Debug, Clone)]
 pub struct ArrLit {
     pub exprs: Vec<Expr>,
-    pub pos_id: usize
+    pub pos_id: usize,
+}
+#[derive(Debug, Clone)]
+pub struct MapLit {
+    pub keys: Vec<Expr>,
+    pub values: Vec<Expr>,
+    pub init_fn: String,
+    pub pos_id: usize,
 }
 #[derive(Debug, Clone)]
 pub struct StructLit {
@@ -205,7 +215,7 @@ pub struct StructLit {
 #[derive(Debug, Clone)]
 pub enum StringFragment {
     Lit(crate::helpers::StringLit),
-    Expr { expr: Expr, str_fn: String }
+    Expr { expr: Expr, str_fn: String },
 }
 
 #[derive(Debug, Clone)]
@@ -221,30 +231,30 @@ pub enum BuiltInKind {
     Copy,
     StackPointer,
     Sizeof,
-    Param
+    Param,
 }
 #[derive(Debug, Clone)]
 pub struct BuiltIn {
     pub kind: BuiltInKind,
-    pub args: Vec<Expr>
+    pub args: Vec<Expr>,
 }
 #[derive(Debug, Clone)]
 pub struct Ternary {
     pub cond: Box<Expr>,
     pub yes: Box<Expr>,
-    pub no: Box<Expr>
+    pub no: Box<Expr>,
 }
 #[derive(Debug, Clone)]
 pub struct TypeCast {
     pub r#type: Type,
-    pub expr: Box<Expr>
+    pub expr: Box<Expr>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Expr {
     pub kind: ExprKind,
     pub ty: types::Type,
-    pub span: Span
+    pub span: Span,
 }
 #[derive(Debug, Clone)]
 pub enum ExprKind {
@@ -258,13 +268,14 @@ pub enum ExprKind {
     StructLit(StructLit),
     StringLit(Vec<StringFragment>, String),
     TupleLit(Vec<Expr>),
+    MapLit(MapLit),
     Variable(PosStr),
     Call(Call),
     BuiltIn(BuiltIn),
     BinExpr(BinExpr),
     UnExpr(UnExpr),
     PostUnExpr(UnExpr),
-    TypeCast(TypeCast)
+    TypeCast(TypeCast),
 }
 #[derive(Debug, Clone)]
 pub enum Stmt {
@@ -287,19 +298,19 @@ pub enum Stmt {
     Continue(usize),
     Syscall(Syscall),
     Enum(Enum),
-    Extern(Extern)
+    Extern(Extern),
 }
 #[derive(Debug)]
 pub struct Module {
     pub path: String,
-    pub stmts: Vec<Stmt>
+    pub stmts: Vec<Stmt>,
 }
 
 #[derive(Debug)]
 pub struct Import {
     pub path: String,
     pub parent: Option<String>,
-    pub pos_id: usize
+    pub pos_id: usize,
 }
 
 #[derive(Debug)]

@@ -8,7 +8,11 @@ pub fn parse(token_res: Vec<Token>, parent: Option<String>) -> Result<(Vec<node:
     let mut vec = Vec::new();
     let mut imports = Vec::new();
     while let Some(Token::Import { module }) = tokens.peek() {
-        imports.push(node::Import { path: module.clone(), parent: parent.clone(), pos_id: tokens.current_index() });
+        imports.push(node::Import {
+            path: module.clone(),
+            parent: parent.clone(),
+            pos_id: tokens.current_index(),
+        });
         tokens.next();
     }
     while tokens.peek().is_some() {
@@ -27,7 +31,7 @@ pub struct UnexpectedToken {
 pub enum ParseError {
     UnexpectedToken(UnexpectedToken),
     UnexpectedEndOfInput(String),
-    ImportNotAtStart(usize)
+    ImportNotAtStart(usize),
 }
 
 fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
@@ -70,7 +74,7 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
             Ok(node::Stmt::While(node::While {
                 pos_id: tokens.prev_index(),
                 expr: parse_expr(tokens, 0)?,
-                scope: parse_scope(tokens)?
+                scope: parse_scope(tokens)?,
             }))
         }
         Some(Token::For) => return Ok(parse_for(tokens)?),
@@ -95,7 +99,11 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
 }
 
 fn expr(start: usize, end: usize, kind: ExprKind) -> node::Expr {
-    node::Expr { kind, ty: crate::types::Type::Void, span: Span { start, end } }
+    node::Expr {
+        kind,
+        ty: crate::types::Type::Void,
+        span: Span { start, end },
+    }
 }
 
 fn parse_opt_expr(tokens: &mut VecIter<Token>) -> Result<Option<node::Expr>, ParseError> {
@@ -121,7 +129,17 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
             opstr = value.to_string();
             if ["?", "!"].contains(&value.as_str()) {
                 tokens.next();
-                root = expr(start, tokens.prev_index(), node::ExprKind::PostUnExpr(node::UnExpr { expr: Box::new(root), op: PosStr { str: opstr, pos_id: tokens.prev_index() } }));
+                root = expr(
+                    start,
+                    tokens.prev_index(),
+                    node::ExprKind::PostUnExpr(node::UnExpr {
+                        expr: Box::new(root),
+                        op: PosStr {
+                            str: opstr,
+                            pos_id: tokens.prev_index(),
+                        },
+                    }),
+                );
                 continue;
             }
             prec = op_prec(value.as_str());
@@ -139,10 +157,7 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
             tokens.next();
             let ty = parse_type(tokens)?;
             let lhs = root;
-            root = expr(start, tokens.prev_index(), node::ExprKind::TypeCast(node::TypeCast {
-                r#type: ty,
-                expr: Box::new(lhs),
-            }));
+            root = expr(start, tokens.prev_index(), node::ExprKind::TypeCast(node::TypeCast { r#type: ty, expr: Box::new(lhs) }));
             continue;
         } else {
             break;
@@ -154,12 +169,15 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
         tokens.next();
         let rhs = parse_expr(tokens, prec + op_assoc(opstr.as_str()))?;
         let lhs = root;
-        root = expr(start, tokens.prev_index(), 
-        node::ExprKind::BinExpr(node::BinExpr {
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
-            op: PosStr { str: opstr, pos_id: op_pos },
-        }));
+        root = expr(
+            start,
+            tokens.prev_index(),
+            node::ExprKind::BinExpr(node::BinExpr {
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+                op: PosStr { str: opstr, pos_id: op_pos },
+            }),
+        );
     }
     return Ok(root);
 }
@@ -168,13 +186,14 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
     let tok = check_none(tokens, "a term")?;
     let start = tokens.prev_index();
     match tok {
-        Token::IntLit { value } => Ok(expr(start, start,  node::ExprKind::IntLit(value))),
-        Token::CharLit { value } => Ok(expr(start, start,  node::ExprKind::CharLit(value))),
+        Token::IntLit { value } => Ok(expr(start, start, node::ExprKind::IntLit(value))),
+        Token::CharLit { value } => Ok(expr(start, start, node::ExprKind::CharLit(value))),
         Token::True => Ok(expr(start, start, node::ExprKind::BoolLit(true))),
         Token::False => Ok(expr(start, start, node::ExprKind::BoolLit(false))),
         Token::Null => Ok(expr(start, start, node::ExprKind::Null)),
         Token::None => Ok(expr(start, start, node::ExprKind::None)),
-        Token::Word { value } => { // Term
+        Token::Word { value } => {
+            // Term
             let pos_str = PosStr {
                 str: value.clone(),
                 pos_id: tokens.prev_index(),
@@ -184,30 +203,32 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                 let kind = match value.as_str() {
                     "len" | "sp" | "copy" | "sizeof" | "param" => {
                         let args = parse_args(tokens)?;
-                        node::ExprKind::BuiltIn(node::BuiltIn { 
+                        node::ExprKind::BuiltIn(node::BuiltIn {
                             kind: match value.as_str() {
                                 "len" => node::BuiltInKind::Len,
                                 "sp" => node::BuiltInKind::StackPointer,
                                 "copy" => node::BuiltInKind::Copy,
                                 "sizeof" => node::BuiltInKind::Sizeof,
                                 "param" => node::BuiltInKind::Param,
-                                _ => unreachable!()
+                                _ => unreachable!(),
                             },
-                            args
+                            args,
                         })
                     }
                     _ => node::ExprKind::Call(node::Call {
                         name: pos_str,
                         args: parse_args(tokens)?,
-                    })
+                    }),
                 };
                 return Ok(expr(start, tokens.prev_index(), kind));
             }
             return Ok(expr(start, start, node::ExprKind::Variable(pos_str)));
         }
-        Token::OpenParen => { // Brackets
+        Token::OpenParen => {
+            // Brackets
             if let Some(Token::Word { .. }) = tokens.peek() {
-                if let Some(Token::Colon) = tokens.peek2() { // Struct
+                if let Some(Token::Colon) = tokens.peek2() {
+                    // Struct
                     let mut field_names = Vec::new();
                     let mut field_exprs = Vec::new();
                     loop {
@@ -215,7 +236,10 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                         let Token::Word { value } = tok else {
                             return Err(unexp(tok, tokens.prev_index(), "a field name"));
                         };
-                        field_names.push(PosStr { str: value, pos_id: tokens.prev_index() });
+                        field_names.push(PosStr {
+                            str: value,
+                            pos_id: tokens.prev_index(),
+                        });
                         let col = check_none(tokens, "':'")?;
                         let Token::Colon = col else {
                             return Err(unexp(col, tokens.prev_index(), "':'"));
@@ -250,7 +274,8 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                 }
             }
         }
-        Token::Op { value } => { // Unary expression
+        Token::Op { value } => {
+            // Unary expression
             let kind = node::ExprKind::UnExpr(node::UnExpr {
                 op: PosStr {
                     str: value,
@@ -260,14 +285,13 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             });
             Ok(expr(start, tokens.prev_index(), kind))
         }
-        Token::OpenSquare => { // Array literal
+        Token::OpenSquare => {
+            // Array literal
             let pos_id = tokens.current_index();
             let mut exprs = Vec::new();
             if let Some(Token::CloseSquare) = tokens.peek() {
                 tokens.next();
-                return Ok(expr(start, tokens.prev_index(), node::ExprKind::ArrLit(node::ArrLit {
-                    exprs, pos_id
-                })));
+                return Ok(expr(start, tokens.prev_index(), node::ExprKind::ArrLit(node::ArrLit { exprs, pos_id })));
             }
             loop {
                 exprs.push(parse_expr(tokens, 0)?);
@@ -275,18 +299,64 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
                 match tok {
                     Token::Comma => (),
                     Token::CloseSquare => break,
-                    _ => return Err(unexp(tok, tokens.prev_index(), "']'"))
+                    _ => return Err(unexp(tok, tokens.prev_index(), "']'")),
                 }
             }
-            Ok(expr(start, tokens.prev_index(), node::ExprKind::ArrLit(node::ArrLit {
-                exprs, pos_id
-            })))
+            Ok(expr(start, tokens.prev_index(), node::ExprKind::ArrLit(node::ArrLit { exprs, pos_id })))
+        }
+        Token::OpenCurly => {
+            // Map literal
+            let pos_id = tokens.current_index();
+            let mut keys = Vec::new();
+            let mut values = Vec::new();
+            if let Some(Token::CloseCurly) = tokens.peek() {
+                tokens.next();
+                return Ok(expr(
+                    start,
+                    tokens.prev_index(),
+                    node::ExprKind::MapLit(node::MapLit {
+                        keys,
+                        values,
+                        pos_id,
+                        init_fn: "".to_string(),
+                    }),
+                ));
+            }
+            loop {
+                let k = parse_expr(tokens, 0)?;
+                let tok = check_none(tokens, "':'")?;
+                let Token::Colon = tok else {
+                    return Err(unexp(tok, tokens.prev_index(), "':'"));
+                };
+                let v = parse_expr(tokens, 0)?;
+                keys.push(k);
+                values.push(v);
+                let tok = check_none(tokens, "'}'")?;
+                match tok {
+                    Token::Comma => (),
+                    Token::CloseCurly => break,
+                    _ => return Err(unexp(tok, tokens.prev_index(), "'}'")),
+                }
+            }
+            Ok(expr(
+                start,
+                tokens.prev_index(),
+                node::ExprKind::MapLit(node::MapLit {
+                    keys,
+                    values,
+                    pos_id,
+                    init_fn: "".to_string(),
+                }),
+            ))
         }
         Token::StringLit { value } => {
             let mut res = vec![node::StringFragment::Lit(value)];
             while let Some(Token::StringInterpolationStart) = tokens.peek() {
                 tokens.next();
-                res.push(node::StringFragment::Expr {expr: parse_expr(tokens, 0)?, str_fn: "".to_string() });
+                res.push(node::StringFragment::Expr {
+                    expr: parse_expr(tokens, 0)?,
+                    str_fn: "".to_string(),
+                });
                 let tok = check_none(tokens, "'}'")?;
                 let Token::StringInterpolationEnd = tok else {
                     return Err(unexp(tok, tokens.prev_index(), "'}'"));
@@ -304,24 +374,31 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
 
 fn parse_array_access(tokens: &mut VecIter<Token>, root: node::Expr, start: usize) -> Result<node::Expr, ParseError> {
     tokens.next(); // consume `[`
-    
+
     let mut lhs: Option<node::Expr> = None;
     let mut rhs: Option<node::Expr> = None;
 
     if tokens.peek() != Some(&Token::Op { value: "..".to_string() }) {
         lhs = Some(parse_expr(tokens, op_prec("..") + 1)?);
         if tokens.peek() != Some(&Token::Op { value: "..".to_string() }) {
-            let access_expr = expr(start, tokens.prev_index(), node::ExprKind::BinExpr(node::BinExpr {
-                lhs: Box::new(root),
-                rhs: Box::new(lhs.unwrap()),
-                op: PosStr { str: "[]".to_string(), pos_id: tokens.prev_index() },
-            }));
+            let access_expr = expr(
+                start,
+                tokens.prev_index(),
+                node::ExprKind::BinExpr(node::BinExpr {
+                    lhs: Box::new(root),
+                    rhs: Box::new(lhs.unwrap()),
+                    op: PosStr {
+                        str: "[]".to_string(),
+                        pos_id: tokens.prev_index(),
+                    },
+                }),
+            );
             let tok = check_none(tokens, "']'")?;
             let Token::CloseSquare = tok else {
                 return Err(unexp(tok, tokens.prev_index(), "']'"));
             };
-    
-            return Ok(access_expr)
+
+            return Ok(access_expr);
         }
     }
 
@@ -338,22 +415,42 @@ fn parse_array_access(tokens: &mut VecIter<Token>, root: node::Expr, start: usiz
 
     // Build missing sides
     let start_expr = lhs.unwrap_or_else(|| expr(start, tokens.prev_index(), node::ExprKind::IntLit(0)));
-    let end_expr = rhs.unwrap_or_else(|| expr(start, tokens.prev_index(), node::ExprKind::BuiltIn(node::BuiltIn {
-        kind: node::BuiltInKind::Len,
-        args: vec![root.clone()],
-    })));
+    let end_expr = rhs.unwrap_or_else(|| {
+        expr(
+            start,
+            tokens.prev_index(),
+            node::ExprKind::BuiltIn(node::BuiltIn {
+                kind: node::BuiltInKind::Len,
+                args: vec![root.clone()],
+            }),
+        )
+    });
 
-    let range_expr = expr(start, tokens.prev_index(), node::ExprKind::BinExpr(node::BinExpr {
-        lhs: Box::new(start_expr),
-        rhs: Box::new(end_expr),
-        op: PosStr { str: "..".to_string(), pos_id: tokens.prev_index() },
-    }));
+    let range_expr = expr(
+        start,
+        tokens.prev_index(),
+        node::ExprKind::BinExpr(node::BinExpr {
+            lhs: Box::new(start_expr),
+            rhs: Box::new(end_expr),
+            op: PosStr {
+                str: "..".to_string(),
+                pos_id: tokens.prev_index(),
+            },
+        }),
+    );
 
-    let access_expr = expr(start, tokens.prev_index(), node::ExprKind::BinExpr(node::BinExpr {
-        lhs: Box::new(root),
-        rhs: Box::new(range_expr),
-        op: PosStr { str: "[]".to_string(), pos_id: tokens.prev_index() },
-    }));
+    let access_expr = expr(
+        start,
+        tokens.prev_index(),
+        node::ExprKind::BinExpr(node::BinExpr {
+            lhs: Box::new(root),
+            rhs: Box::new(range_expr),
+            op: PosStr {
+                str: "[]".to_string(),
+                pos_id: tokens.prev_index(),
+            },
+        }),
+    );
 
     Ok(access_expr)
 }
@@ -365,39 +462,38 @@ fn parse_let(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
         tokens.next();
         let pos_str = PosStr {
             str: "else".to_string(),
-            pos_id: tokens.prev_index()
+            pos_id: tokens.prev_index(),
         };
-        let is_scope = if let Some(Token::OpenCurly) = tokens.peek() { true }
-        else if let Some(Token::OpenCurly) = tokens.peek2() { true }
-        else { false };
+        let is_scope = if let Some(Token::OpenCurly) = tokens.peek() {
+            true
+        } else if let Some(Token::OpenCurly) = tokens.peek2() {
+            true
+        } else {
+            false
+        };
         if is_scope {
             let mut capture = None;
             if let Some(Token::Word { value }) = tokens.peek() {
-                capture = Some(PosStr { str: value.clone(), pos_id: tokens.current_index() });
+                capture = Some(PosStr {
+                    str: value.clone(),
+                    pos_id: tokens.current_index(),
+                });
                 tokens.next();
             }
             let scope = parse_scope(tokens)?;
-            res = node::Stmt::LetElseScope(node::ElseScope {
-                unpack,
-                capture,
-                pos_str,
-                scope,
-            })
+            res = node::Stmt::LetElseScope(node::ElseScope { unpack, capture, pos_str, scope })
         } else {
             res = node::Stmt::LetElseExpr(node::ElseExpr {
                 unpack,
                 pos_str,
-                else_expr: Box::new(parse_expr(tokens, 0)?)
+                else_expr: Box::new(parse_expr(tokens, 0)?),
             })
         }
     } else if unpack.rhs.is_some() {
         let tok = check_none(tokens, "'else'")?;
         return Err(unexp(tok, tokens.prev_index(), "'else'"));
     } else {
-        res = node::Stmt::Let(node::Let {
-            name: unpack.lhs,
-            expr: unpack.expr,
-        });
+        res = node::Stmt::Let(node::Let { name: unpack.lhs, expr: unpack.expr });
     }
     check_semi(tokens)?;
     return Ok(res);
@@ -416,7 +512,7 @@ fn parse_decl(tokens: &mut VecIter<Token>) -> Result<node::Decl, ParseError> {
                 pos_id: tokens.prev_index() - 1,
             },
             r#type: parse_type(tokens)?,
-            ty: crate::types::Type::Void
+            ty: crate::types::Type::Void,
         });
         check_semi(tokens)?;
         return res;
@@ -431,7 +527,10 @@ fn parse_unpack(tokens: &mut VecIter<Token>) -> Result<node::Unpack, ParseError>
     let Token::Word { value } = tok else {
         return Err(unexp(tok, tokens.prev_index(), "an identifier"));
     };
-    let name = PosStr { str: value, pos_id: tokens.prev_index() };
+    let name = PosStr {
+        str: value,
+        pos_id: tokens.prev_index(),
+    };
     let mut name_rhs = None;
     let mut name_brackets = None;
     loop {
@@ -446,7 +545,10 @@ fn parse_unpack(tokens: &mut VecIter<Token>) -> Result<node::Unpack, ParseError>
             let Token::Word { value } = tok else {
                 return Err(unexp(tok, tokens.prev_index(), "a word"));
             };
-            name_rhs = Some(PosStr { str: value, pos_id: tokens.prev_index() });
+            name_rhs = Some(PosStr {
+                str: value,
+                pos_id: tokens.prev_index(),
+            });
         } else if tok == Token::OpenParen {
             if name_rhs.is_none() {
                 return Err(unexp(tok, tokens.prev_index(), "'.' or '='"));
@@ -458,7 +560,10 @@ fn parse_unpack(tokens: &mut VecIter<Token>) -> Result<node::Unpack, ParseError>
             let Token::Word { value } = tok else {
                 return Err(unexp(tok, tokens.prev_index(), "a word"));
             };
-            name_brackets = Some(PosStr { str: value, pos_id: tokens.prev_index() });
+            name_brackets = Some(PosStr {
+                str: value,
+                pos_id: tokens.prev_index(),
+            });
             let tok = check_none(tokens, "')'")?;
             if tok != Token::CloseParen {
                 return Err(unexp(tok, tokens.prev_index(), "')'"));
@@ -472,7 +577,7 @@ fn parse_unpack(tokens: &mut VecIter<Token>) -> Result<node::Unpack, ParseError>
         lhs: name,
         rhs: name_rhs,
         brackets: name_brackets,
-        expr
+        expr,
     })
 }
 
@@ -594,7 +699,7 @@ fn parse_main(tokens: &mut VecIter<Token>) -> Result<node::MainFn, ParseError> {
     };
     let type_args = parse_type_args(tokens, Token::CloseParen)?;
     let decl_type;
-    if let Some(Token::Op {value}) = tokens.peek() {
+    if let Some(Token::Op { value }) = tokens.peek() {
         if value == "->" {
             tokens.next();
             decl_type = Some(parse_type(tokens)?);
@@ -646,7 +751,7 @@ fn parse_fn_decl(tokens: &mut VecIter<Token>, name: String) -> Result<node::Fn, 
     };
     let type_args = parse_type_args(tokens, Token::CloseParen)?;
     let decl_type;
-    if let Some(Token::Op {value}) = tokens.peek() {
+    if let Some(Token::Op { value }) = tokens.peek() {
         if value == "->" {
             tokens.next();
             decl_type = Some(parse_type(tokens)?);
@@ -684,7 +789,7 @@ fn parse_type_decl(tokens: &mut VecIter<Token>) -> Result<node::TypeDecl, ParseE
     check_semi(tokens)?;
     Ok(node::TypeDecl {
         name: PosStr { str: name, pos_id: name_pos },
-        r#type
+        r#type,
     })
 }
 
@@ -694,7 +799,10 @@ fn parse_enum(tokens: &mut VecIter<Token>) -> Result<node::Enum, ParseError> {
     let Token::Word { value } = tok else {
         return Err(unexp(tok, tokens.prev_index(), "a word"));
     };
-    let name = PosStr { str: value, pos_id: tokens.prev_index() };
+    let name = PosStr {
+        str: value,
+        pos_id: tokens.prev_index(),
+    };
     let tok = check_none(tokens, "'{'")?;
     let Token::OpenCurly = tok else {
         return Err(unexp(tok, tokens.prev_index(), "'{'"));
@@ -706,10 +814,10 @@ fn parse_enum(tokens: &mut VecIter<Token>) -> Result<node::Enum, ParseError> {
             Some(Token::Word { value }) => {
                 pos_str = PosStr {
                     str: value.to_string(),
-                    pos_id: tokens.current_index()
+                    pos_id: tokens.current_index(),
                 };
             }
-            _ => break
+            _ => break,
         }
         tokens.next();
         let mut ty = None;
@@ -734,7 +842,6 @@ fn parse_enum(tokens: &mut VecIter<Token>) -> Result<node::Enum, ParseError> {
     Ok(node::Enum { name, variants })
 }
 
-
 fn parse_extern(tokens: &mut VecIter<Token>) -> Result<node::Extern, ParseError> {
     tokens.next();
     let tok = check_none(tokens, "'fn'")?;
@@ -757,14 +864,14 @@ fn parse_decorator(tokens: &mut VecIter<Token>) -> Result<node::Decorator, Parse
                 kinds.push(node::DecoratorKind::Pub);
                 pos_ids.push(tokens.prev_index());
             }
-            _ => break
+            _ => break,
         }
     }
     Ok(node::Decorator {
         kinds,
         pos_ids,
         span: Span { start, end: tokens.prev_index() },
-        inner: Box::new(parse_stmt(tokens)?)
+        inner: Box::new(parse_stmt(tokens)?),
     })
 }
 
@@ -812,7 +919,7 @@ fn parse_for(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
         };
         let capture = PosStr {
             str: value,
-            pos_id: tokens.prev_index()
+            pos_id: tokens.prev_index(),
         };
         tokens.next(); // 'in'
         let expr = parse_expr(tokens, 0)?;
@@ -834,7 +941,7 @@ fn parse_for(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
     check_semi(tokens)?;
     let incr = parse_expr(tokens, 0)?;
     let scope = parse_scope(tokens)?;
-    Ok(node::Stmt::For(node::For { pos_id, init, cond, incr, scope}))
+    Ok(node::Stmt::For(node::For { pos_id, init, cond, incr, scope }))
 }
 
 fn r#type(start: usize, end: usize, kind: node::TypeKind) -> node::Type {
@@ -862,7 +969,11 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
             if cl != (Token::Op { value: ">>".to_string() }) {
                 return Err(unexp(cl, tokens.prev_index(), "'>>'"));
             };
-            Ok(r#type(start, tokens.prev_index(), node::TypeKind::Slice(Box::new(r#type(start, tokens.prev_index(), node::TypeKind::Slice(Box::new(ty)))))))
+            Ok(r#type(
+                start,
+                tokens.prev_index(),
+                node::TypeKind::Slice(Box::new(r#type(start, tokens.prev_index(), node::TypeKind::Slice(Box::new(ty))))),
+            ))
         } else if value == "?" {
             Ok(r#type(start, tokens.prev_index(), node::TypeKind::Option(Box::new(parse_type(tokens)?))))
         } else {
@@ -870,7 +981,8 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
         }
     } else if let Token::OpenParen = &tok {
         if let Some(Token::Word { .. }) = tokens.peek() {
-            if let Some(Token::Colon) = tokens.peek2() { // Struct
+            if let Some(Token::Colon) = tokens.peek2() {
+                // Struct
                 let (names, types) = parse_type_args(tokens, Token::CloseParen)?;
                 return Ok(r#type(start, tokens.prev_index(), node::TypeKind::Struct(names, types)));
             }
@@ -915,14 +1027,17 @@ fn parse_fn_sig(tokens: &mut VecIter<Token>) -> Result<(PosStr, Vec<node::Type>,
     let Token::Word { value: name_str } = tok else {
         return Err(unexp(tok, tokens.prev_index(), "a name"));
     };
-    let name = PosStr { str: name_str, pos_id: tokens.prev_index() };
+    let name = PosStr {
+        str: name_str,
+        pos_id: tokens.prev_index(),
+    };
     let tok = check_none(tokens, "'('")?;
     let Token::OpenParen = tok else {
         return Err(unexp(tok, tokens.prev_index(), "'('"));
     };
     let types = parse_types_list(tokens, Token::CloseParen)?;
     let decl_type;
-    if let Some(Token::Op {value}) = tokens.peek() {
+    if let Some(Token::Op { value }) = tokens.peek() {
         if value == "->" {
             tokens.next();
             decl_type = Some(parse_type(tokens)?);
@@ -979,7 +1094,7 @@ fn op_prec(op: &str) -> u8 {
     match op {
         "," => 0,
         "else" => 0,
-        "=" => 1,  // Lowest precedence (done last)
+        "=" => 1, // Lowest precedence (done last)
         "+=" => 1,
         "-=" => 1,
         "*=" => 1,
@@ -1019,7 +1134,7 @@ fn op_prec(op: &str) -> u8 {
 
 fn op_assoc(op: &str) -> u8 {
     match op {
-        "=" => 0,  // Right to left
+        "=" => 0, // Right to left
         "+=" => 0,
         "-=" => 0,
         "*=" => 0,

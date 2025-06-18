@@ -17,9 +17,7 @@ struct Process {
 }
 impl Process {
     pub fn new() -> Self {
-        Self {
-            stmts: Vec::new(),
-        }
+        Self { stmts: Vec::new() }
     }
 
     fn push(&mut self, stmt: node::Stmt) {
@@ -31,13 +29,13 @@ impl Process {
             node::Stmt::Expr(expr) => node::Stmt::Expr(self.expr(expr)),
             node::Stmt::Let(decl) => node::Stmt::Let(node::Let {
                 name: decl.name,
-                expr: self.expr(decl.expr)
+                expr: self.expr(decl.expr),
             }),
             node::Stmt::LetElseScope(r#else) => node::Stmt::LetElseScope(node::ElseScope {
                 unpack: self.unpack(r#else.unpack),
                 capture: r#else.capture,
                 pos_str: r#else.pos_str,
-                scope: self.scope(r#else.scope)
+                scope: self.scope(r#else.scope),
             }),
             node::Stmt::Fn(decl) => node::Stmt::Fn(node::Fn {
                 name: decl.name,
@@ -48,28 +46,34 @@ impl Process {
                 scope: self.scope(decl.scope),
             }),
             node::Stmt::Decorator(dec) => self.stmt(*dec.inner),
-            node::Stmt::Ret(ret) => node::Stmt::Ret(node::Ret { pos_id: ret.pos_id, expr: self.opt_expr(ret.expr) }),
+            node::Stmt::Ret(ret) => node::Stmt::Ret(node::Ret {
+                pos_id: ret.pos_id,
+                expr: self.opt_expr(ret.expr),
+            }),
             node::Stmt::If(r#if) => node::Stmt::If(self.r#if(r#if)),
-            node::Stmt::Loop(r#loop) => node::Stmt::Loop(node::Loop { pos_id: r#loop.pos_id, scope: self.scope(r#loop.scope) }),
-            node::Stmt::While(r#while) => node::Stmt::While(node::While { 
+            node::Stmt::Loop(r#loop) => node::Stmt::Loop(node::Loop {
+                pos_id: r#loop.pos_id,
+                scope: self.scope(r#loop.scope),
+            }),
+            node::Stmt::While(r#while) => node::Stmt::While(node::While {
                 pos_id: r#while.pos_id,
                 expr: self.expr(r#while.expr),
-                scope: self.scope(r#while.scope)
+                scope: self.scope(r#while.scope),
             }),
             node::Stmt::For(r#for) => node::Stmt::For(node::For {
                 pos_id: r#for.pos_id,
                 init: self.let_or_expr(r#for.init),
                 cond: self.expr(r#for.cond),
                 incr: self.expr(r#for.incr),
-                scope: self.scope(r#for.scope)
+                scope: self.scope(r#for.scope),
             }),
             node::Stmt::ForIn(r#for) => node::Stmt::ForIn(node::ForIn {
                 pos_id: r#for.pos_id,
                 capture: r#for.capture,
                 expr: self.expr(r#for.expr),
-                scope: self.scope(r#for.scope)
+                scope: self.scope(r#for.scope),
             }),
-            _ => stmt
+            _ => stmt,
         }
     }
 
@@ -80,7 +84,7 @@ impl Process {
     fn let_or_expr(&mut self, e: node::LetOrExpr) -> node::LetOrExpr {
         match e {
             node::LetOrExpr::Let(r#let) => node::LetOrExpr::Let(r#let),
-            node::LetOrExpr::Expr(expr) => node::LetOrExpr::Expr(self.expr(expr))
+            node::LetOrExpr::Expr(expr) => node::LetOrExpr::Expr(self.expr(expr)),
         }
     }
 
@@ -96,12 +100,15 @@ impl Process {
         let new_expr = match expr.kind {
             node::ExprKind::ArrLit(arr_lit) => node::ExprKind::ArrLit(node::ArrLit {
                 exprs: self.expr_list(arr_lit.exprs),
-                pos_id: arr_lit.pos_id
+                pos_id: arr_lit.pos_id,
             }),
-            node::ExprKind::ListLit(arr_lit, alloc_fn) => node::ExprKind::ListLit(node::ArrLit {
-                exprs: self.expr_list(arr_lit.exprs),
-                pos_id: arr_lit.pos_id
-            }, alloc_fn),
+            node::ExprKind::ListLit(arr_lit, alloc_fn) => node::ExprKind::ListLit(
+                node::ArrLit {
+                    exprs: self.expr_list(arr_lit.exprs),
+                    pos_id: arr_lit.pos_id,
+                },
+                alloc_fn,
+            ),
             node::ExprKind::StringLit(frags, alloc_fn) => {
                 let mut list = vec![];
                 for f in frags {
@@ -115,27 +122,39 @@ impl Process {
             }
             node::ExprKind::StructLit(lit) => node::ExprKind::StructLit(node::StructLit {
                 field_names: lit.field_names,
-                field_exprs: self.expr_list(lit.field_exprs)
+                field_exprs: self.expr_list(lit.field_exprs),
             }),
             node::ExprKind::TupleLit(lit) => node::ExprKind::TupleLit(self.expr_list(lit)),
+            node::ExprKind::MapLit(lit) => node::ExprKind::MapLit(node::MapLit {
+                keys: self.expr_list(lit.keys),
+                values: self.expr_list(lit.values),
+                init_fn: lit.init_fn,
+                pos_id: lit.pos_id,
+            }),
             node::ExprKind::BinExpr(bin) => self.bin_expr(bin),
             node::ExprKind::Call(call) => node::ExprKind::Call(node::Call {
                 name: call.name,
-                args: self.expr_list(call.args)
+                args: self.expr_list(call.args),
             }),
             node::ExprKind::UnExpr(un) => self.un_expr(un),
             node::ExprKind::PostUnExpr(un) => node::ExprKind::PostUnExpr(node::UnExpr {
                 expr: Box::new(self.expr(*un.expr)),
-                op: un.op
+                op: un.op,
             }),
-            node::ExprKind::TypeCast(cast) => node::ExprKind::TypeCast(node::TypeCast { r#type: cast.r#type, expr: Box::new(self.expr(*cast.expr)) }),
-            node::ExprKind::BuiltIn(built_in) => node::ExprKind::BuiltIn(node::BuiltIn { kind: built_in.kind, args: self.expr_list(built_in.args) }),
-            _ => expr.kind
+            node::ExprKind::TypeCast(cast) => node::ExprKind::TypeCast(node::TypeCast {
+                r#type: cast.r#type,
+                expr: Box::new(self.expr(*cast.expr)),
+            }),
+            node::ExprKind::BuiltIn(built_in) => node::ExprKind::BuiltIn(node::BuiltIn {
+                kind: built_in.kind,
+                args: self.expr_list(built_in.args),
+            }),
+            _ => expr.kind,
         };
         node::Expr {
             kind: new_expr,
             ty: expr.ty,
-            span: expr.span
+            span: expr.span,
         }
     }
 
@@ -149,7 +168,12 @@ impl Process {
     }
 
     fn unpack(&mut self, unpack: node::Unpack) -> node::Unpack {
-        node::Unpack { lhs: unpack.lhs, rhs: unpack.rhs, brackets: unpack.brackets, expr: self.expr(unpack.expr) }
+        node::Unpack {
+            lhs: unpack.lhs,
+            rhs: unpack.rhs,
+            brackets: unpack.brackets,
+            expr: self.expr(unpack.expr),
+        }
     }
 
     fn r#if(&mut self, r#if: node::If) -> node::If {
@@ -162,14 +186,12 @@ impl Process {
             pos_id: r#if.pos_id,
             cond,
             scope: self.scope(r#if.scope),
-            els: r#if.els.map(|e| Box::new(self.r#if(*e)))
+            els: r#if.els.map(|e| Box::new(self.r#if(*e))),
         };
     }
 
     fn pos_str(&self, str: String) -> node::PosStr {
-        node::PosStr {
-            str, pos_id: 0
-        }
+        node::PosStr { str, pos_id: 0 }
     }
 
     fn calc_bin_expr(&self, bin: node::BinExpr) -> node::ExprKind {
@@ -251,7 +273,8 @@ impl Process {
         if bin.op.str == ".." {
             return node::ExprKind::TupleLit(vec![self.expr(*bin.lhs), self.expr(*bin.rhs)]);
         }
-        if bin.op.str == "." { // Member access -> add &, apply offset and dereference
+        if bin.op.str == "." {
+            // Member access -> add &, apply offset and dereference
             if let Type::Enum(vars) = &bin.lhs.ty {
                 if let node::ExprKind::Variable(pos_str) = &bin.rhs.kind {
                     let i = vars.iter().position(|(s, _)| *s == pos_str.str).unwrap();
@@ -261,7 +284,7 @@ impl Process {
                     let mut i_expr = bin.rhs.clone();
                     i_expr.ty = Type::Int;
                     i_expr.kind = node::ExprKind::IntLit(i as i64);
-                    return node::ExprKind::TupleLit(vec![*i_expr, self.expr(call.args.get(0).unwrap().clone())])
+                    return node::ExprKind::TupleLit(vec![*i_expr, self.expr(call.args.get(0).unwrap().clone())]);
                 } else {
                     unreachable!();
                 }
@@ -276,7 +299,7 @@ impl Process {
                 lhs = Box::new(node::Expr {
                     ty: Type::Struct(m),
                     span: bin.lhs.span,
-                    kind: bin.lhs.kind
+                    kind: bin.lhs.kind,
                 });
             } else {
                 let Type::Struct(m) = &bin.lhs.ty else {
@@ -286,7 +309,10 @@ impl Process {
                 lhs = Box::new(node::Expr {
                     ty: Type::Struct(m.clone()),
                     span: bin.lhs.span,
-                    kind: node::ExprKind::UnExpr(node::UnExpr { expr: bin.lhs.clone(), op: self.pos_str("&".to_string()) })
+                    kind: node::ExprKind::UnExpr(node::UnExpr {
+                        expr: bin.lhs.clone(),
+                        op: self.pos_str("&".to_string()),
+                    }),
                 });
             }
             let node::ExprKind::Variable(pos_str) = bin.rhs.kind else {
@@ -295,7 +321,7 @@ impl Process {
             let (ty, offset) = map.get(&pos_str.str).unwrap();
             return node::ExprKind::UnExpr(node::UnExpr {
                 op: self.pos_str("*".to_string()),
-                expr: Box::new(node::Expr { 
+                expr: Box::new(node::Expr {
                     ty: ty.clone(),
                     span: bin.lhs.span.add(bin.rhs.span),
                     kind: self.bin_expr(node::BinExpr {
@@ -303,11 +329,11 @@ impl Process {
                         rhs: Box::new(node::Expr {
                             ty: Type::Int,
                             span: bin.rhs.span,
-                            kind: node::ExprKind::IntLit(*offset as i64)
+                            kind: node::ExprKind::IntLit(*offset as i64),
                         }),
-                        op: self.pos_str("+".to_string())
-                    })
-                })
+                        op: self.pos_str("+".to_string()),
+                    }),
+                }),
             });
         }
         let ltype = bin.lhs.ty.clone();
@@ -315,7 +341,8 @@ impl Process {
         let rtype = bin.rhs.ty.clone();
         let mut rhs = self.expr(*bin.rhs);
         if let Some(p) = ltype.dereference() {
-            if rtype.dereference().is_none() && rhs.ty != Type::Range { // Pointer arithmetic - multiply by size of inner type
+            if rtype.dereference().is_none() && rhs.ty != Type::Range {
+                // Pointer arithmetic - multiply by size of inner type
                 let rspan = rhs.span;
                 rhs = node::Expr {
                     ty: rhs.ty.clone(),
@@ -325,23 +352,28 @@ impl Process {
                         rhs: Box::new(node::Expr {
                             ty: Type::Int,
                             span: rspan,
-                            kind: node::ExprKind::IntLit(p.size() as i64)
+                            kind: node::ExprKind::IntLit(p.size() as i64),
                         }),
-                        op: self.pos_str("*".to_string())
-                    })
+                        op: self.pos_str("*".to_string()),
+                    }),
                 };
-                if ltype.salloc() { // Add & to stack allocations
+                if ltype.salloc() {
+                    // Add & to stack allocations
                     lhs = node::Expr {
                         ty: Type::Pointer(Box::new(lhs.ty.clone())),
                         span: lhs.span,
-                        kind: node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(lhs), op: self.pos_str("&".to_string()) })
+                        kind: node::ExprKind::UnExpr(node::UnExpr {
+                            expr: Box::new(lhs),
+                            op: self.pos_str("&".to_string()),
+                        }),
                     }
                 }
             }
         }
         if bin.op.str == "[]" {
             let inner = lhs.ty.inner(1).clone();
-            if rhs.ty == Type::Range { // Slice
+            if rhs.ty == Type::Range {
+                // Slice
                 let start;
                 let end;
                 if let node::ExprKind::TupleLit(range) = &rhs.kind {
@@ -356,28 +388,40 @@ impl Process {
                     let mut add = rhs.clone();
                     let mut addtemp = rhs.clone();
                     addtemp.kind = node::ExprKind::IntLit(8 as i64);
-                    r.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(rhs.clone()), op: self.pos_str("&".to_string()) });
-                    add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(r), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
-                    etemp.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
+                    r.kind = node::ExprKind::UnExpr(node::UnExpr {
+                        expr: Box::new(rhs.clone()),
+                        op: self.pos_str("&".to_string()),
+                    });
+                    add.kind = node::ExprKind::BinExpr(node::BinExpr {
+                        lhs: Box::new(r),
+                        rhs: Box::new(addtemp),
+                        op: self.pos_str("+".to_string()),
+                    });
+                    etemp.kind = node::ExprKind::UnExpr(node::UnExpr {
+                        expr: Box::new(add),
+                        op: self.pos_str("*".to_string()),
+                    });
                     start = stemp;
                     end = etemp;
                 } else {
                     unreachable!();
                 }
                 return node::ExprKind::TupleLit(vec![
-                    node::Expr { // length
+                    node::Expr {
+                        // length
                         kind: self.calc_bin_expr(node::BinExpr {
                             lhs: Box::new(end),
                             rhs: Box::new(start.clone()),
                             op: node::PosStr {
                                 str: "-".to_string(),
-                                pos_id: bin.op.pos_id
-                            }
+                                pos_id: bin.op.pos_id,
+                            },
                         }),
                         ty: Type::Int,
-                        span: rhs.span
+                        span: rhs.span,
                     },
-                    self.expr(node::Expr { // pointer
+                    self.expr(node::Expr {
+                        // pointer
                         kind: node::ExprKind::BinExpr(node::BinExpr {
                             lhs: Box::new(match lhs.ty {
                                 Type::Array { .. } | Type::Pointer(_) => lhs,
@@ -387,23 +431,31 @@ impl Process {
                                     let mut addtemp = lhs.clone();
                                     ptr.ty = Type::Pointer(Box::new(inner.clone()));
                                     addtemp.kind = node::ExprKind::IntLit(8 as i64);
-                                    add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(lhs), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
-                                    ptr.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
+                                    add.kind = node::ExprKind::BinExpr(node::BinExpr {
+                                        lhs: Box::new(lhs),
+                                        rhs: Box::new(addtemp),
+                                        op: self.pos_str("+".to_string()),
+                                    });
+                                    ptr.kind = node::ExprKind::UnExpr(node::UnExpr {
+                                        expr: Box::new(add),
+                                        op: self.pos_str("*".to_string()),
+                                    });
                                     ptr
                                 }
-                                _ => unreachable!()
+                                _ => unreachable!(),
                             }),
                             rhs: Box::new(start),
                             op: node::PosStr {
                                 str: "+".to_string(),
-                                pos_id: bin.op.pos_id
-                            }
+                                pos_id: bin.op.pos_id,
+                            },
                         }),
                         ty: Type::Pointer(Box::new(inner)),
-                        span: rhs.span
-                    })
-                ])
-            } else { // Array access -> add and dereference
+                        span: rhs.span,
+                    }),
+                ]);
+            } else {
+                // Array access -> add and dereference
                 let ptr;
                 let offset;
                 match &lhs.ty {
@@ -418,7 +470,10 @@ impl Process {
                             ptr = node::Expr {
                                 ty: lhs.ty.clone(),
                                 span: lhs.span,
-                                kind: node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(lhs), op: self.pos_str("&".to_string()) }),
+                                kind: node::ExprKind::UnExpr(node::UnExpr {
+                                    expr: Box::new(lhs),
+                                    op: self.pos_str("&".to_string()),
+                                }),
                             }
                         }
                         offset = temp;
@@ -431,9 +486,20 @@ impl Process {
                         multemp.kind = node::ExprKind::IntLit(inner.size() as i64);
                         temp.ty = Type::Pointer(Box::new(inner));
                         addtemp.kind = node::ExprKind::IntLit(8 as i64);
-                        add.kind = node::ExprKind::BinExpr(node::BinExpr { lhs: Box::new(lhs), rhs: Box::new(addtemp), op: self.pos_str("+".to_string()) });
-                        temp.kind = node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(add), op: self.pos_str("*".to_string()) });
-                        rhs.kind = self.calc_bin_expr(node::BinExpr { lhs: Box::new(rhs.clone()), rhs: Box::new(multemp), op: self.pos_str("*".to_string()) });
+                        add.kind = node::ExprKind::BinExpr(node::BinExpr {
+                            lhs: Box::new(lhs),
+                            rhs: Box::new(addtemp),
+                            op: self.pos_str("+".to_string()),
+                        });
+                        temp.kind = node::ExprKind::UnExpr(node::UnExpr {
+                            expr: Box::new(add),
+                            op: self.pos_str("*".to_string()),
+                        });
+                        rhs.kind = self.calc_bin_expr(node::BinExpr {
+                            lhs: Box::new(rhs.clone()),
+                            rhs: Box::new(multemp),
+                            op: self.pos_str("*".to_string()),
+                        });
                         ptr = temp;
                         offset = rhs;
                     }
@@ -444,22 +510,22 @@ impl Process {
                 }
                 return node::ExprKind::UnExpr(node::UnExpr {
                     op: self.pos_str("*".to_string()),
-                    expr: Box::new(node::Expr { 
+                    expr: Box::new(node::Expr {
                         ty: ptr.ty.clone(),
                         span: ptr.span.add(offset.span),
                         kind: self.calc_bin_expr(node::BinExpr {
                             lhs: Box::new(ptr),
                             rhs: Box::new(offset),
-                            op: self.pos_str("+".to_string())
-                        })
-                    })
+                            op: self.pos_str("+".to_string()),
+                        }),
+                    }),
                 });
             }
         }
         self.calc_bin_expr(node::BinExpr {
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
-            op: bin.op
+            op: bin.op,
         })
     }
 
@@ -472,8 +538,7 @@ impl Process {
         }
         node::ExprKind::UnExpr(node::UnExpr {
             expr: Box::new(self.expr(*un.expr)),
-            op: un.op
+            op: un.op,
         })
     }
-
 }

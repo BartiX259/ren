@@ -240,6 +240,13 @@ pub fn split<T>(sl: <T>, split: T) -> [<T>] {
 	return res;
 }
 
+pub fn init_map<K, V>(fields: <(K, V)>) -> *any {
+    for f in fields {
+        print(f[0]);
+        print(f[1]);
+    }
+}
+
 pub fn null_terminate(s: <char>) -> *char {
     let new = alloc(len(s) + 1) as *char;
     copy(s as *char, new, len(s));

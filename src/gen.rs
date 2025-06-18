@@ -1098,6 +1098,11 @@ impl<'a> Gen<'a> {
             } else {
                 r = t2.to_string();
             }
+            if let Term::Temp(_) = res {
+                self.save_reg(&r, &res);
+                self.lock_reg(&r, true);
+                return Ok(());
+            }
         } else {
             r = self.eval_term(ptr.clone(), Some(res.clone()), false)?
         }

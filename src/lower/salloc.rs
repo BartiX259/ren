@@ -14,12 +14,22 @@ impl<'a> Lower<'a> {
             self.push_op(
                 Op::Decl {
                     term: ptr.clone(),
-                    size: ty.aligned_size()
+                    size: ty.aligned_size(),
                 },
-                pos_id
+                pos_id,
             );
         }
-        self.push_op(Op::Store { res: None, ptr: ptr.clone(), offset: 0, op: "=".to_string(), term: Term::IntLit(1), size: 8 }, pos_id);
+        self.push_op(
+            Op::Store {
+                res: None,
+                ptr: ptr.clone(),
+                offset: 0,
+                op: "=".to_string(),
+                term: Term::IntLit(1),
+                size: 8,
+            },
+            pos_id,
+        );
         return ptr;
     }
     pub fn arr_lit(&mut self, arr_lit: &node::ArrLit, expr: &node::Expr) -> Term {
@@ -543,5 +553,42 @@ impl<'a> Lower<'a> {
             self.salloc_offset = 0;
         }
         ptr
+    }
+    pub fn map_lit(&mut self, map: &node::MapLit) -> Term {
+        self.push_op(Op::BeginCall { params: vec![] }, map.pos_id);
+        let mut start = None;
+        for (k, v) in map.keys.iter().rev().zip(map.values.iter().rev()) {
+            let vt = self.expr(v);
+            self.make_stack(vt, &v.ty, map.pos_id);
+            let kt = self.expr(k);
+            let s = self.make_stack(kt, &k.ty, map.pos_id);
+            start = Some(s);
+        }
+        self.push_op(
+            Op::Param {
+                term: Term::IntLit(map.keys.len() as i64),
+            },
+            map.pos_id,
+        );
+        self.temp_count += 1;
+        self.push_op(
+            Op::UnOp {
+                res: Term::Temp(self.temp_count),
+                op: "&".to_string(),
+                term: start.unwrap(),
+                size: 8,
+            },
+            map.pos_id,
+        );
+        self.push_op(Op::Param { term: Term::Temp(self.temp_count) }, map.pos_id);
+        self.temp_count += 1;
+        self.push_op(
+            Op::Call {
+                res: Some(Term::Temp(self.temp_count)),
+                func: map.init_fn.clone(),
+            },
+            map.pos_id,
+        );
+        Term::Temp(self.temp_count)
     }
 }
