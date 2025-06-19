@@ -656,7 +656,7 @@ impl<'a> Lower<'a> {
     }
 
     fn un_expr(&mut self, un: &node::UnExpr, ty: &Type) -> Term {
-        let size = ty.size();
+        let size = ty.aligned_size();
         if un.op.str == "*" && size <= 8 {
             if let node::ExprKind::BinExpr(bin) = &un.expr.kind {
                 if bin.op.str == "+" {

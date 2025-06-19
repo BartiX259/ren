@@ -380,6 +380,11 @@ impl<'a> Gen<'a> {
                         self.buf.comment(format!("{op_clone:?}"));
                         continue;
                     }
+                    if let Term::Double(_) = from {
+                        self.store(from, "=".to_string(), to, 0, None, 8)?;
+                        self.buf.comment(format!("{op_clone:?}"));
+                        continue;
+                    }
                     if let Some(t) = from.stack_arithmetic() {
                         self.free_reg(&"rsi".to_string())?;
                         self.buf.push_line("mov rsi, rsp");
@@ -740,6 +745,16 @@ impl<'a> Gen<'a> {
             res_loc = self.sp;
             self.locs.insert(term.clone(), res_loc);
             self.buf.push("push ");
+        }
+        if let Ok(val) = reg.parse::<i64>() {
+            if val < i32::MIN as i64 || val > i32::MAX as i64 {
+                let bytes = (val as u64).to_le_bytes();
+                let low = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+                let high = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+                self.buf.push_line(format!("{}", low as i32));
+                self.buf.push_line(format!("mov dword [rsp+4], {}", high as i32));
+                return;
+            }
         }
         self.buf.push_line(format!("{}", reg));
         //self.buf.comment(format!("store into {:?}", term));

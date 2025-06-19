@@ -64,6 +64,7 @@ pub enum TypeKind {
     Struct(Vec<PosStr>, Vec<Type>),
     Result(Box<Type>, Box<Type>),
     Option(Box<Type>),
+    Map(Box<Type>, Box<Type>),
 }
 #[derive(Debug, Clone)]
 pub struct Type {

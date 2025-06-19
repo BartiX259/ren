@@ -996,6 +996,18 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
             return Err(unexp(cl, tokens.prev_index(), "']'"));
         };
         Ok(r#type(start, tokens.prev_index(), node::TypeKind::List(Box::new(ty))))
+    } else if let Token::OpenCurly = &tok {
+        let k = parse_type(tokens)?;
+        let tok = check_none(tokens, "':'")?;
+        let Token::Colon = tok else {
+            return Err(unexp(tok, tokens.prev_index(), "':'"));
+        };
+        let v = parse_type(tokens)?;
+        let tok = check_none(tokens, "'}'")?;
+        let Token::CloseCurly = tok else {
+            return Err(unexp(tok, tokens.prev_index(), "'}'"));
+        };
+        Ok(r#type(start, tokens.prev_index(), node::TypeKind::Map(Box::new(k), Box::new(v))))
     } else {
         Err(unexp(tok, tokens.prev_index(), "a type"))
     }?;

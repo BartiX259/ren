@@ -329,7 +329,10 @@ impl Validate {
                     vec![Type::Slice {
                         inner: Box::new(Type::Tuple(vec![key_ty.clone(), val_ty.clone()])),
                     }],
-                    Some(Type::Pointer(Box::new(Type::Any))),
+                    Some(Type::HashMap {
+                        key: Box::new(key_ty.clone()),
+                        value: Box::new(val_ty.clone()),
+                    }),
                     &mut vec![],
                     Span { start: map.pos_id, end: map.pos_id },
                 )?;
@@ -677,7 +680,7 @@ impl Validate {
         match &expr.kind {
             ExprKind::Variable(_) => true,
             ExprKind::BinExpr(bin) => {
-                if bin.op.str == "." || bin.op.str == "[]" {
+                if bin.op.str == "." || bin.op.str.starts_with("[]") {
                     true
                 } else {
                     false
@@ -742,9 +745,20 @@ impl Validate {
                 return Err(SemanticError::InvalidAssign(span));
             };
             if let ExprKind::BinExpr(b) = &bin.lhs.kind {
-                if b.op.str == "[]" {
+                if b.op.str.starts_with("[]") {
                     if let Type::Slice { .. } = b.lhs.ty {
                         return Err(SemanticError::ConstAssign(bin.lhs.span, b.lhs.ty.clone()));
+                    }
+                    if let Type::HashMap { key, value } = &b.lhs.ty {
+                        if bin.op.str != "=" {
+                            return Err(SemanticError::InvalidAssign(Span {
+                                start: bin.op.pos_id,
+                                end: bin.op.pos_id,
+                            }));
+                        }
+                        let ins_fn = self.find_fn("insert", vec![Type::Pointer(Box::new(b.lhs.ty.clone())), *key.clone(), *value.clone()], None, &mut vec![], bin.rhs.span)?;
+                        bin.op.str += &ins_fn;
+                        return Ok(Type::Void);
                     }
                 }
             }
@@ -876,6 +890,15 @@ impl Validate {
                             }
                         }
                         Type::Array { inner, .. } | Type::Slice { inner } | Type::List { inner } => handle_index(*inner.clone()),
+                        Type::HashMap { key, value } => {
+                            if bin.rhs.ty == **key {
+                                let get_fn = self.find_fn("get", vec![ty1.clone(), *key.clone()], Some(Type::Option(value.clone())), &mut vec![], bin.rhs.span)?;
+                                bin.op.str += &get_fn;
+                                Ok(Type::Option(value.clone()))
+                            } else {
+                                Err(SemanticError::InvalidMemberAccess(bin.rhs.span))
+                            }
+                        }
                         _ => Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2)),
                     }
                 }
@@ -921,11 +944,12 @@ impl Validate {
             }
             "*" => {
                 if let Type::Pointer(t) = &ty {
-                    if t.size() > 8 {
-                        Err(SemanticError::InvalidDereference(un.op.clone(), ty))
-                    } else {
-                        Ok(*t.clone())
-                    }
+                    // if t.size() > 8 {
+                    //     Err(SemanticError::InvalidDereference(un.op.clone(), ty))
+                    // } else {
+                    //     Ok(*t.clone())
+                    // }
+                    Ok(*t.clone())
                 } else {
                     Err(SemanticError::InvalidDereference(un.op.clone(), ty))
                 }
@@ -1347,6 +1371,10 @@ impl Validate {
             }
             node::TypeKind::Result(ty, err) => Ok(Type::Result(Box::new(self.r#type(ty, false)?), Box::new(self.r#type(err, false)?))),
             node::TypeKind::Option(ty) => Ok(Type::Option(Box::new(self.r#type(ty, false)?))),
+            node::TypeKind::Map(k, v) => Ok(Type::HashMap {
+                key: Box::new(self.r#type(k, false)?),
+                value: Box::new(self.r#type(v, false)?),
+            }),
         }
     }
 
@@ -1375,7 +1403,7 @@ impl Validate {
                 let mut ok = false;
                 if let Some(Type::Int) = tys.get(0) {
                     if let Some(Type::Pointer(p)) = tys.get(1) {
-                        if p == inner {
+                        if p == inner || **p == Type::Any {
                             ok = true;
                         }
                     }
@@ -1417,6 +1445,16 @@ impl Validate {
             (Type::Pointer(_), Type::Int) => (),
             (ty, Type::Result(ok, _)) => {
                 if *ty != **ok {
+                    return Err(SemanticError::InvalidCast(span, from, to));
+                }
+            }
+            (Type::Pointer(p), Type::HashMap { key, value }) => {
+                if **p != Type::Tuple(vec![*key.clone(), *value.clone()]) {
+                    return Err(SemanticError::InvalidCast(span, from, to));
+                }
+            }
+            (Type::HashMap { .. }, Type::Pointer(p)) => {
+                if let Type::HashMap { .. } = **p {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }

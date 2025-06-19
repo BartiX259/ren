@@ -240,11 +240,48 @@ pub fn split<T>(sl: <T>, split: T) -> [<T>] {
 	return res;
 }
 
-pub fn init_map<K, V>(fields: <(K, V)>) -> *any {
-    for f in fields {
-        print(f[0]);
-        print(f[1]);
+pub fn hash(x: int) -> int {
+    let hash = 14695981039346656037;
+    for i in 0..8 {
+        hash ^= (x >> (i * 8)) & 255;
+        hash *= 1099511628211;
     }
+    return hash;
+}
+
+pub fn init_map<K, V>(fields: <(K, V)>) -> {K: V} {
+    let capacity = 100;
+    let ptr = alloc(capacity * sizeof(fields[0])) as *(K, V);
+    for f in fields {
+        let i = hash(f[0]) % capacity;
+        ptr[i] = f;
+    }
+    return ptr;
+}
+
+pub fn get<K, V>(map: {K: V}, key: K) -> ?V {
+    if map as *any == null {
+        return none;
+    }
+    let capacity = *(map as *int - 1) / sizeof(*(map as *(K, V)));
+    let i = hash(key) % capacity;
+    let k_ptr = (map as *(K, V) + i) as *K;
+    if *(k_ptr as *int) == 0 {
+        return none;
+    }
+    return *((k_ptr + 1) as *V);
+}
+
+pub fn insert<K, V>(map_ref: *{K: V}, key: K, value: V) {
+    if *map_ref == null {
+        *map_ref = init_map((0, null) as <(K, V)>);
+    }
+    let map = *map_ref;
+    let capacity = *(map as *int - 1) / sizeof(*(map as *(K, V)));
+    let i = hash(key) % capacity;
+    let k_ptr = (map as *(K, V) + i) as *K;
+    *k_ptr = key;
+    *((k_ptr + 1) as *V) = value;
 }
 
 pub fn null_terminate(s: <char>) -> *char {

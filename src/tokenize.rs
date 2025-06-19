@@ -1,5 +1,5 @@
 use crate::error::FilePos;
-use crate::helpers::{VecIter, StringLit, StringFragment};
+use crate::helpers::{StringFragment, StringLit, VecIter};
 use std::vec::Vec;
 
 /// Tokenize the input file
@@ -82,7 +82,7 @@ pub struct InvalidCharacter {
 pub enum TokenizeError {
     InvalidCharacter(InvalidCharacter),
     InvalidNumberCharacter(InvalidCharacter),
-    UnclosedCharacter(InvalidCharacter)
+    UnclosedCharacter(InvalidCharacter),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -125,7 +125,7 @@ pub enum Token {
     CloseSquare,
     Comma,
     StringInterpolationStart,
-    StringInterpolationEnd
+    StringInterpolationEnd,
 }
 
 impl Token {
@@ -136,7 +136,7 @@ impl Token {
             Token::StringLit { value } => format!("\"{value}\""),
             Token::CharLit { value } => format!("'{value}'"),
             Token::Op { value } => value.clone(),
-            Token::Import { module} => format!("import {module}"),
+            Token::Import { module } => format!("import {module}"),
             Token::Let => "let".to_string(),
             Token::Decl => "decl".to_string(),
             Token::Fn => "fn".to_string(),
@@ -169,7 +169,7 @@ impl Token {
             Token::CloseSquare => "]".to_string(),
             Token::Comma => ",".to_string(),
             Token::StringInterpolationStart => "{".to_string(),
-            Token::StringInterpolationEnd => "}".to_string()
+            Token::StringInterpolationEnd => "}".to_string(),
         }
     }
 
@@ -236,7 +236,9 @@ fn tok_word(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeErro
     if word == "import" {
         let mut module = String::new();
         while let Some(&next_ch) = iter.peek() {
-            if next_ch == '\n' { break; }
+            if next_ch == '\n' {
+                break;
+            }
             module.push(next_ch);
             iter.next();
         }
@@ -265,7 +267,9 @@ fn tok_num(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError
             break;
         }
     }
-    Ok(Token::IntLit { value: word.parse::<i64>().unwrap() })
+    Ok(Token::IntLit {
+        value: word.parse::<i64>().or_else(|_| word.parse::<u64>().map(|u| i64::from_ne_bytes(u.to_ne_bytes()))).unwrap(),
+    })
 }
 
 /// Builds an operator token, supporting single, two and three character operators.
@@ -310,10 +314,13 @@ fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<(Token, bool), Token
             res.push(StringFragment::String(str));
             str = String::new();
             let Some(esc) = iter.next() else {
-                return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
+                return Err(TokenizeError::UnclosedCharacter(InvalidCharacter {
                     ch: '\\',
-                    pos: FilePos { start: iter.prev_index(), end: iter.prev_index() }
-                }))
+                    pos: FilePos {
+                        start: iter.prev_index(),
+                        end: iter.prev_index(),
+                    },
+                }));
             };
             res.push(StringFragment::Char(esc_char(esc, iter)?));
         } else {
@@ -321,9 +328,9 @@ fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<(Token, bool), Token
         }
     }
     if !closed {
-        Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
+        Err(TokenizeError::UnclosedCharacter(InvalidCharacter {
             ch: start,
-            pos: FilePos { start: start_pos, end: start_pos }
+            pos: FilePos { start: start_pos, end: start_pos },
         }))
     } else {
         if str.chars().count() > 0 {
@@ -336,28 +343,28 @@ fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<(Token, bool), Token
 
 /// Builds a char literal until `start` appears
 fn tok_char(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError> {
-    let startpos = FilePos { start: iter.current_index(), end: iter.current_index() };
+    let startpos = FilePos {
+        start: iter.current_index(),
+        end: iter.current_index(),
+    };
     let value = match iter.next() {
         Some('\\') => {
             let Some(esc) = iter.next() else {
-                return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
+                return Err(TokenizeError::UnclosedCharacter(InvalidCharacter {
                     ch: '\\',
-                    pos: FilePos { start: iter.prev_index(), end: iter.prev_index() }
-                }))
+                    pos: FilePos {
+                        start: iter.prev_index(),
+                        end: iter.prev_index(),
+                    },
+                }));
             };
             esc_char(esc, iter)?
         }
-        None => return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
-            ch: start,
-            pos: startpos
-        })),
-        Some(val) => val as u32
+        None => return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { ch: start, pos: startpos })),
+        Some(val) => val as u32,
     };
     let Some('\'') = iter.next() else {
-        return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
-            ch: start,
-            pos: startpos
-        }));
+        return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { ch: start, pos: startpos }));
     };
     Ok(Token::CharLit { value })
 }
@@ -366,10 +373,13 @@ fn esc_char(esc: char, iter: &mut VecIter<char>) -> Result<u32, TokenizeError> {
     match esc {
         'n' => Ok('\n' as u32),
         '\\' => Ok('\\' as u32),
-        _ => Err(TokenizeError::UnclosedCharacter(InvalidCharacter { 
+        _ => Err(TokenizeError::UnclosedCharacter(InvalidCharacter {
             ch: '\\',
-            pos: FilePos { start: iter.prev_index(), end: iter.prev_index() }
-        }))
+            pos: FilePos {
+                start: iter.prev_index(),
+                end: iter.prev_index(),
+            },
+        })),
     }
 }
 
@@ -381,34 +391,31 @@ fn is_operator(ch: char) -> bool {
 /// Checks if a pair of characters form a valid two-character operator.
 fn is_operator_pair(first: char, second: char) -> bool {
     match (first, second) {
-        ('+', '=') |
-        ('-', '=') |
-        ('*', '=') |
-        ('/', '=') |
-        ('%', '=') |
-        ('|', '=') |
-        ('^', '=') |
-        ('&', '=') |
-        ('=', '=') |
-        ('!', '=') |
-        ('<', '=') |
-        ('>', '=') |
-        ('&', '&') |
-        ('|', '|') |
-        ('<', '<') |
-        ('>', '>') |
-        ('-', '>') |
-        ('.', '.')
-        => true,
+        ('+', '=')
+        | ('-', '=')
+        | ('*', '=')
+        | ('/', '=')
+        | ('%', '=')
+        | ('|', '=')
+        | ('^', '=')
+        | ('&', '=')
+        | ('=', '=')
+        | ('!', '=')
+        | ('<', '=')
+        | ('>', '=')
+        | ('&', '&')
+        | ('|', '|')
+        | ('<', '<')
+        | ('>', '>')
+        | ('-', '>')
+        | ('.', '.') => true,
         _ => false,
     }
 }
 
 fn is_operator_triplet(first_two: &str, third: char) -> bool {
     match (first_two, third) {
-        (">>", '=') | 
-        ("<<", '=')
-        => true,
+        (">>", '=') | ("<<", '=') => true,
         _ => false,
     }
 }

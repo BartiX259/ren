@@ -370,7 +370,27 @@ impl Process {
                 }
             }
         }
-        if bin.op.str == "[]" {
+        if bin.op.str.starts_with("=") {
+            if let node::ExprKind::Call(c) = &lhs.kind {
+                let ins_fn = bin.op.str.split("=").last().unwrap();
+                let mut args = c.args.clone();
+                let e = args.get(0).unwrap();
+                args[0] = node::Expr {
+                    ty: Type::Pointer(Box::new(e.ty.clone())),
+                    span: e.span,
+                    kind: node::ExprKind::UnExpr(node::UnExpr {
+                        expr: Box::new(e.clone()),
+                        op: self.pos_str("&".to_string()),
+                    }),
+                };
+                args.push(rhs);
+                return node::ExprKind::Call(node::Call {
+                    name: self.pos_str(ins_fn.to_string()),
+                    args,
+                });
+            }
+        }
+        if bin.op.str.starts_with("[]") {
             let inner = lhs.ty.inner(1).clone();
             if rhs.ty == Type::Range {
                 // Slice
@@ -502,6 +522,13 @@ impl Process {
                         });
                         ptr = temp;
                         offset = rhs;
+                    }
+                    Type::HashMap { .. } => {
+                        let get_fn = bin.op.str.split("]").last().unwrap();
+                        return node::ExprKind::Call(node::Call {
+                            name: self.pos_str(get_fn.to_string()),
+                            args: vec![lhs, rhs],
+                        });
                     }
                     _ => {
                         ptr = lhs;
