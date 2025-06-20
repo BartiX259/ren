@@ -1208,9 +1208,7 @@ impl<'a> Gen<'a> {
         // }
         self.buf.push_line(format!("cmp {}, {}", Self::reg_name(r1, size), Self::reg_name(r2, size)));
         self.buf.push_line(format!("{} {}", cond, Self::reg_name(r1, 1)));
-        if size > 1 {
-            self.buf.push_line(format!("movzx {}, {}", Self::reg_name(r1, size), Self::reg_name(r1, 1)));
-        }
+        self.buf.push_line(format!("movzx {}, {}", Self::reg_name(r1, 8), Self::reg_name(r1, 1)));
     }
 
     fn word_size_name(size: u32) -> &'static str {

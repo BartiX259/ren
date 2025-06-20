@@ -1,10 +1,16 @@
+syscall 0: read(int, *char, int) -> int;
 syscall 1: write(int, *char, int) -> int;
 syscall 2: open(*char, int, int) -> int;
 syscall 5: fstat(int, *any) -> int;
 syscall 6: close(int) -> int;
 syscall 9: mmap(*any, int, int, int, int, int) -> *any;
 syscall 10: munmap(*any, int);
-syscall 60: exit(int);
+syscall 82: rename(*char, *char) -> int;
+syscall 83: mkdir(*char, int) -> int;
+syscall 87: unlink(*char) -> int;
+syscall 84: rmdir(*char) -> int;
+syscall 217: getdents64(int, *any, int) -> int;
+pub syscall 60: exit(int);
 
 pub fn print_help(name: *char, expected: <<char>>) {
     print("Usage: {name} ");
@@ -79,6 +85,18 @@ pub fn parse_opt<T>(argc: *int, argv: **char, name: <char>, opt: *?T) -> int ? <
     }
     *(opt as *int) = 1;
     return 0;
+}
+
+pub fn cmp(l: <char>, r: <char>) -> bool {
+    if len(l) != len(r) {
+        return false;
+    }
+    for i in 0..len(r) {
+        if l[i] != r[i] {
+            return false;
+        }
+    }
+    return true;
 }
 
 pub fn cmp(l: *char, r: <char>) -> bool {
@@ -345,6 +363,159 @@ pub fn write(path: <char>, data: <char>) -> int ? <char> {
     if written < len {
         return ?"Failed to write full data to file.\n";
     }
+}
+
+pub fn read_char() -> ?char {
+    decl buf: char;
+    let bytes_read = read(0, &buf as *char, 1);
+    if bytes_read == 1 {
+        return buf;
+    } else if bytes_read == 0 {
+        return none;
+    } else {
+        eprint("read_char error\n");
+        return none;
+    }
+}
+
+pub fn input() -> [char] {
+    decl line: [char];
+    loop {
+        if let c = read_char() {
+            if c == '\n' {
+                break;
+            }
+            if c == '\r' {
+                continue;
+            }
+            push(&line, c);
+        } else {
+            break;
+        }
+    }
+    return line;
+}
+
+pub fn exists(path: <char>) -> bool {
+    let nt_path = null_terminate(path);
+    let fd = open(nt_path, 0, 0);
+    if fd >= 0 {
+        close(fd);
+        return true;
+    }
+    return false;
+}
+
+pub fn is_dir(path: <char>) -> bool {
+    let nt_path = null_terminate(path);
+    let fd = open(nt_path, 0, 0);
+    if fd < 0 {
+        return false;
+    }
+
+    decl st: int[18];
+    if fstat(fd, &st) < 0 {
+        close(fd);
+        return false;
+    }
+    close(fd);
+
+    let mode = st[3];
+    return (mode & 16384) == 16384;
+}
+
+pub fn mkdir(path: <char>) -> int ? <char> {
+    let nt_path = null_terminate(path);
+    let res = mkdir(nt_path, 448 | 32 | 8 | 4 | 1);
+    if res == 0 {
+        return 0;
+    } else {
+        return ?"Failed to create directory.";
+    }
+}
+
+pub fn rm(path: <char>) -> int ? <char> {
+    let nt_path = null_terminate(path);
+    let res = unlink(nt_path);
+    if res == 0 {
+        return 0;
+    } else {
+        return ?"Failed to delete file.";
+    }
+}
+
+pub fn rmdir(path: <char>) -> int ? <char> {
+    let nt_path = null_terminate(path);
+    let res = rmdir(nt_path);
+    if res == 0 {
+        return 0;
+    } else {
+        return ?"Failed to remove directory (must be empty).";
+    }
+}
+
+pub fn rename(old_path: <char>, new_path: <char>) -> int ? <char> {
+    let nt_old_path = null_terminate(old_path);
+    let nt_new_path = null_terminate(new_path);
+    let res = rename(nt_old_path, nt_new_path);
+    if res == 0 {
+        return 0;
+    } else {
+        return ?"Failed to rename file/directory.";
+    }
+}
+
+pub fn list_dir(path: <char>) -> [<char>] ? <char> {
+    let nt_path = null_terminate(path);
+    let fd = open(nt_path, 0 | 65536, 0);
+    if fd < 0 {
+        return ?"Failed to open directory.";
+    }
+
+    let BUF_SIZE_INLINED = 4096;
+    let buf = alloc(BUF_SIZE_INLINED) as *char;
+
+    decl entries: [<char>];
+    let offset_to_reclen_bytes = 16;
+    let header_fixed_size_bytes = 19;
+
+    loop {
+        let bytes_read = getdents64(fd, buf as *any, BUF_SIZE_INLINED);
+        if bytes_read <= 0 {
+            break;
+        }
+
+        let current_pos = 0;
+        while current_pos < bytes_read {
+            let entry_ptr = buf + current_pos;
+
+            let value_at_reclen_offset = *(entry_ptr as *int + (offset_to_reclen_bytes / 8));
+            let d_reclen = value_at_reclen_offset & 65535;
+
+            let name_ptr = entry_ptr + header_fixed_size_bytes;
+
+            let name_len = d_reclen - header_fixed_size_bytes - 1;
+
+            if name_len < 0 {
+                name_len = 0;
+            }
+
+            for i in 0..name_len {
+                if name_ptr[i] == '\0' {
+                    name_len = i;
+                    break;
+                }
+            }
+
+            let name_slice = (name_len, name_ptr) as <char>;
+            push(&entries, name_slice);
+
+            current_pos += d_reclen;
+        }
+    }
+
+    close(fd);
+    return entries;
 }
 
 

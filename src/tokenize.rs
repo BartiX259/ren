@@ -372,7 +372,12 @@ fn tok_char(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeErro
 fn esc_char(esc: char, iter: &mut VecIter<char>) -> Result<u32, TokenizeError> {
     match esc {
         'n' => Ok('\n' as u32),
+        'r' => Ok('\r' as u32),
+        't' => Ok('\t' as u32),
         '\\' => Ok('\\' as u32),
+        '\'' => Ok('\'' as u32),
+        '"' => Ok('"' as u32),
+        '0' => Ok('\0' as u32),
         _ => Err(TokenizeError::UnclosedCharacter(InvalidCharacter {
             ch: '\\',
             pos: FilePos {
