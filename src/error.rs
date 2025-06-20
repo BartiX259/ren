@@ -1,8 +1,8 @@
 use std::fs;
 use std::io::Error;
 
-use crate::ir::OpLoc;
 use crate::gen::GenError;
+use crate::ir::OpLoc;
 use crate::node::{self, Span};
 use crate::parse::ParseError;
 use crate::tokenize::{self, TokenizeError};
@@ -20,7 +20,7 @@ impl FilePos {
     pub fn span(locs: Vec<FilePos>, span: Span) -> Self {
         Self {
             start: locs.get(span.start).unwrap().start,
-            end: locs.get(span.end).unwrap().end
+            end: locs.get(span.end).unwrap().end,
         }
     }
 }
@@ -71,13 +71,7 @@ pub fn parse_err(path: &String, e: ParseError) {
                 }
                 end -= 1;
             }
-            print_file_err(
-                &text, path,
-                &FilePos {
-                    start: end,
-                    end
-                },
-            )
+            print_file_err(&text, path, &FilePos { start: end, end })
         }
         ParseError::ImportNotAtStart(pos_id) => {
             eprintln!("Import not at the top of the file.");
@@ -173,6 +167,10 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Decorator inside a function.");
             print_module_err_span(path, span);
         }
+        SemanticError::InvalidTypeArgCount(span, exp, got) => {
+            eprintln!("Invalid type argument count, expected {} type arguments but got {}", exp, got);
+            print_module_err_span(path, span);
+        }
         SemanticError::InvalidArgCount(span, exp, got) => {
             eprintln!("Invalid argument count, expected {} arguments but got {}", exp, got);
             print_module_err_span(path, span);
@@ -182,11 +180,7 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             print_module_err_span(path, span);
         }
         SemanticError::NoFnSig(str, span, tys, ty) => {
-            let ty_list = tys
-                .iter()
-                .map(|ty| format!("{}", ty))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let ty_list = tys.iter().map(|ty| format!("{}", ty)).collect::<Vec<_>>().join(", ");
             eprint!("No function of signature {}({})", str, ty_list);
             if let Some(t) = ty {
                 eprint!(" -> {}", t);
@@ -278,7 +272,7 @@ fn print_module_err_id(module: &String, pos_id: usize) {
 
 fn print_module_err_pos(module: &String, file_pos: FilePos) {
     let text = fs::read_to_string(&module).unwrap();
-    print_file_err(&text,  module, &file_pos);
+    print_file_err(&text, module, &file_pos);
 }
 
 fn print_module_err_span(module: &String, span: Span) {
@@ -290,10 +284,14 @@ fn print_module_err_span(module: &String, span: Span) {
 fn print_module_err_op(module: &String, op: OpLoc) {
     let text = fs::read_to_string(&module).unwrap();
     let (_, locs) = tokenize::tokenize(&text).unwrap();
-    print_file_err(&text, module, &FilePos {
-        start: locs.get(op.start_id).unwrap().start,
-        end: locs.get(op.end_id).unwrap().end,
-    });
+    print_file_err(
+        &text,
+        module,
+        &FilePos {
+            start: locs.get(op.start_id).unwrap().start,
+            end: locs.get(op.end_id).unwrap().end,
+        },
+    );
 }
 
 fn print_file_err(text: &String, module: &String, pos: &FilePos) {
@@ -335,8 +333,8 @@ fn print_file_err(text: &String, module: &String, pos: &FilePos) {
                     }
                 }
                 if one_tab {
-    line_pad.pop(); // removes the last char, which should be a space
-}
+                    line_pad.pop(); // removes the last char, which should be a space
+                }
                 eprint!("\x1b[94m{}|\x1b[0m{}", padstr, line_pad);
                 eprint!("\x1b[91m");
                 let end;
@@ -363,4 +361,3 @@ fn print_file_err(text: &String, module: &String, pos: &FilePos) {
         }
     }
 }
-

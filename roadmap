@@ -1,9 +1,12 @@
-- Hashmaps
-- Tests
-- Optionals
-- Peephole optimization (remove temporary stack variables)
+Compiler features:
+- Looping over structs and tuples
 - Custom iterators
 - Improve arg parsing
+
+Optimizations:
+- remove temporary stack variables
+- redundant labels
+- known if statements
 
 Std library:
 - hashmaps
@@ -12,4 +15,7 @@ Std library:
 - filesystem
 - user input
 - math?
+
+Other:
+- tests
 

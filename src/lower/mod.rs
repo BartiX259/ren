@@ -130,6 +130,7 @@ impl<'a> Lower<'a> {
             node::Stmt::Enum(_) => (),
             node::Stmt::Extern(_) => (),
             node::Stmt::Syscall(_) => (),
+            node::Stmt::Marker => (),
         }
     }
 
@@ -354,6 +355,9 @@ impl<'a> Lower<'a> {
         }
         self.scope_depth += 1;
         for s in scope.iter() {
+            if let node::Stmt::Marker = s {
+                break;
+            }
             self.stmt(s);
         }
         self.scope_depth -= 1;
@@ -1372,8 +1376,8 @@ impl<'a> Lower<'a> {
                 Term::Temp(self.temp_count)
             }
             node::BuiltInKind::Sizeof => {
-                let expr = built_in.args.get(0).unwrap();
-                Term::IntLit(expr.ty.size() as i64)
+                let ty = built_in.tys.get(0).unwrap();
+                Term::IntLit(ty.size() as i64)
             }
             node::BuiltInKind::Param => {
                 let expr = built_in.args.get(0).unwrap();
@@ -1382,6 +1386,11 @@ impl<'a> Lower<'a> {
                     self.push_op(Op::Param { term: p }, pos_id);
                 }
                 Term::IntLit(0)
+            }
+            node::BuiltInKind::IsType => {
+                let expr = built_in.args.get(0).unwrap();
+                let ty = built_in.tys.get(0).unwrap();
+                Term::IntLit(if expr.ty == *ty { 1 } else { 0 })
             }
         }
     }
@@ -1467,6 +1476,7 @@ impl<'a> Lower<'a> {
         match &r#for.expr.ty {
             Type::Slice { inner } => self.for_in_slice(r#for, st, inner, s, i, c),
             Type::Range => self.for_in_range(r#for, st, s, i, c),
+            Type::Struct(map) => self.for_in_struct(r#for, st, map),
             _ => panic!("not slice"),
         };
         self.push_op(Op::Label { label: e }, r#for.pos_id);
@@ -1591,6 +1601,104 @@ impl<'a> Lower<'a> {
             },
             r#for.pos_id,
         );
+    }
+
+    fn for_in_struct(&mut self, r#for: &node::ForIn, st: Term, map: &HashMap<String, (Type, u32)>) {
+        let mut items: Vec<_> = map.iter().collect();
+        items.sort_by_key(|(_, (_, offset))| *offset);
+        let mut scope: Vec<_> = r#for.scope.clone();
+        for (name, (ty, offset)) in items {
+            self.push_op(Op::BeginScope, r#for.pos_id);
+            self.stack_count += 1;
+            let el = Term::Stack(self.stack_count);
+            let size = ty.aligned_size();
+            self.push_op(Op::Decl { term: el.clone(), size: size + 16 }, r#for.pos_id);
+            let lit = StringLit {
+                frags: vec![crate::helpers::StringFragment::String(name.to_string())],
+            };
+            let len = lit.len();
+            self.push_op(
+                Op::Store {
+                    res: None,
+                    ptr: el.clone(),
+                    offset: 0,
+                    op: "=".to_string(),
+                    term: Term::IntLit(len as i64),
+                    size: 8,
+                },
+                r#for.pos_id,
+            );
+            if let Some(sym) = self.string_map.get(&lit) {
+                self.push_op(
+                    Op::Store {
+                        res: None,
+                        ptr: el.clone(),
+                        offset: 8,
+                        op: "=".to_string(),
+                        term: Term::Data(sym.clone()),
+                        size: 8,
+                    },
+                    r#for.pos_id,
+                );
+            } else {
+                self.string_id += 1;
+                let new_sym = format!("s.{}", self.string_id);
+                self.string_map.insert(lit.clone(), new_sym.clone());
+                self.ir.insert(
+                    new_sym.clone(),
+                    Symbol::Data {
+                        ty: Type::Slice { inner: Box::new(Type::Char) },
+                        str: lit.to_string(),
+                    },
+                );
+                self.push_op(
+                    Op::Store {
+                        res: None,
+                        ptr: el.clone(),
+                        offset: 8,
+                        op: "=".to_string(),
+                        term: Term::Data(new_sym),
+                        size: 8,
+                    },
+                    r#for.pos_id,
+                );
+            }
+            self.stack_count += 1;
+            let from = Term::Stack(self.stack_count);
+            self.push_op(
+                Op::Own {
+                    res: from.clone(),
+                    term: st.clone(),
+                    offset: *offset as i64,
+                },
+                r#for.pos_id,
+            );
+            self.stack_count += 1;
+            let to = Term::Stack(self.stack_count);
+            self.push_op(
+                Op::Own {
+                    res: to.clone(),
+                    term: el.clone(),
+                    offset: 16,
+                },
+                r#for.pos_id,
+            );
+            self.push_op(
+                Op::Copy {
+                    from,
+                    to,
+                    size: Term::IntLit(size as i64),
+                },
+                r#for.pos_id,
+            );
+            self.var_map.insert(r#for.capture.str.clone(), el);
+            self.scope(&scope, 0);
+            if let Some(pos) = scope.iter().position(|stmt| matches!(stmt, node::Stmt::Marker)) {
+                let remaining = scope.split_off(pos + 1);
+                scope = remaining;
+            }
+            self.push_op(Op::EndScope, r#for.pos_id);
+        }
     }
 
     fn type_cast(&mut self, cast: &node::TypeCast, to: &Type) -> Term {

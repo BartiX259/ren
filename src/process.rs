@@ -148,6 +148,8 @@ impl Process {
             node::ExprKind::BuiltIn(built_in) => node::ExprKind::BuiltIn(node::BuiltIn {
                 kind: built_in.kind,
                 args: self.expr_list(built_in.args),
+                type_args: built_in.type_args,
+                tys: built_in.tys,
             }),
             _ => expr.kind,
         };

@@ -167,6 +167,29 @@ pub fn str<T>(x: <T>) -> <char> {
     return s;
 }
 
+pub fn str<T>(x: T) -> <char> {
+    let s = +"(";
+    let start = true;
+    for field in x {
+        if start {
+            start = false;
+        } else {
+            push(&s, ", ");
+        }
+        push(&s, field.name);
+        push(&s, ": ");
+        if istype(field.value, <char>) {
+            push(&s, '"');
+        }
+        push(&s, str(field.value));
+        if istype(field.value, <char>) {
+            push(&s, '"');
+        }
+    }
+    push(&s, ')');
+    return s;
+}
+
 pub fn print<T>(msg: T) {
     let sl = str(msg);
     write(1, sl as *char, len(sl));
@@ -192,30 +215,30 @@ pub fn panic<T>(x: T) {
 pub fn push<T>(list: *[T], el: T) {
 	let ptr = *(list as **any + 1);
 	if ptr == null {
-		ptr = alloc(sizeof(el) * 5);
+		ptr = alloc(sizeof(T) * 5);
 		*(list as **any + 1) = ptr;
 	}
 	let cap = *((ptr as *int - 1)) - 8;
-	let size = len(list) * sizeof(el);
+	let size = len(list) * sizeof(T);
     if size >= cap {
 		let new_ptr = alloc(cap * 2);
 		copy(ptr, new_ptr, size);
 		ptr = new_ptr;
 		*(list as **any + 1) = new_ptr;
     }
-	copy(&el, ptr as *T + len(list), sizeof(el));
+	copy(&el, ptr as *T + len(list), sizeof(T));
 	*(list as *any as *int) += 1;
 }
 
 pub fn push<T>(list: *[T], sl: <T>) {
 	let ptr = *(list as **any + 1);
 	if ptr == null {
-		ptr = alloc(sizeof(*(sl as *T)) * 5);
+		ptr = alloc(sizeof(T) * 5);
 		*(list as **any + 1) = ptr;
 	}
 	let cap = *((ptr as *int - 1)) - 8;
-	let size = len(list) * sizeof(*(sl as *T));
-	let add_size = len(sl) * sizeof(*(sl as *T));
+	let size = len(list) * sizeof(T);
+	let add_size = len(sl) * sizeof(T);
     if size + add_size > cap {
 		let new_ptr = alloc(cap + add_size);
 		copy(ptr, new_ptr, size);
@@ -263,7 +286,7 @@ pub fn get<K, V>(map: {K: V}, key: K) -> ?V {
     if map as *any == null {
         return none;
     }
-    let capacity = *(map as *int - 1) / sizeof(*(map as *(K, V)));
+    let capacity = *(map as *int - 1) / sizeof((K, V));
     let i = hash(key) % capacity;
     let k_ptr = (map as *(K, V) + i) as *K;
     if *(k_ptr as *int) == 0 {
@@ -277,7 +300,7 @@ pub fn insert<K, V>(map_ref: *{K: V}, key: K, value: V) {
         *map_ref = init_map((0, null) as <(K, V)>);
     }
     let map = *map_ref;
-    let capacity = *(map as *int - 1) / sizeof(*(map as *(K, V)));
+    let capacity = *(map as *int - 1) / sizeof((K, V));
     let i = hash(key) % capacity;
     let k_ptr = (map as *(K, V) + i) as *K;
     *k_ptr = key;

@@ -233,11 +233,14 @@ pub enum BuiltInKind {
     StackPointer,
     Sizeof,
     Param,
+    IsType,
 }
 #[derive(Debug, Clone)]
 pub struct BuiltIn {
     pub kind: BuiltInKind,
     pub args: Vec<Expr>,
+    pub type_args: Vec<Type>,
+    pub tys: Vec<types::Type>,
 }
 #[derive(Debug, Clone)]
 pub struct Ternary {
@@ -300,6 +303,7 @@ pub enum Stmt {
     Syscall(Syscall),
     Enum(Enum),
     Extern(Extern),
+    Marker,
 }
 #[derive(Debug)]
 pub struct Module {

@@ -201,23 +201,22 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             if let Some(Token::OpenParen) = tokens.peek() {
                 tokens.next();
                 let kind = match value.as_str() {
-                    "len" | "sp" | "copy" | "sizeof" | "param" => {
-                        let args = parse_args(tokens)?;
-                        node::ExprKind::BuiltIn(node::BuiltIn {
-                            kind: match value.as_str() {
-                                "len" => node::BuiltInKind::Len,
-                                "sp" => node::BuiltInKind::StackPointer,
-                                "copy" => node::BuiltInKind::Copy,
-                                "sizeof" => node::BuiltInKind::Sizeof,
-                                "param" => node::BuiltInKind::Param,
-                                _ => unreachable!(),
-                            },
-                            args,
-                        })
+                    "len" | "sp" | "copy" | "sizeof" | "param" | "istype" => {
+                        let (kind, expr_count) = match value.as_str() {
+                            "len" => (node::BuiltInKind::Len, usize::MAX),
+                            "sp" => (node::BuiltInKind::StackPointer, usize::MAX),
+                            "copy" => (node::BuiltInKind::Copy, usize::MAX),
+                            "sizeof" => (node::BuiltInKind::Sizeof, 0),
+                            "param" => (node::BuiltInKind::Param, usize::MAX),
+                            "istype" => (node::BuiltInKind::IsType, 1),
+                            _ => unreachable!(),
+                        };
+                        let (args, type_args) = parse_args(tokens, Token::CloseParen, expr_count)?;
+                        node::ExprKind::BuiltIn(node::BuiltIn { kind, args, type_args, tys: vec![] })
                     }
                     _ => node::ExprKind::Call(node::Call {
                         name: pos_str,
-                        args: parse_args(tokens)?,
+                        args: parse_args(tokens, Token::CloseParen, usize::MAX)?.0,
                     }),
                 };
                 return Ok(expr(start, tokens.prev_index(), kind));
@@ -422,6 +421,8 @@ fn parse_array_access(tokens: &mut VecIter<Token>, root: node::Expr, start: usiz
             node::ExprKind::BuiltIn(node::BuiltIn {
                 kind: node::BuiltInKind::Len,
                 args: vec![root.clone()],
+                type_args: vec![],
+                tys: vec![],
             }),
         )
     });
@@ -581,27 +582,37 @@ fn parse_unpack(tokens: &mut VecIter<Token>) -> Result<node::Unpack, ParseError>
     })
 }
 
-fn parse_args(tokens: &mut VecIter<Token>) -> Result<Vec<node::Expr>, ParseError> {
-    let mut res = Vec::new();
+fn parse_args(tokens: &mut VecIter<Token>, closing: Token, expr_count: usize) -> Result<(Vec<node::Expr>, Vec<node::Type>), ParseError> {
+    let mut exprs = Vec::new();
+    let mut types = Vec::new();
+    let close_str = format!("'{}'", closing.to_string());
     if tokens.peek().is_none() {
-        return Err(ParseError::UnexpectedEndOfInput("')'".to_string()));
+        return Err(ParseError::UnexpectedEndOfInput(close_str));
     }
-    if let Token::CloseParen = tokens.peek().unwrap() {
-        tokens.next();
-        return Ok(res);
+    if let Some(t) = tokens.peek() {
+        if *t == closing {
+            tokens.next();
+            return Ok((exprs, types));
+        }
     }
+    let mut count = 0;
     loop {
-        res.push(parse_expr(tokens, 0)?);
-        let tok = check_none(tokens, "')'")?;
-        if let Token::CloseParen = tok {
-            break;
-        }
-        if let Token::Comma = tok {
+        count += 1;
+        if count > expr_count {
+            types.push(parse_type(tokens)?);
         } else {
-            return Err(unexp(tok, tokens.prev_index(), "')'"));
+            exprs.push(parse_expr(tokens, 0)?);
+        }
+        let tok = check_none(tokens, &close_str)?;
+        if closing == tok {
+            break;
+        } else if let Token::Comma = tok {
+            continue;
+        } else {
+            return Err(unexp(tok, tokens.prev_index(), &close_str));
         }
     }
-    Ok(res)
+    Ok((exprs, types))
 }
 
 fn parse_scope(tokens: &mut VecIter<Token>) -> Result<Vec<node::Stmt>, ParseError> {
@@ -622,32 +633,6 @@ fn parse_scope(tokens: &mut VecIter<Token>) -> Result<Vec<node::Stmt>, ParseErro
         res.push(parse_stmt(tokens)?);
     }
     Ok(res)
-}
-
-fn parse_types_list(tokens: &mut VecIter<Token>, closing: Token) -> Result<Vec<node::Type>, ParseError> {
-    let mut types = Vec::new();
-    let close_str = format!("'{}'", closing.to_string());
-    if tokens.peek().is_none() {
-        return Err(ParseError::UnexpectedEndOfInput(close_str));
-    }
-    if let Some(t) = tokens.peek() {
-        if *t == closing {
-            tokens.next();
-            return Ok(types);
-        }
-    }
-    loop {
-        types.push(parse_type(tokens)?);
-        let tok = check_none(tokens, &close_str)?;
-        if closing == tok {
-            break;
-        } else if let Token::Comma = tok {
-            continue;
-        } else {
-            return Err(unexp(tok, tokens.prev_index(), &close_str));
-        }
-    }
-    Ok(types)
 }
 
 fn parse_type_args(tokens: &mut VecIter<Token>, closing: Token) -> Result<(Vec<PosStr>, Vec<node::Type>), ParseError> {
@@ -987,7 +972,7 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
                 return Ok(r#type(start, tokens.prev_index(), node::TypeKind::Struct(names, types)));
             }
         }
-        let list = parse_types_list(tokens, Token::CloseParen)?;
+        let (_, list) = parse_args(tokens, Token::CloseParen, 0)?;
         Ok(r#type(start, tokens.prev_index(), node::TypeKind::Tuple(list)))
     } else if let Token::OpenSquare = &tok {
         let ty = parse_type(tokens)?;
@@ -1047,7 +1032,7 @@ fn parse_fn_sig(tokens: &mut VecIter<Token>) -> Result<(PosStr, Vec<node::Type>,
     let Token::OpenParen = tok else {
         return Err(unexp(tok, tokens.prev_index(), "'('"));
     };
-    let types = parse_types_list(tokens, Token::CloseParen)?;
+    let (_, types) = parse_args(tokens, Token::CloseParen, 0)?;
     let decl_type;
     if let Some(Token::Op { value }) = tokens.peek() {
         if value == "->" {

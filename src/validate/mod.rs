@@ -210,6 +210,7 @@ pub enum SemanticError {
     TypeInFunc(PosStr),
     DecoratorInFunc(Span),
     InvalidArgCount(Span, usize, usize),
+    InvalidTypeArgCount(Span, usize, usize),
     ArgTypeMismatch(Span, Type, Type),
     NoFnSig(String, Span, Vec<Type>, Option<Type>),
     InvalidStructKey(PosStr, PosStr),
@@ -282,6 +283,7 @@ impl Validate {
             node::Stmt::Continue(pos_id) => self.check_loop("Continue", *pos_id),
             node::Stmt::Extern(ext) => self.r#extern(ext),
             node::Stmt::Syscall(_) => Ok(()), // Checked while hoisting
+            node::Stmt::Marker => Ok(()),
         }
     }
 
@@ -1205,7 +1207,7 @@ impl Validate {
             }
         }
         let mut generics = HashMap::new();
-        let sigs = self.fn_map.get(func).unwrap();
+        let sigs = self.fn_map.get(func).unwrap_or_else(|| panic!("{} {:?}", func, self.fn_map.keys()));
         let sig = sigs.iter().find(|(_, id)| s.ends_with(&format!(".{}", id))).unwrap();
         for (arg_ty, param_ty) in expected_sig.iter().zip(sig.0.iter()) {
             param_ty.match_generics(arg_ty, &mut generics).ok();
@@ -1251,12 +1253,21 @@ impl Validate {
     }
 
     fn built_in(&mut self, built_in: &mut node::BuiltIn, span: Span) -> Result<Type, SemanticError> {
+        for expr in built_in.args.iter_mut() {
+            self.expr(expr)?;
+        }
+        for node_ty in built_in.type_args.iter() {
+            built_in.tys.push(self.r#type(node_ty, false)?)
+        }
         match built_in.kind {
             node::BuiltInKind::Len => {
+                if built_in.type_args.len() != 0 {
+                    return Err(SemanticError::InvalidTypeArgCount(span, built_in.type_args.len(), 0));
+                }
                 if built_in.args.len() != 1 {
                     return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 1));
                 }
-                let mut ty = self.expr(built_in.args.get_mut(0).unwrap())?;
+                let mut ty = built_in.args.get(0).unwrap().ty.clone();
                 if let Type::Pointer(p) = &ty {
                     ty = *p.clone();
                 }
@@ -1267,39 +1278,58 @@ impl Validate {
                 Ok(Type::Int)
             }
             node::BuiltInKind::Copy => {
+                if built_in.type_args.len() != 0 {
+                    return Err(SemanticError::InvalidTypeArgCount(span, built_in.type_args.len(), 0));
+                }
                 let [a, b, c] = &mut built_in.args[..] else {
                     return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 3));
                 };
-                let Type::Pointer(_) = self.expr(a)? else {
+                let Type::Pointer(_) = a.ty else {
                     return Err(SemanticError::ArgTypeMismatch(a.span, Type::Pointer(Box::new(Type::Any)), a.ty.clone()));
                 };
-                let Type::Pointer(_) = self.expr(b)? else {
+                let Type::Pointer(_) = b.ty else {
                     return Err(SemanticError::ArgTypeMismatch(b.span, Type::Pointer(Box::new(Type::Any)), b.ty.clone()));
                 };
-                let Type::Int = self.expr(c)? else {
+                let Type::Int = c.ty else {
                     return Err(SemanticError::ArgTypeMismatch(a.span, Type::Int, c.ty.clone()));
                 };
                 Ok(Type::Void)
             }
             node::BuiltInKind::StackPointer => {
+                if built_in.type_args.len() != 0 {
+                    return Err(SemanticError::InvalidTypeArgCount(span, built_in.type_args.len(), 0));
+                }
                 if built_in.args.len() != 0 {
                     return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 0));
                 }
                 Ok(Type::Pointer(Box::new(Type::Any)))
             }
             node::BuiltInKind::Sizeof => {
-                if built_in.args.len() != 1 {
-                    return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 1));
+                if built_in.type_args.len() != 1 {
+                    return Err(SemanticError::InvalidTypeArgCount(span, built_in.type_args.len(), 1));
                 }
-                self.expr(built_in.args.get_mut(0).unwrap())?;
+                if built_in.args.len() != 0 {
+                    return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 0));
+                }
                 Ok(Type::Int)
             }
             node::BuiltInKind::Param => {
+                if built_in.type_args.len() != 0 {
+                    return Err(SemanticError::InvalidTypeArgCount(span, built_in.type_args.len(), 0));
+                }
                 if built_in.args.len() != 1 {
                     return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 1));
                 }
-                self.expr(built_in.args.get_mut(0).unwrap())?;
                 Ok(Type::Void)
+            }
+            node::BuiltInKind::IsType => {
+                if built_in.type_args.len() != 1 {
+                    return Err(SemanticError::InvalidTypeArgCount(span, built_in.type_args.len(), 1));
+                }
+                if built_in.args.len() != 1 {
+                    return Err(SemanticError::InvalidArgCount(span, built_in.args.len(), 1));
+                }
+                Ok(Type::Bool)
             }
         }
     }
@@ -1500,6 +1530,31 @@ impl Validate {
         let capture_ty = match ty {
             Type::Slice { inner } => *inner,
             Type::Range => Type::Int,
+            Type::Struct(map) => {
+                let mut scope = vec![];
+                let mut items: Vec<_> = map.iter().collect();
+                items.sort_by_key(|(_, (_, offset))| *offset);
+                for (_, (ty, _)) in items {
+                    self.symbol_table.insert(
+                        r#for.capture.str.clone(),
+                        Symbol::Var {
+                            ty: Type::Struct(HashMap::from([
+                                ("name".to_string(), (Type::Slice { inner: Box::new(Type::Char) }, 0)),
+                                ("value".to_string(), (ty.clone(), 16)),
+                            ])),
+                        },
+                    );
+                    self.loop_count += 1;
+                    let mut new_scope = r#for.scope.clone();
+                    self.scope(&mut new_scope)?;
+                    scope.extend(new_scope);
+                    scope.push(node::Stmt::Marker);
+                    self.loop_count -= 1;
+                    self.symbol_table.remove(&r#for.capture.str);
+                }
+                r#for.scope = scope;
+                return Ok(());
+            }
             other => {
                 let inner = other.inner(1).clone();
                 let expected = Type::Slice { inner: Box::new(inner.clone()) };
