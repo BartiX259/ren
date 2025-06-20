@@ -1555,6 +1555,21 @@ impl Validate {
                 r#for.scope = scope;
                 return Ok(());
             }
+            Type::Tuple(tys) => {
+                let mut scope = vec![];
+                for ty in tys {
+                    self.symbol_table.insert(r#for.capture.str.clone(), Symbol::Var { ty });
+                    self.loop_count += 1;
+                    let mut new_scope = r#for.scope.clone();
+                    self.scope(&mut new_scope)?;
+                    scope.extend(new_scope);
+                    scope.push(node::Stmt::Marker);
+                    self.loop_count -= 1;
+                    self.symbol_table.remove(&r#for.capture.str);
+                }
+                r#for.scope = scope;
+                return Ok(());
+            }
             other => {
                 let inner = other.inner(1).clone();
                 let expected = Type::Slice { inner: Box::new(inner.clone()) };

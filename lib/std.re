@@ -167,6 +167,10 @@ pub fn str<T>(x: <T>) -> <char> {
     return s;
 }
 
+fn str<T>(x: (name: <char>, value: T)) -> <char> {
+    return "{x.name}: {str(x.value)}";
+}
+
 pub fn str<T>(x: T) -> <char> {
     let s = +"(";
     let start = true;
@@ -176,15 +180,7 @@ pub fn str<T>(x: T) -> <char> {
         } else {
             push(&s, ", ");
         }
-        push(&s, field.name);
-        push(&s, ": ");
-        if istype(field.value, <char>) {
-            push(&s, '"');
-        }
-        push(&s, str(field.value));
-        if istype(field.value, <char>) {
-            push(&s, '"');
-        }
+        push(&s, str(field));
     }
     push(&s, ')');
     return s;

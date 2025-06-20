@@ -31,51 +31,50 @@ impl Type {
             Type::Result(ty, err) => ty.size().max(err.size()) + 8,
             Type::Option(ty) => ty.size() + 8,
             Type::Range | Type::Slice { .. } | Type::List { .. } => 16,
-            Type::HashMap {..} => 8,
+            Type::HashMap { .. } => 8,
             Type::Enum(variants) => {
-                let max_variant_size = variants.iter()
-                    .map(|(_, opt_ty)| opt_ty.as_ref().map_or(0, |ty| ty.size()))
-                    .max()
-                    .unwrap_or(0); // In case Enum is empty
+                let max_variant_size = variants.iter().map(|(_, opt_ty)| opt_ty.as_ref().map_or(0, |ty| ty.size())).max().unwrap_or(0); // In case Enum is empty
                 let tag_bits = (variants.len() as f64).log2().ceil() as u32;
                 let tag_size = ((tag_bits + 7) / 8).max(1); // At least 1 byte
                 max_variant_size + tag_size
             }
             Type::Int | Type::Float | Type::Pointer(_) => 8,
             Type::Char | Type::Bool | Type::Any | Type::Void => 1,
-            Type::Generic(_) => panic!("Generic size called")
+            Type::Generic(_) => panic!("Generic size called ({self})"),
         }
     }
     pub fn aligned_size(&self) -> u32 {
         Self::align(self.size())
     }
     pub fn align(size: u32) -> u32 {
-        (size + 7) & !7  // round up to the next multiple of 8
+        (size + 7) & !7 // round up to the next multiple of 8
     }
     pub fn dereference(&self) -> Option<Type> {
         match self {
             Type::Pointer(p) | Type::Array { inner: p, .. } => Some(*p.clone()),
             Type::Range => Some(Type::Int),
-            _ => None
+            _ => None,
         }
     }
     pub fn address_of(&self) -> Option<Type> {
         match self {
             Type::Array { inner: p, length: _ } => Some(*p.clone()),
-            _ => None
+            _ => None,
         }
     }
     pub fn inner(&self, max_depth: usize) -> &Type {
-        if max_depth == 0 { return self; }
+        if max_depth == 0 {
+            return self;
+        }
         match self {
-            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p } | Type::Option(p)  => p.inner(max_depth - 1),
-            _ => self
+            Type::Pointer(p) | Type::Array { inner: p, .. } | Type::List { inner: p } | Type::Slice { inner: p } | Type::Option(p) => p.inner(max_depth - 1),
+            _ => self,
         }
     }
     pub fn salloc(&self) -> bool {
         match self {
             Type::Array { .. } | Type::Struct(_) | Type::Tuple(_) | Type::Slice { .. } | Type::List { .. } | Type::Range => true,
-            _ => false
+            _ => false,
         }
     }
     pub fn match_generics(&self, expected: &Type, generics: &mut HashMap<String, Type>) -> Result<(), String> {
@@ -93,10 +92,7 @@ impl Type {
                 }
                 Ok(())
             }
-            (Type::Pointer(a), Type::Pointer(b)) |
-            (Type::Option(a), Type::Option(b)) |
-            (Type::List { inner: a }, Type::List { inner: b }) |
-            (Type::Slice { inner: a }, Type::Slice { inner: b }) => {
+            (Type::Pointer(a), Type::Pointer(b)) | (Type::Option(a), Type::Option(b)) | (Type::List { inner: a }, Type::List { inner: b }) | (Type::Slice { inner: a }, Type::Slice { inner: b }) => {
                 a.match_generics(b, generics)
             }
             (Type::Array { inner: a, length: len1 }, Type::Array { inner: b, length: len2 }) => {
@@ -143,48 +139,47 @@ impl Type {
             }
         }
     }
-        pub fn substitute_generics(&self, generics: &HashMap<String, Type>) -> Type {
-            match self {
-                Type::Generic(s) => generics.get(s).cloned().unwrap_or_else(|| self.clone()),
-                Type::Pointer(inner) => Type::Pointer(Box::new(inner.substitute_generics(generics))),
-                Type::Option(inner) => Type::Option(Box::new(inner.substitute_generics(generics))),
-                Type::List { inner } => Type::List {
-                    inner: Box::new(inner.substitute_generics(generics)),
-                },
-                Type::Slice { inner } => Type::Slice {
-                    inner: Box::new(inner.substitute_generics(generics)),
-                },
-                Type::Array { inner, length } => Type::Array {
-                    inner: Box::new(inner.substitute_generics(generics)),
-                    length: *length,
-                },
-                Type::Tuple(items) => Type::Tuple(
-                    items.iter().map(|t| t.substitute_generics(generics)).collect()
-                ),
-                Type::Result(ok, err) => Type::Result(
-                    Box::new(ok.substitute_generics(generics)),
-                    Box::new(err.substitute_generics(generics)),
-                ),
-                Type::HashMap { key, value } => Type::HashMap {
-                    key: Box::new(key.substitute_generics(generics)),
-                    value: Box::new(value.substitute_generics(generics)),
-                },
-                Type::Struct(fields) => {
-                    let mut i = 0;
-                    let mut map: HashMap<String, (Type, u32)> = HashMap::new();
-                    let mut items: Vec<_> = fields.iter().collect();
-                    items.sort_by_key(|(_, (_, offset))| *offset);
-                    for (name, (ty, _)) in items {
-                        let new_ty = ty.substitute_generics(generics);
-                        let add = new_ty.size();
-                        map.insert(name.clone(), (new_ty, i));
-                        i += add;
+    pub fn substitute_generics(&self, generics: &HashMap<String, Type>) -> Type {
+        match self {
+            Type::Generic(s) => generics.get(s).cloned().unwrap_or_else(|| self.clone()),
+            Type::Pointer(inner) => Type::Pointer(Box::new(inner.substitute_generics(generics))),
+            Type::Option(inner) => Type::Option(Box::new(inner.substitute_generics(generics))),
+            Type::List { inner } => Type::List {
+                inner: Box::new(inner.substitute_generics(generics)),
+            },
+            Type::Slice { inner } => Type::Slice {
+                inner: Box::new(inner.substitute_generics(generics)),
+            },
+            Type::Array { inner, length } => Type::Array {
+                inner: Box::new(inner.substitute_generics(generics)),
+                length: *length,
+            },
+            Type::Tuple(items) => Type::Tuple(items.iter().map(|t| t.substitute_generics(generics)).collect()),
+            Type::Result(ok, err) => Type::Result(Box::new(ok.substitute_generics(generics)), Box::new(err.substitute_generics(generics))),
+            Type::HashMap { key, value } => Type::HashMap {
+                key: Box::new(key.substitute_generics(generics)),
+                value: Box::new(value.substitute_generics(generics)),
+            },
+            Type::Struct(fields) => {
+                let mut i = 0;
+                let mut map: HashMap<String, (Type, u32)> = HashMap::new();
+                let mut items: Vec<_> = fields.iter().collect();
+                items.sort_by_key(|(_, (_, offset))| *offset);
+                println!("gen: {generics:?}");
+                for (name, (ty, _)) in items {
+                    let new_ty = ty.substitute_generics(generics);
+                    if let Type::Generic(_) = new_ty {
+                        return self.clone();
                     }
-                    Type::Struct(map)
-                },
-                _ => self.clone(),
+                    let add = new_ty.size();
+                    map.insert(name.clone(), (new_ty, i));
+                    i += add;
+                }
+                Type::Struct(map)
             }
+            _ => self.clone(),
         }
+    }
 }
 
 impl Display for Type {
@@ -209,7 +204,7 @@ impl Display for Type {
                 let mut start = true;
                 for (name, (ty, _)) in sorted {
                     if !start {
-                       write!(f, ", ")?; 
+                        write!(f, ", ")?;
                     } else {
                         start = false;
                     }
@@ -222,7 +217,7 @@ impl Display for Type {
                 let mut start = true;
                 for ty in tys {
                     if !start {
-                       write!(f, ", ")?; 
+                        write!(f, ", ")?;
                     } else {
                         start = false;
                     }
@@ -233,7 +228,7 @@ impl Display for Type {
             Type::Enum(_) => write!(f, "enum"),
             Type::Result(ty, err) => write!(f, "{ty} ? {err}"),
             Type::Option(ty) => write!(f, "?{ty}"),
-            Type::HashMap { key, value } => write!(f, "{{{key}: {value}}}")
+            Type::HashMap { key, value } => write!(f, "{{{key}: {value}}}"),
         }
     }
 }

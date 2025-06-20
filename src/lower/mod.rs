@@ -1477,6 +1477,7 @@ impl<'a> Lower<'a> {
             Type::Slice { inner } => self.for_in_slice(r#for, st, inner, s, i, c),
             Type::Range => self.for_in_range(r#for, st, s, i, c),
             Type::Struct(map) => self.for_in_struct(r#for, st, map),
+            Type::Tuple(tys) => self.for_in_tuple(r#for, st, tys),
             _ => panic!("not slice"),
         };
         self.push_op(Op::Label { label: e }, r#for.pos_id);
@@ -1687,6 +1688,44 @@ impl<'a> Lower<'a> {
                 Op::Copy {
                     from,
                     to,
+                    size: Term::IntLit(size as i64),
+                },
+                r#for.pos_id,
+            );
+            self.var_map.insert(r#for.capture.str.clone(), el);
+            self.scope(&scope, 0);
+            if let Some(pos) = scope.iter().position(|stmt| matches!(stmt, node::Stmt::Marker)) {
+                let remaining = scope.split_off(pos + 1);
+                scope = remaining;
+            }
+            self.push_op(Op::EndScope, r#for.pos_id);
+        }
+    }
+
+    fn for_in_tuple(&mut self, r#for: &node::ForIn, tup: Term, tys: &Vec<Type>) {
+        let mut offset = 0;
+        let mut scope: Vec<_> = r#for.scope.clone();
+        for ty in tys {
+            self.push_op(Op::BeginScope, r#for.pos_id);
+            self.stack_count += 1;
+            let el = Term::Stack(self.stack_count);
+            let size = ty.aligned_size();
+            self.push_op(Op::Decl { term: el.clone(), size }, r#for.pos_id);
+            self.stack_count += 1;
+            let from = Term::Stack(self.stack_count);
+            self.push_op(
+                Op::Own {
+                    res: from.clone(),
+                    term: tup.clone(),
+                    offset,
+                },
+                r#for.pos_id,
+            );
+            offset += ty.size() as i64;
+            self.push_op(
+                Op::Copy {
+                    from,
+                    to: el.clone(),
                     size: Term::IntLit(size as i64),
                 },
                 r#for.pos_id,
