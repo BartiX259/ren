@@ -73,6 +73,17 @@ impl Process {
                 expr: self.expr(r#for.expr),
                 scope: self.scope(r#for.scope),
             }),
+            node::Stmt::Match(m) => node::Stmt::Match(node::Match {
+                pos_id: m.pos_id,
+                match_expr: self.expr(m.match_expr),
+                branches: m.branches.into_iter().map(|(e, scope)| (self.expr(e), self.scope(scope))).collect(),
+            }),
+            node::Stmt::MatchType(m) => node::Stmt::MatchType(node::MatchType {
+                pos_id: m.pos_id,
+                generics: m.generics,
+                match_type: m.match_type,
+                branches: m.branches.into_iter().map(|(t, scope, active)| (t, if active { self.scope(scope) } else { scope }, active)).collect(),
+            }),
             _ => stmt,
         }
     }
@@ -564,6 +575,9 @@ impl Process {
                 let alloc_fn = un.op.str.split("+").last().unwrap().to_string();
                 return node::ExprKind::ListLit(arr_lit, alloc_fn);
             }
+        }
+        if un.op.str == "&" {
+            return node::ExprKind::UnExpr(un);
         }
         node::ExprKind::UnExpr(node::UnExpr {
             expr: Box::new(self.expr(*un.expr)),

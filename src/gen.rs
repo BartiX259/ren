@@ -38,6 +38,8 @@ struct ProgState {
 struct Gen<'a> {
     buf: IndentedBuf,
     cur_module: String,
+    cur_block: Block,
+    cur_fn: String,
     symbol_table: &'a mut HashMap<String, Symbol>,
     locs: HashMap<Term, i64>,
     doubles: HashMap<Term, (String, String)>,
@@ -59,6 +61,8 @@ impl<'a> Gen<'a> {
         Self {
             buf: IndentedBuf::new(8, 24),
             cur_module: String::new(),
+            cur_block: Block::new(),
+            cur_fn: String::new(),
             symbol_table: ir,
             locs: HashMap::new(),
             doubles: HashMap::new(),
@@ -341,6 +345,7 @@ impl<'a> Gen<'a> {
             match sym {
                 Some(Symbol::MainFunc { block, module, .. }) | Some(Symbol::Func { block, module, .. }) => {
                     self.cur_module = module.to_string();
+                    self.cur_fn = name.clone();
                     self.buf.push_line("");
                     self.buf.push_line(format!("{}:", name));
                     self.buf.indent();
@@ -361,6 +366,7 @@ impl<'a> Gen<'a> {
     }
 
     fn block(&mut self, block: Block) -> Result<(), GenError> {
+        self.cur_block = block.clone();
         let mut locs = block.locs.iter();
         let mut iter = block.ops.into_iter().peekable();
         while let Some(op) = iter.next() {
@@ -684,14 +690,22 @@ impl<'a> Gen<'a> {
                     self.clear_reg(&r.1.name);
                 }
             }
+            self.clear_reg(&r.1.name);
         }
     }
     fn restore_sp(&mut self, depth: usize) {
-        if let Some(sp) = if depth == 0 {
-            self.saved_sps.pop()
+        let opt_sp;
+        if depth == 0 {
+            opt_sp = self.saved_sps.pop()
         } else {
-            self.saved_sps.get(self.saved_sps.len() - depth).cloned()
-        } {
+            let i = self.saved_sps.len() - depth;
+            let diff = self.sp - self.saved_sps.get(i).cloned().unwrap();
+            // if diff == 24 {
+            //     panic!("{:?}, {}, {}", self.saved_sps, i, diff);
+            // }
+            opt_sp = self.saved_sps.get(i).cloned()
+        }
+        if let Some(sp) = opt_sp {
             if self.sp != sp {
                 if self.buf.last_line != "ret" {
                     self.buf.push_line(format!("add rsp, {}", self.sp - sp));
@@ -955,7 +969,7 @@ impl<'a> Gen<'a> {
     fn unop(&mut self, term: Term, op: String, res: Term, size: u32) -> Result<(), GenError> {
         match op.as_str() {
             "&" => {
-                let loc = self.locs.get(&term).expect(format!("Couldn't find {:?}", term).as_str());
+                let loc = self.locs.get(&term).expect(format!("{:?}\n{:?}\nCouldn't find {:?}", self.cur_fn, self.cur_block, term).as_str());
                 let target = self.get_free_reg()?;
                 self.buf.push_line(format!("mov {}, rsp", target));
                 if self.sp != *loc {
@@ -979,9 +993,14 @@ impl<'a> Gen<'a> {
             }
             "!" => {
                 self.buf.push_line(format!("test {}, {}", d, d));
-                self.buf.push_line(format!("sete {}", Self::reg_name(&r, 1)));
+                let res = Self::reg_name(&r, 1);
+                self.buf.push_line(format!("sete {}", res));
+                if d != res {
+                    self.buf.push_line(format!("movzx {}, {}", d, res));
+                }
             }
             "~" => self.buf.push_line(format!("not {}", d)),
+            "0extend" => self.buf.push_line(format!("movzx {}, {}", r, d)),
             _ => unreachable!("Unknown unary op '{}'.", op),
         }
         self.save_reg(&r, &res);

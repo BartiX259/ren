@@ -192,9 +192,11 @@ pub enum SemanticError {
     SymbolExists(PosStr),
     UndeclaredSymbol(PosStr),
     TypeMismatch(PosStr, Type, Type),
+    UnexpectedType(Span, Type, Type),
     NotIterable(Span, Type),
     NotUnwrappable(PosStr),
     NoCapture(Span),
+    NoMatch(usize, Type),
     InvalidReturn(usize),
     NotInLoop(String, usize),
     InvalidAssign(Span),
@@ -281,6 +283,8 @@ impl Validate {
             node::Stmt::ForIn(r#for) => self.for_in(r#for),
             node::Stmt::Break(pos_id) => self.check_loop("Break", *pos_id),
             node::Stmt::Continue(pos_id) => self.check_loop("Continue", *pos_id),
+            node::Stmt::Match(m) => self.r#match(m),
+            node::Stmt::MatchType(m) => self.match_type(m),
             node::Stmt::Extern(ext) => self.r#extern(ext),
             node::Stmt::Syscall(_) => Ok(()), // Checked while hoisting
             node::Stmt::Marker => Ok(()),
@@ -935,11 +939,30 @@ impl Validate {
             }
             "&" => {
                 if let node::ExprKind::Variable(_) = un.expr.kind {
-                    if let Some(p) = ty.address_of() {
-                        Ok(Type::Pointer(Box::new(p)))
-                    } else {
-                        Ok(Type::Pointer(Box::new(ty)))
+                    // if let Some(p) = ty.address_of() {
+                    //     Ok(Type::Pointer(Box::new(p)))
+                    // } else {
+                    //     Ok(Type::Pointer(Box::new(ty)))
+                    // }
+                    Ok(Type::Pointer(Box::new(ty)))
+                } else if let node::ExprKind::BinExpr(b) = &un.expr.kind {
+                    if b.op.str == "." {
+                        if let node::ExprKind::Variable(l) = &b.lhs.kind {
+                            if let node::ExprKind::Variable(r) = &b.rhs.kind {
+                                let Some(Symbol::Var { ty }) = self.symbol_table.get(&l.str) else {
+                                    return Err(SemanticError::UndeclaredSymbol(l.clone()));
+                                };
+                                let Type::Struct(map) = ty else {
+                                    return Err(SemanticError::InvalidMemberAccess(un.expr.span));
+                                };
+                                let Some((ty, _)) = map.get(&r.str) else {
+                                    return Err(SemanticError::InvalidMemberAccess(un.expr.span));
+                                };
+                                return Ok(Type::Pointer(Box::new(ty.clone())));
+                            }
+                        }
                     }
+                    Err(SemanticError::InvalidAddressOf(un.op.clone()))
                 } else {
                     Err(SemanticError::InvalidAddressOf(un.op.clone()))
                 }
@@ -1531,29 +1554,16 @@ impl Validate {
             Type::Slice { inner } => *inner,
             Type::Range => Type::Int,
             Type::Struct(map) => {
-                let mut scope = vec![];
-                let mut items: Vec<_> = map.iter().collect();
-                items.sort_by_key(|(_, (_, offset))| *offset);
-                for (_, (ty, _)) in items {
-                    self.symbol_table.insert(
-                        r#for.capture.str.clone(),
-                        Symbol::Var {
-                            ty: Type::Struct(HashMap::from([
-                                ("name".to_string(), (Type::Slice { inner: Box::new(Type::Char) }, 0)),
-                                ("value".to_string(), (ty.clone(), 16)),
-                            ])),
-                        },
-                    );
-                    self.loop_count += 1;
-                    let mut new_scope = r#for.scope.clone();
-                    self.scope(&mut new_scope)?;
-                    scope.extend(new_scope);
-                    scope.push(node::Stmt::Marker);
-                    self.loop_count -= 1;
-                    self.symbol_table.remove(&r#for.capture.str);
-                }
-                r#for.scope = scope;
+                self.for_in_struct(r#for, map, false)?;
                 return Ok(());
+            }
+            Type::Pointer(inner) => {
+                if let Type::Struct(map) = *inner {
+                    self.for_in_struct(r#for, map, true)?;
+                    return Ok(());
+                } else {
+                    return Err(SemanticError::NotIterable(r#for.expr.span, Type::Pointer(inner)));
+                }
             }
             Type::Tuple(tys) => {
                 let mut scope = vec![];
@@ -1593,6 +1603,37 @@ impl Validate {
         Ok(())
     }
 
+    fn for_in_struct(&mut self, r#for: &mut node::ForIn, map: HashMap<String, (Type, u32)>, pointer_mode: bool) -> Result<(), SemanticError> {
+        let mut scope = vec![];
+        let mut items: Vec<_> = map.iter().collect();
+        items.sort_by_key(|(_, (_, offset))| *offset);
+
+        for (_, (ty, _)) in items {
+            let value_ty = if pointer_mode { Type::Pointer(Box::new(ty.clone())) } else { ty.clone() };
+
+            self.symbol_table.insert(
+                r#for.capture.str.clone(),
+                Symbol::Var {
+                    ty: Type::Struct(HashMap::from([
+                        ("name".to_string(), (Type::Slice { inner: Box::new(Type::Char) }, 0)),
+                        ("value".to_string(), (value_ty, 16)),
+                    ])),
+                },
+            );
+
+            self.loop_count += 1;
+            let mut new_scope = r#for.scope.clone();
+            self.scope(&mut new_scope)?;
+            scope.extend(new_scope);
+            scope.push(node::Stmt::Marker);
+            self.loop_count -= 1;
+            self.symbol_table.remove(&r#for.capture.str);
+        }
+
+        r#for.scope = scope;
+        Ok(())
+    }
+
     fn r#extern(&mut self, ext: &mut node::Extern) -> Result<(), SemanticError> {
         if self.cur_func.is_some() {
             return Err(SemanticError::FuncInFunc(ext.name.clone()));
@@ -1609,6 +1650,65 @@ impl Validate {
             args.push(ty.clone());
         }
         self.symbol_table.insert(ext.name.str.clone(), Symbol::ExternFunc { ty, args });
+        Ok(())
+    }
+
+    fn r#match(&mut self, m: &mut node::Match) -> Result<(), SemanticError> {
+        let ty = self.expr(&mut m.match_expr)?;
+        for (e, scope) in m.branches.iter_mut() {
+            if let ExprKind::Variable(var) = &e.kind {
+                self.symbol_table.insert(var.str.clone(), Symbol::Var { ty: ty.clone() });
+            } else {
+                let match_ty = self.expr(e)?;
+                if ty != match_ty {
+                    return Err(SemanticError::UnexpectedType(e.span, ty, match_ty));
+                }
+            }
+            self.scope(scope)?;
+            if let ExprKind::Variable(var) = &e.kind {
+                self.symbol_table.remove(&var.str);
+            }
+        }
+        Ok(())
+    }
+
+    fn match_type(&mut self, m: &mut node::MatchType) -> Result<(), SemanticError> {
+        let ty = self.r#type(&m.match_type, false)?;
+        let mut generics = HashMap::new();
+        self.cur_generics.extend(m.generics.clone());
+        for (t, scope, active) in m.branches.iter_mut() {
+            generics.clear();
+            if let node::TypeKind::Word(w) = &t.kind {
+                if (w == "struct" && matches!(ty, Type::Struct(_))) || (w == "array" && matches!(ty, Type::Array { .. })) || (w == "tuple" && matches!(ty, Type::Tuple(_))) {
+                    *active = true;
+                    self.scope(scope)?;
+                    break;
+                }
+                if ["struct", "array", "tuple"].contains(&w.as_str()) {
+                    continue;
+                }
+            }
+            let match_ty = self.r#type(t, false)?;
+            if ty == match_ty {
+                *active = true;
+                self.scope(scope)?;
+                break;
+            } else if match_ty.match_generics(&ty, &mut generics).is_ok() {
+                for (k, v) in &generics {
+                    self.symbol_table.insert(k.to_string(), Symbol::Type { ty: v.clone() });
+                }
+                *active = true;
+                self.scope(scope)?;
+                for k in generics.keys() {
+                    self.symbol_table.remove(k);
+                }
+                break;
+            }
+        }
+        if !m.branches.iter().any(|(_, _, active)| *active) {
+            return Err(SemanticError::NoMatch(m.pos_id, ty));
+        }
+        self.cur_generics.truncate(self.cur_generics.len() - m.generics.len());
         Ok(())
     }
 

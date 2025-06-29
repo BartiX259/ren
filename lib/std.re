@@ -170,27 +170,13 @@ pub fn str<T>(x: ?T) -> <char> {
     }
 }
 
-pub fn str<T>(x: <T>) -> <char> {
-    let s = +"[";
-    let start = true;
-    for el in x {
-        if start {
-            start = false;
-        } else {
-            push(&s, ", ");
-        }
-        push(&s, str(el));
-    }
-    push(&s, ']');
-    return s;
-}
-
-fn str<T>(x: (name: <char>, value: T)) -> <char> {
-    return "{x.name}: {str(x.value)}";
-}
-
 pub fn str<T>(x: T) -> <char> {
-    let s = +"(";
+    decl s: [char];
+    match <K> T {
+        struct { push(&s, '('); }
+        tuple { push(&s, '('); }
+        K { push(&s, '['); }
+    }
     let start = true;
     for field in x {
         if start {
@@ -198,9 +184,17 @@ pub fn str<T>(x: T) -> <char> {
         } else {
             push(&s, ", ");
         }
-        push(&s, str(field));
+        match <K> T {
+            struct { push(&s, "{field.name}: {field.value}"); }
+            K { push(&s, str(field)); }
+        }
+
     }
-    push(&s, ')');
+    match <K> T {
+        struct { push(&s, ')'); }
+        tuple { push(&s, ')'); }
+        K { push(&s, ']'); }
+    }
     return s;
 }
 
@@ -288,7 +282,7 @@ pub fn hash(x: int) -> int {
 
 pub fn init_map<K, V>(fields: <(K, V)>) -> {K: V} {
     let capacity = 100;
-    let ptr = alloc(capacity * sizeof(fields[0])) as *(K, V);
+    let ptr = alloc(capacity * sizeof((K, V))) as *(K, V);
     for f in fields {
         let i = hash(f[0]) % capacity;
         ptr[i] = f;
@@ -533,30 +527,37 @@ pub fn alloc(size: int) -> *any {
     }
     size = (size + 7) & ~7;
     let new_offset = allocator.offset + size + 8;
+
     if allocator.base == null {
-        while new_offset > *SPACE_SIZE {
-            *SPACE_SIZE = *SPACE_SIZE * 2;
+        let initial_size = *SPACE_SIZE;
+        if (new_offset > initial_size) {
+            initial_size = new_offset;
         }
-        allocator.base = mmap(null, *SPACE_SIZE, 3, 34, 0, 0);
-        allocator.size = *SPACE_SIZE;
+        allocator.base = mmap(null, initial_size, 3, 34, 0, 0);
+        allocator.size = initial_size;
     }
+
     if new_offset > allocator.size {
         collect();
-        new_offset = allocator.offset + size + 8;
-        if new_offset > allocator.size {
-            while new_offset > *SPACE_SIZE {
-                *SPACE_SIZE = *SPACE_SIZE * 2;
+        let new_offset_after_gc = allocator.offset + size + 8;
+        if new_offset_after_gc > allocator.size {
+            // The heap is truly full and needs to grow.
+            let required_size = *SPACE_SIZE * 2;
+            while(new_offset_after_gc > required_size) {
+                required_size *= 2;
             }
-            let to_space = mmap(null, *SPACE_SIZE, 3, 34, 0, 0);
-            copy(allocator.base, to_space, allocator.offset);
-            munmap(allocator.base, allocator.size);
-            allocator.base = to_space;
-            allocator.size = *SPACE_SIZE;
+            let old_base = allocator.base;
+            let old_size = allocator.size;
+            *SPACE_SIZE = required_size;
+            collect(); // Run collect again, this time it will use the larger SPACE_SIZE
+            munmap(old_base, old_size); // Free the smaller space we collected from
         }
+        new_offset = allocator.offset + size + 8; // Recalculate final offset
     }
+
     let res = allocator.base + allocator.offset;
     *(res as *int) = size + 8;
-    *(res as *int + 1) = 0;
+    *(res as *int + 1) = 0; // Mark as not-forwarded
     allocator.offset = new_offset;
     return res + 8;
 }
@@ -576,22 +577,38 @@ fn set_forward(ptr: *any, new_loc: *any) {
 
 fn collect() {
     let stack_end = sp() + 8;
-    let scan = allocator.stack;
-    let to_space = mmap(null, *SPACE_SIZE, 3, 34, 0, 0);
+    // Allocate a new space. Make sure it's big enough.
+    let new_heap_size = *SPACE_SIZE;
+    let to_space = mmap(null, new_heap_size, 3, 34, 0, 0);
     let offset = 0;
 
+    // --- Scan roots ---
+    let scan = allocator.stack;
     while scan > stack_end {
         scan -= 8;
         offset = collect_ptr(scan as **any, to_space, offset);
     }
+
+    // --- Scan the new heap ---
     scan = to_space;
     while scan < to_space + offset {
-        offset = collect_ptr(scan as **any, to_space, offset);
-        scan += 8;
+        let object_header = scan;
+        let object_size = *(object_header as *int);
+        let payload_ptr = object_header + 8;
+        let payload_size = object_size - 8;
+
+        let payload_scan = payload_ptr;
+        while payload_scan < payload_ptr + payload_size {
+            collect_ptr(payload_scan as **any, to_space, offset);
+            payload_scan += 8;
+        }
+        
+        scan += object_size; // Correctly jump to the next object
     }
 
     munmap(allocator.base, allocator.size);
     allocator.base = to_space;
+    allocator.size = new_heap_size;
     allocator.offset = offset;
 }
 

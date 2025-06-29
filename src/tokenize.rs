@@ -11,6 +11,43 @@ pub fn tokenize(input: &String) -> Result<(Vec<Token>, Vec<FilePos>), TokenizeEr
     let mut interps = Vec::new();
     while let Some(ch) = iter.next() {
         start = iter.current_index();
+        // Handle comments
+        if ch == '/' {
+            if let Some(&next_ch) = iter.peek() {
+                if next_ch == '/' {
+                    // Single-line comment: skip until newline or EOF
+                    iter.next();
+                    while let Some(nch) = iter.peek() {
+                        if *nch == '\n' {
+                            break;
+                        }
+                        iter.next();
+                    }
+                    continue;
+                } else if next_ch == '*' {
+                    // Multi-line comment: skip until */
+                    iter.next();
+                    loop {
+                        match iter.next() {
+                            Some('*') => {
+                                if let Some(&'/') = iter.peek() {
+                                    iter.next();
+                                    break;
+                                }
+                            }
+                            Some(_) => continue,
+                            None => {
+                                return Err(TokenizeError::UnclosedCharacter(InvalidCharacter {
+                                    ch: '/',
+                                    pos: FilePos { start, end: iter.current_index() },
+                                }));
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
         if let Some(ch_tok) = Token::from_char(ch) {
             if let Token::OpenCurly = ch_tok {
                 if let Some(i) = interps.last_mut() {
@@ -100,6 +137,7 @@ pub enum Token {
     Return,
     If,
     Else,
+    Match,
     Loop,
     While,
     For,
@@ -144,6 +182,7 @@ impl Token {
             Token::Return => "return".to_string(),
             Token::If => "if".to_string(),
             Token::Else => "else".to_string(),
+            Token::Match => "match".to_string(),
             Token::Loop => "loop".to_string(),
             Token::While => "while".to_string(),
             Token::For => "for".to_string(),
@@ -196,6 +235,7 @@ impl Token {
             "return" => Some(Token::Return),
             "if" => Some(Token::If),
             "else" => Some(Token::Else),
+            "match" => Some(Token::Match),
             "loop" => Some(Token::Loop),
             "while" => Some(Token::While),
             "for" => Some(Token::For),

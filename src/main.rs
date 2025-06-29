@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fs;
 use std::env;
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::process::ExitCode;
@@ -26,29 +26,47 @@ fn main() -> ExitCode {
         std::process::exit(1);
     }
     let file_path = &args[1];
-    
-    let mut import = node::Import { path: file_path.clone(), parent: None, pos_id: usize::MAX  };
-    let mut modules = Vec::new();
-    let mut import_names: Vec<Vec<String>> = Vec::new();
-    let mut cur_imports = Vec::new();
+
+    let mut import = node::Import {
+        path: file_path.clone(),
+        parent: None,
+        pos_id: usize::MAX,
+    };
+
     let mut handled_imports = HashSet::new();
+    let mut import_names = vec![];
+    let mut modules = vec![];
+    let mut cur_imports = vec![];
 
     loop {
         let (module, imports) = match parse_module(&import) {
             Ok(res) => res,
-            Err(e) => return e
+            Err(e) => return e,
         };
-        import_names.push(imports.iter().map(|i| get_path(&import.path, &i.path)).collect());
-        modules.push(node::Module { stmts: module, path: import.path });
-        for i in imports {
+
+        import_names.push(imports.iter().map(|i| get_path(&import.path, &i.path)).collect::<Vec<_>>());
+
+        modules.push(node::Module {
+            stmts: module,
+            path: import.path.clone(),
+        });
+
+        for mut i in imports {
+            let cur = i.parent.clone().unwrap();
+            i.path = get_path(&cur, &i.path); // Resolve full path here
+
+            println!("{i:?}");
+
+            // Only insert if resolved path is not already handled
             if !handled_imports.contains(&i.path) {
                 handled_imports.insert(i.path.clone());
                 cur_imports.push(i);
             }
         }
+
         if let Some(mut i) = cur_imports.pop() {
             let cur = i.parent.clone().unwrap();
-            i.path = get_path(&cur, &i.path);
+            i.path = get_path(&cur, &i.path); // Redundant if already done above, but safe
             import = i;
         } else {
             break;
@@ -62,7 +80,7 @@ fn main() -> ExitCode {
     for module in modules.iter_mut() {
         let before = generic_fns.len();
         match validate::hoist_public(module, &public_map, &mut generic_fns) {
-            Ok(res) => { 
+            Ok(res) => {
                 let binding = module.path.clone();
                 public_map.insert(binding, res);
             }
@@ -135,9 +153,7 @@ fn main() -> ExitCode {
         } else if before == generic_calls {
             panic!("No progress {generic_calls:?}");
         } else {
-            unresolved = resolved_modules
-                .drain(..)
-                .collect();
+            unresolved = resolved_modules.drain(..).collect();
         }
     }
 
@@ -148,7 +164,6 @@ fn main() -> ExitCode {
             Err(e) => return ExitCode::from(e),
         }
     }
-
 
     println!("CALLS {:?}", generic_calls);
 
@@ -220,8 +235,6 @@ fn gen_module(module: node::Module, mut ir: HashMap<String, ir::Symbol>) -> Resu
 }
 
 fn get_path(parent: &String, s: &String) -> String {
-    let parent = Path::new(&parent)
-                .parent()
-                .unwrap_or_else(|| Path::new("."));
+    let parent = Path::new(&parent).parent().unwrap_or_else(|| Path::new("."));
     parent.join(s).with_extension("re").display().to_string().replace('\\', "/")
 }

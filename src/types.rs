@@ -56,12 +56,12 @@ impl Type {
             _ => None,
         }
     }
-    pub fn address_of(&self) -> Option<Type> {
-        match self {
-            Type::Array { inner: p, length: _ } => Some(*p.clone()),
-            _ => None,
-        }
-    }
+    // pub fn address_of(&self) -> Option<Type> {
+    //     match self {
+    //         Type::Array { inner: p, length: _ } => Some(*p.clone()),
+    //         _ => None,
+    //     }
+    // }
     pub fn inner(&self, max_depth: usize) -> &Type {
         if max_depth == 0 {
             return self;
@@ -165,7 +165,6 @@ impl Type {
                 let mut map: HashMap<String, (Type, u32)> = HashMap::new();
                 let mut items: Vec<_> = fields.iter().collect();
                 items.sort_by_key(|(_, (_, offset))| *offset);
-                println!("gen: {generics:?}");
                 for (name, (ty, _)) in items {
                     let new_ty = ty.substitute_generics(generics);
                     if let Type::Generic(_) = new_ty {

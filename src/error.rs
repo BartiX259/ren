@@ -96,8 +96,12 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             print_module_err_id(path, pos_str.pos_id);
         }
         SemanticError::TypeMismatch(pos_str, ty1, ty2) => {
-            eprintln!("Type mismatch: can't use '{}' with {} and {}", pos_str.str, ty1, ty2);
+            eprintln!("Type mismatch: can't use '{}' with {} and {}.", pos_str.str, ty1, ty2);
             print_module_err_id(path, pos_str.pos_id);
+        }
+        SemanticError::UnexpectedType(span, ty1, ty2) => {
+            eprintln!("Type mismatch: expected {} but got {}.", ty1, ty2);
+            print_module_err_span(path, span);
         }
         SemanticError::NotIterable(span, ty) => {
             eprintln!("Can't iterate over {ty}.");
@@ -110,6 +114,10 @@ pub fn sematic_err(path: &String, e: SemanticError) {
         SemanticError::NoCapture(span) => {
             eprintln!("There is no capture.");
             print_module_err_span(path, span);
+        }
+        SemanticError::NoMatch(pos_id, ty) => {
+            eprintln!("Couldn't match type {ty}.");
+            print_module_err_id(path, pos_id);
         }
         SemanticError::InvalidReturn(pos_id) => {
             eprintln!("Invalid return statement.");

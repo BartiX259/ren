@@ -62,6 +62,15 @@ fn parse_stmt(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
             Ok(node::Stmt::Ret(node::Ret { pos_id, expr }))
         }
         Some(Token::If) => Ok(node::Stmt::If(parse_if(tokens)?)),
+        Some(Token::Match) => {
+            tokens.next();
+            if tokens.peek() == Some(&Token::Op { value: "<".to_string() }) {
+                tokens.next();
+                Ok(node::Stmt::MatchType(parse_match_type(tokens)?))
+            } else {
+                Ok(node::Stmt::Match(parse_match(tokens)?))
+            }
+        }
         Some(Token::Loop) => {
             tokens.next();
             Ok(node::Stmt::Loop(node::Loop {
@@ -122,12 +131,66 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
         if peek.is_none() {
             break;
         }
-        let prec: u8;
-        let opstr: String;
         let tok = peek.unwrap();
-        if let Token::Op { value } = tok {
-            opstr = value.to_string();
-            if ["?", "!"].contains(&value.as_str()) {
+
+        if *tok == (Token::Op { value: ".".to_string() }) {
+            let prec = op_prec(".");
+            if prec < min_prec {
+                break;
+            }
+
+            let op_pos = tokens.current_index();
+            tokens.next(); // Consume '.'
+
+            // The RHS of '.' must be an identifier.
+            let member_tok = check_none(tokens, "a member identifier")?;
+            let Token::Word { value: member_name } = member_tok else {
+                return Err(unexp(member_tok, tokens.prev_index(), "a member identifier"));
+            };
+
+            let rhs = expr(
+                tokens.prev_index(),
+                tokens.prev_index(),
+                node::ExprKind::Variable(PosStr {
+                    str: member_name,
+                    pos_id: tokens.prev_index(),
+                }),
+            );
+
+            root = expr(
+                start,
+                tokens.prev_index(),
+                node::ExprKind::BinExpr(node::BinExpr {
+                    lhs: Box::new(root),
+                    rhs: Box::new(rhs),
+                    op: PosStr { str: ".".to_string(), pos_id: op_pos },
+                }),
+            );
+            continue;
+        } else if let Token::OpenSquare = tok {
+            let prec = op_prec("[]");
+            if prec < min_prec {
+                break;
+            }
+            root = parse_array_access(tokens, root, start)?;
+            continue;
+        } else if let Token::As = tok {
+            let prec = op_prec("as");
+            if prec < min_prec {
+                break;
+            }
+            tokens.next();
+            let ty = parse_type(tokens)?;
+            root = expr(start, tokens.prev_index(), node::ExprKind::TypeCast(node::TypeCast { r#type: ty, expr: Box::new(root) }));
+            continue;
+        } else if let Token::Op { value } = tok {
+            let opstr = value.to_string();
+            // Handle postfix unary operators separately
+            if ["?", "!"].contains(&opstr.as_str()) {
+                let prec = op_prec(&opstr);
+                if prec < min_prec {
+                    break;
+                }
                 tokens.next();
                 root = expr(
                     start,
@@ -142,42 +205,29 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
                 );
                 continue;
             }
-            prec = op_prec(value.as_str());
-            if prec == u8::MAX {
-                return Err(unexp(tok.clone(), tokens.current_index(), "a valid binary or post-unary operator"));
-            }
-        } else if let Token::OpenSquare = tok {
-            root = parse_array_access(tokens, root, start)?;
-            continue;
-        } else if let Token::As = tok {
-            let prec = op_prec("as");
-            if prec < min_prec {
+
+            // Handle all other binary operators
+            let prec = op_prec(&opstr);
+            if prec == u8::MAX || prec < min_prec {
                 break;
             }
+
+            let op_pos = tokens.current_index();
             tokens.next();
-            let ty = parse_type(tokens)?;
-            let lhs = root;
-            root = expr(start, tokens.prev_index(), node::ExprKind::TypeCast(node::TypeCast { r#type: ty, expr: Box::new(lhs) }));
-            continue;
+            let rhs = parse_expr(tokens, prec + op_assoc(&opstr))?;
+            root = expr(
+                start,
+                tokens.prev_index(),
+                node::ExprKind::BinExpr(node::BinExpr {
+                    lhs: Box::new(root),
+                    rhs: Box::new(rhs),
+                    op: PosStr { str: opstr, pos_id: op_pos },
+                }),
+            );
         } else {
+            // Not an operator we can handle in this loop.
             break;
         }
-        if prec < min_prec {
-            break;
-        }
-        let op_pos = tokens.current_index();
-        tokens.next();
-        let rhs = parse_expr(tokens, prec + op_assoc(opstr.as_str()))?;
-        let lhs = root;
-        root = expr(
-            start,
-            tokens.prev_index(),
-            node::ExprKind::BinExpr(node::BinExpr {
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
-                op: PosStr { str: opstr, pos_id: op_pos },
-            }),
-        );
     }
     return Ok(root);
 }
@@ -274,13 +324,13 @@ fn parse_atom(tokens: &mut VecIter<Token>) -> Result<node::Expr, ParseError> {
             }
         }
         Token::Op { value } => {
-            // Unary expression
+            let unary_prec = op_prec("!"); // Use '!' as the canonical unary precedence.
             let kind = node::ExprKind::UnExpr(node::UnExpr {
                 op: PosStr {
                     str: value,
                     pos_id: tokens.prev_index(),
                 },
-                expr: Box::new(parse_atom(tokens)?),
+                expr: Box::new(parse_expr(tokens, unary_prec)?),
             });
             Ok(expr(start, tokens.prev_index(), kind))
         }
@@ -894,6 +944,73 @@ fn parse_if(tokens: &mut VecIter<Token>) -> Result<node::If, ParseError> {
     Ok(res)
 }
 
+fn parse_match(tokens: &mut VecIter<Token>) -> Result<node::Match, ParseError> {
+    let pos_id = tokens.prev_index();
+    let match_expr = parse_expr(tokens, 0)?;
+    let tok = check_none(tokens, "'{'")?;
+    let Token::OpenCurly = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "'{'"));
+    };
+    let mut branches = vec![];
+    loop {
+        if let Some(Token::CloseCurly) = tokens.peek() {
+            tokens.next();
+            break;
+        }
+        let e = parse_expr(tokens, 0)?;
+        let scope = parse_scope(tokens)?;
+        branches.push((e, scope));
+    }
+
+    Ok(node::Match { pos_id, match_expr, branches })
+}
+
+fn parse_match_type(tokens: &mut VecIter<Token>) -> Result<node::MatchType, ParseError> {
+    let pos_id = tokens.prev_index() - 1;
+    let mut generics = vec![];
+    if tokens.peek() == Some(&Token::Op { value: ">".to_string() }) {
+        tokens.next();
+    } else {
+        loop {
+            let tok = check_none(tokens, "a type name")?;
+            let Token::Word { value } = tok else {
+                return Err(unexp(tok, tokens.prev_index(), "a type name"));
+            };
+            generics.push(value);
+            let tok = check_none(tokens, "'>'")?;
+            if let Token::Comma = tok {
+                continue;
+            } else if tok == (Token::Op { value: ">".to_string() }) {
+                break;
+            } else {
+                return Err(unexp(tok, tokens.prev_index(), "'>'"));
+            }
+        }
+    }
+    let match_type = parse_type(tokens)?;
+    let tok = check_none(tokens, "'{'")?;
+    let Token::OpenCurly = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "'{'"));
+    };
+    let mut branches = vec![];
+    loop {
+        if let Some(Token::CloseCurly) = tokens.peek() {
+            tokens.next();
+            break;
+        }
+        let t = parse_type(tokens)?;
+        let scope = parse_scope(tokens)?;
+        branches.push((t, scope, false));
+    }
+
+    Ok(node::MatchType {
+        pos_id,
+        generics,
+        match_type,
+        branches,
+    })
+}
+
 fn parse_for(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
     let pos_id = tokens.current_index();
     tokens.next();
@@ -1089,81 +1206,62 @@ fn unexp(token: Token, pos_id: usize, expected: &str) -> ParseError {
 
 fn op_prec(op: &str) -> u8 {
     match op {
-        "," => 0,
-        "else" => 0,
-        "=" => 1, // Lowest precedence (done last)
-        "+=" => 1,
-        "-=" => 1,
-        "*=" => 1,
-        "/=" => 1,
-        "%=" => 1,
-        "|=" => 1,
-        "^=" => 1,
-        "&=" => 1,
-        "<<=" => 1,
-        ">>=" => 1,
-        ".." => 2,
-        "||" => 2,
+        // Level 0: Comma, Else
+        "," | "else" => 0,
+
+        // Level 1: Assignment
+        "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "|=" | "^=" | "&=" | "<<=" | ">>=" => 1,
+
+        // Level 2: Range, Logical OR
+        ".." | "||" => 2,
+
+        // Level 3: Logical AND
         "&&" => 3,
+
+        // Level 4-6: Bitwise operators
         "|" => 4,
         "^" => 5,
         "&" => 6,
-        "==" => 7,
-        "!=" => 7,
-        "<" => 8,
-        "<=" => 8,
-        ">" => 8,
-        ">=" => 8,
-        "<<" => 9,
-        ">>" => 9,
-        "+" => 10,
-        "-" => 10,
-        "*" => 11,
-        "/" => 11,
-        "%" => 11,
-        "!" => 12,
-        "[]" => 13,
-        "as" => 14, // Highest precedence (done first)
-        "." => 15,
+
+        // Level 7: Equality
+        "==" | "!=" => 7,
+
+        // Level 8: Comparison
+        "<" | "<=" | ">" | ">=" => 8,
+
+        // Level 9: Bitwise shift
+        "<<" | ">>" => 9,
+
+        // Level 10: Add/Subtract
+        "+" | "-" => 10,
+
+        // Level 11: Multiply/Divide/Modulo
+        "*" | "/" | "%" => 11,
+
+        // Level 12: Type casting
+        "as" => 12,
+
+        // Level 13: Unary prefix operators (binding power for parse_atom)
+        // This '!' is for the prefix case like `!x`, not the postfix `x!`.
+        "!" => 13,
+
+        // Level 14: Postfix operators
+        "?" => 14, // Postfix unwrap
+        // Note: Postfix '!' from the original code would also go here.
+
+        // Level 15: Highest precedence postfix operators
+        "[]" => 15, // Array indexing
+        "." => 15,  // Member access
+
         _ => u8::MAX,
     }
 }
 
 fn op_assoc(op: &str) -> u8 {
     match op {
-        "=" => 0, // Right to left
-        "+=" => 0,
-        "-=" => 0,
-        "*=" => 0,
-        "/=" => 0,
-        "%=" => 0,
-        "|=" => 0,
-        "^=" => 0,
-        "&=" => 0,
-        "<<=" => 0,
-        ">>=" => 0,
-        "||" => 1, // Left to right
-        "&&" => 1,
-        "|" => 1,
-        "^" => 1,
-        "&" => 1,
-        "==" => 1,
-        "!=" => 1,
-        "<" => 1,
-        "<=" => 1,
-        ">" => 1,
-        ">=" => 1,
-        "<<" => 1,
-        ">>" => 1,
-        "+" => 1,
-        "-" => 1,
-        "*" => 1,
-        "/" => 1,
-        "%" => 1,
-        "." => 1,
-        ".." => 1,
-        "[]" => 1,
-        "," => 1,
-        _ => u8::MAX,
+        // Right-to-left associative operators
+        "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "|=" | "^=" | "&=" | "<<=" | ">>=" => 0,
+        // All others are left-to-right
+        _ => 1,
     }
 }

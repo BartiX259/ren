@@ -156,6 +156,20 @@ pub struct If {
     pub scope: Vec<Stmt>,
     pub els: Option<Box<If>>,
 }
+
+#[derive(Debug, Clone)]
+pub struct Match {
+    pub pos_id: usize,
+    pub match_expr: Expr,
+    pub branches: Vec<(Expr, Vec<Stmt>)>,
+}
+#[derive(Debug, Clone)]
+pub struct MatchType {
+    pub pos_id: usize,
+    pub generics: Vec<String>,
+    pub match_type: Type,
+    pub branches: Vec<(Type, Vec<Stmt>, bool)>,
+}
 #[derive(Debug, Clone)]
 pub enum LetOrExpr {
     Let(Let),
@@ -300,6 +314,8 @@ pub enum Stmt {
     ForIn(ForIn),
     Break(usize),
     Continue(usize),
+    Match(Match),
+    MatchType(MatchType),
     Syscall(Syscall),
     Enum(Enum),
     Extern(Extern),
