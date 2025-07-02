@@ -700,31 +700,44 @@ impl<'a> Lower<'a> {
                 let node::ExprKind::Variable(r) = &b.rhs.kind else {
                     unreachable!();
                 };
-                let Type::Struct(map) = &b.lhs.ty else {
-                    unreachable!();
-                };
+                let map;
+                match &b.lhs.ty {
+                    Type::Struct(smap) => map = smap,
+                    Type::Pointer(p) => {
+                        let Type::Struct(smap) = &**p else {
+                            unreachable!();
+                        };
+                        map = smap;
+                    }
+                    _ => unreachable!(),
+                }
                 let Some((_, offset)) = map.get(&r.str) else {
                     unreachable!();
                 };
-                let term = self.var_map.get(&l.str).unwrap();
-                let Term::Stack(_) = term else {
-                    panic!("not stack");
-                };
-                self.temp_count += 1;
-                self.push_op(
-                    Op::UnOp {
-                        res: Term::Temp(self.temp_count),
-                        op: un.op.str.clone(),
-                        term: term.clone(),
-                        size,
-                    },
-                    un.op.pos_id,
-                );
+                let ptr;
+                if let Some(term) = self.var_map.get(&l.str) {
+                    let Term::Stack(_) = term else {
+                        panic!("not stack");
+                    };
+                    self.temp_count += 1;
+                    ptr = Term::Temp(self.temp_count);
+                    self.push_op(
+                        Op::UnOp {
+                            res: ptr.clone(),
+                            op: un.op.str.clone(),
+                            term: term.clone(),
+                            size,
+                        },
+                        un.op.pos_id,
+                    );
+                } else {
+                    ptr = Term::Data(l.str.clone());
+                }
                 self.temp_count += 1;
                 self.push_op(
                     Op::BinOp {
                         res: Some(Term::Temp(self.temp_count)),
-                        lhs: Term::Temp(self.temp_count - 1),
+                        lhs: ptr,
                         op: "+".to_string(),
                         rhs: Term::IntLit(*offset as i64),
                         size: 8,
@@ -1059,8 +1072,10 @@ impl<'a> Lower<'a> {
             inner = Term::Stack(self.stack_count);
             self.push_op(Op::Decl { term: s.clone(), size: 16 }, pos_id);
             self.push_op(
-                Op::Read {
-                    res: t.clone(),
+                Op::Store {
+                    res: None,
+                    term: t.clone(),
+                    op: "=".to_string(),
                     ptr: s.clone(),
                     offset: 0,
                     size: 16,

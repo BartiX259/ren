@@ -46,10 +46,9 @@ fn to_json_recursive<T>(value: T, builder: *[char]) {
             push(builder, '"');
         }
         *char {
-            // CORRECTED: The original implementation caused infinite recursion.
             // Treat it as a standard string slice (<char>).
             push(builder, '"');
-            escape_and_push_string(builder, str(value)); // Assuming str(*char) -> <char>
+            escape_and_push_string(builder, str(value));
             push(builder, '"');
         }
         ?K {
@@ -79,24 +78,23 @@ fn to_json_recursive<T>(value: T, builder: *[char]) {
             }
             push(builder, ']');
         }
-        /*{K: V} {
-            // CORRECTED: Implemented the missing logic for map serialization.
+        {K: V} {
             push(builder, '{');
             let first = true;
-            for (key, val) in value { // Assumes map iteration support.
+            for field in iter(value) {
                 if !first { push(builder, ','); }
                 // JSON object keys MUST be strings.
-                to_json_recursive(str(key), builder);
+                to_json_recursive(str(field.key), builder);
                 push(builder, ':');
-                to_json_recursive(val, builder);
+                to_json_recursive(field.value, builder);
                 first = false;
             }
             push(builder, '}');
-        }*/
+        }
         struct {
             push(builder, '{');
             let first = true;
-            for field in value { // Assumes runtime reflection support.
+            for field in value {
                 if !first { push(builder, ','); }
                 to_json_recursive(field.name, builder);
                 push(builder, ':');

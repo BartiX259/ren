@@ -86,7 +86,9 @@ pub fn resolve(
                         new_decl.generics.clear();
                         new_decl.name.str += format!(".{i}").as_str();
                         val.hoist_func_with_types(&mut new_decl, ty, types, false, is_public)?;
+                        val.resolving.push((decl.name.str.clone(), map.clone(), *i));
                         val.r#fn(&mut new_decl)?;
+                        val.resolving.pop();
                         for k in map.keys() {
                             val.symbol_table.remove(k);
                         }
@@ -234,6 +236,7 @@ struct Validate {
     fn_map: HashMap<String, Vec<(Vec<Type>, usize)>>,
     gfns: Vec<(String, usize)>,
     gcalls: Vec<(String, HashMap<String, Type>, usize)>,
+    resolving: Vec<(String, HashMap<String, Type>, usize)>,
     cur_module: String,
     symbol_stack: Vec<Vec<String>>,
     cur_func: Option<String>,
@@ -249,6 +252,7 @@ impl Validate {
             fn_map: HashMap::new(),
             gfns: Vec::new(),
             gcalls: Vec::new(),
+            resolving: Vec::new(),
             cur_module: String::new(),
             symbol_stack: Vec::new(),
             cur_func: None,
@@ -949,9 +953,12 @@ impl Validate {
                     if b.op.str == "." {
                         if let node::ExprKind::Variable(l) = &b.lhs.kind {
                             if let node::ExprKind::Variable(r) = &b.rhs.kind {
-                                let Some(Symbol::Var { ty }) = self.symbol_table.get(&l.str) else {
-                                    return Err(SemanticError::UndeclaredSymbol(l.clone()));
-                                };
+                                let ty;
+                                match self.symbol_table.get(&l.str) {
+                                    Some(Symbol::Var { ty: var_ty }) => ty = var_ty,
+                                    Some(Symbol::Data { ty: data_ty, .. }) => ty = data_ty,
+                                    _ => return Err(SemanticError::UndeclaredSymbol(l.clone())),
+                                }
                                 let Type::Struct(map) = ty else {
                                     return Err(SemanticError::InvalidMemberAccess(un.expr.span));
                                 };
@@ -1191,6 +1198,13 @@ impl Validate {
                 s = format!("{}.{}", s, id);
                 if !generics.is_empty() {
                     let mut found = false;
+                    for (res_name, res_map, res_id) in self.resolving.iter() {
+                        if *res_name == s && generics == *res_map {
+                            call = format!("{}.{}", s, res_id);
+                            found = true;
+                            break;
+                        }
+                    }
                     for (name, map, i) in self.gcalls.iter() {
                         if *name == s && generics == *map {
                             call = format!("{}.{}", s, i);
@@ -1501,11 +1515,7 @@ impl Validate {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
-            (Type::Pointer(p), Type::HashMap { key, value }) => {
-                if **p != Type::Tuple(vec![*key.clone(), *value.clone()]) {
-                    return Err(SemanticError::InvalidCast(span, from, to));
-                }
-            }
+            (Type::Pointer(_), Type::HashMap { .. }) => (),
             (Type::HashMap { .. }, Type::Pointer(p)) => {
                 if let Type::HashMap { .. } = **p {
                     return Err(SemanticError::InvalidCast(span, from, to));

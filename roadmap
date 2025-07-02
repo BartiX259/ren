@@ -1,6 +1,7 @@
 Compiler features:
 - Custom iterators
 - Improve arg parsing
+- Floats?
 
 Optimizations:
 - remove temporary stack variables

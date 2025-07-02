@@ -87,6 +87,10 @@ pub fn parse_opt<T>(argc: *int, argv: **char, name: <char>, opt: *?T) -> int ? <
     return 0;
 }
 
+pub fn cmp(l: int, r: int) -> bool {
+    return l == r;
+}
+
 pub fn cmp(l: <char>, r: <char>) -> bool {
     if len(l) != len(r) {
         return false;
@@ -220,6 +224,15 @@ pub fn panic<T>(x: T) {
   exit(1);
 }
 
+pub fn assert(condition: bool, message: <char>) {
+    if !condition {
+        eprint("ASSERTION FAILED: ");
+        eprint(message);
+        eprint('\n');
+        exit(1);
+    }
+}
+
 pub fn push<T>(list: *[T], el: T) {
 	let ptr = *(list as **any + 1);
 	if ptr == null {
@@ -271,6 +284,135 @@ pub fn split<T>(sl: <T>, split: T) -> [<T>] {
 	return res;
 }
 
+// Finds the first index of a value in a slice.
+pub fn find<T>(slice: <T>, value: T) -> ?int {
+    for i in 0..len(slice) {
+        if slice[i] == value {
+            return some(i);
+        }
+    }
+    return none;
+}
+
+// Checks if a slice contains a given value.
+pub fn contains<T>(slice: <T>, value: T) -> bool {
+    if let ok = find(slice, value) {
+        return true;
+    }
+    return false;
+}
+
+// Finds the starting index of the first occurrence of a "needle" slice within a "haystack" slice.
+pub fn find<T>(haystack: <T>, needle: <T>) -> ?int {
+    if len(needle) == 0 {
+        return 0;
+    }
+    if len(needle) > len(haystack) {
+        return none;
+    }
+
+    let last_possible_start = len(haystack) - len(needle);
+    
+    for i in 0..last_possible_start + 1 {
+        let window = haystack[i..i + len(needle)];
+
+        let found = true;
+        for j in 0..len(needle) {
+            if haystack[i + j] != needle[j] {
+                found = false;
+                break;
+            }
+        }
+        if found {
+            return i;
+        }
+    }
+
+    return none;
+}
+
+// Checks if a "haystack" slice contains a "needle" slice.
+pub fn contains<T>(haystack: <T>, needle: <T>) -> bool {
+    if let ok = find(haystack, needle) {
+        return true;
+    }
+    return false;
+}
+
+// Checks if a slice starts with a given prefix.
+pub fn starts_with<T>(slice: <T>, prefix: <T>) -> bool {
+    if len(prefix) > len(slice) {
+        return false;
+    }
+    
+    for i in 0..len(prefix) {
+        if slice[i] != prefix[i] {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Checks if a slice ends with a given suffix.
+pub fn ends_with<T>(slice: <T>, suffix: <T>) -> bool {
+    if len(suffix) > len(slice) {
+        return false;
+    }
+    
+    let slice_len = len(slice);
+    let suffix_len = len(suffix);
+    for i in 0..suffix_len {
+        if slice[slice_len - suffix_len + i] != suffix[i] {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Joins a slice of slices into a single new list, separated by a separator slice.
+pub fn join<T>(list_of_slices: <<T>>, separator: <T>) -> [T] {
+    decl builder: [T];
+    if len(list_of_slices) == 0 {
+        return builder;
+    }
+
+    let first = true;
+    for s in list_of_slices {
+        if !first {
+            push(&builder, separator);
+        }
+        push(&builder, s);
+        first = false;
+    }
+    return builder;
+}
+
+// Creates a new string with all ASCII characters converted to lowercase.
+pub fn to_lowercase(s: <char>) -> [char] {
+    decl builder: [char];
+    for c in s {
+        if c >= 'A' && c <= 'Z' {
+            push(&builder, c + 32); // 'a' - 'A' = 32
+        } else {
+            push(&builder, c);
+        }
+    }
+    return builder;
+}
+
+// Creates a new string with all ASCII characters converted to uppercase.
+pub fn to_uppercase(s: <char>) -> [char] {
+    decl builder: [char];
+    for c in s {
+        if c >= 'a' && c <= 'z' {
+            push(&builder, c - 32);
+        } else {
+            push(&builder, c);
+        }
+    }
+    return builder;
+}
+
 pub fn hash(x: int) -> int {
     let hash = 14695981039346656037;
     for i in 0..8 {
@@ -280,12 +422,23 @@ pub fn hash(x: int) -> int {
     return hash;
 }
 
+pub fn hash(x: <char>) -> int {
+    let hash = 14695981039346656037;
+    for c in x {
+        hash ^= c as int;
+        hash *= 1099511628211;
+    }
+    return hash;
+}
+
 pub fn init_map<K, V>(fields: <(K, V)>) -> {K: V} {
     let capacity = 100;
-    let ptr = alloc(capacity * sizeof((K, V))) as *(K, V);
+    let ptr = calloc(capacity * sizeof((int, K, V))) as *(int, K, V);
     for f in fields {
         let i = hash(f[0]) % capacity;
-        ptr[i] = f;
+        let f_ptr = (ptr + i) as *int;
+        *f_ptr = 1;
+        *((f_ptr + 1) as *(K, V)) = f;
     }
     return ptr;
 }
@@ -294,13 +447,24 @@ pub fn get<K, V>(map: {K: V}, key: K) -> ?V {
     if map as *any == null {
         return none;
     }
-    let capacity = *(map as *int - 1) / sizeof((K, V));
+    let capacity = *(map as *int - 1) / sizeof((int, K, V));
     let i = hash(key) % capacity;
-    let k_ptr = (map as *(K, V) + i) as *K;
-    if *(k_ptr as *int) == 0 {
-        return none;
+    let original_i = i;
+    let f_ptr = (map as *(int, K, V) + i) as *int;
+    loop {
+        if *f_ptr == 0 {
+            return none;
+        }
+        if cmp(*((f_ptr + 1) as *K), key) {
+            break;
+        }
+        i = (i+1) % capacity;
+        if i == original_i {
+            return none;
+        }
+        f_ptr = (map as *(int, K, V) + i) as *int;
     }
-    return *((k_ptr + 1) as *V);
+    return *((f_ptr as *(int, K) + 1) as *V);
 }
 
 pub fn insert<K, V>(map_ref: *{K: V}, key: K, value: V) {
@@ -308,11 +472,97 @@ pub fn insert<K, V>(map_ref: *{K: V}, key: K, value: V) {
         *map_ref = init_map((0, null) as <(K, V)>);
     }
     let map = *map_ref;
-    let capacity = *(map as *int - 1) / sizeof((K, V));
+    let capacity = *(map as *int - 1) / sizeof((int, K, V));
     let i = hash(key) % capacity;
-    let k_ptr = (map as *(K, V) + i) as *K;
-    *k_ptr = key;
-    *((k_ptr + 1) as *V) = value;
+    let original_i = i;
+    let f_ptr = (map as *(int, K, V) + i) as *int;
+    loop {
+        if *f_ptr != 1 {
+            break;
+        }
+        if cmp(*((f_ptr + 1) as *K), key) {
+            break;
+        }
+        i = (i+1) % capacity;
+        if i == original_i {
+            let new_ref = calloc(capacity * 2 * sizeof((int, K, V))) as {K: V};
+            for j in 0..capacity {
+                let entry_ptr = (map as *(int, K, V) + j) as *int;
+                let k_ptr = (entry_ptr + 1) as *K;
+                let v_ptr = (k_ptr + 1) as *V;
+                insert(&new_ref, *k_ptr, *v_ptr);
+            }
+            insert(&new_ref, key, value);
+            *map_ref = new_ref;
+            return;
+        }
+        f_ptr = (map as *(int, K, V) + i) as *int;
+    }
+    *f_ptr = 1;
+    *((f_ptr + 1) as *K) = key;
+    *((f_ptr as *(int, K) + 1) as *V) = value;
+}
+
+pub fn iter<K, V>(map: {K: V}) -> [(key: K, value: V)] {
+    decl res: [(key: K, value: V)];
+    if map as *any == null {
+        return res;
+    }
+
+    let capacity = *(map as *int - 1) / sizeof((int, K, V));
+    
+    // --- PASS 1: Count the items. Read-only and GC-safe. ---
+    // This loop performs no allocations, so it cannot trigger the GC.
+    let count = 0;
+    for i in 0..capacity {
+        // Pointer to the start of the i-th entry in the map's internal array.
+        let entry_base_ptr = (map as *char) + (i * sizeof((int, K, V)));
+        
+        // The 'occupied' flag is the first int in the entry.
+        let occupied_flag = *(entry_base_ptr as *int);
+        
+        if occupied_flag == 1 {
+            count += 1;
+        }
+    }
+
+    if count == 0 {
+        return res;
+    }
+
+    // --- ALLOCATION: Allocate a single block for the result list's data. ---
+    // This `calloc` might trigger the GC, which could move the original `map`.
+    // This is safe because we are finished with Pass 1 and will re-read `map`'s
+    // (potentially new) location in Pass 2.
+    let data_ptr = calloc(count * sizeof((key: K, value: V))) as *(key: K, value: V);
+    
+    // Manually construct the slice header for `res`.
+    // We assume the slice/list layout is `(length: int, data: *any)`.
+    *(&res as *int) = count;
+    *((&res as *int) + 1) = data_ptr as int;
+
+    // --- PASS 2: Copy items into the pre-allocated buffer. ---
+    // This loop is now guaranteed to be allocation-free and thus GC-safe.
+    let current_index = 0;
+    for i in 0..capacity {
+        let entry_base_ptr = (map as *char) + (i * sizeof((int, K, V)));
+        let occupied_flag = *(entry_base_ptr as *int);
+
+        if occupied_flag == 1 {
+            // Pointer to the (K, V) pair within the map entry. It starts right after the int flag.
+            let source_kv_ptr = (entry_base_ptr + sizeof(int)) as *(K, V);
+            
+            // Pointer to the destination slot in our new data buffer.
+            let dest_kv_ptr = data_ptr + current_index;
+
+            // Perform the struct copy.
+            *dest_kv_ptr = *source_kv_ptr;
+
+            current_index += 1;
+        }
+    }
+
+    return res;
 }
 
 pub fn null_terminate(s: <char>) -> *char {
@@ -513,136 +763,209 @@ pub fn list_dir(path: <char>) -> [<char>] ? <char> {
 }
 
 
-decl allocator: (base: *any, size: int, offset: int, stack: *any);
+let CARD_SIZE = 8; 
 let SPACE_SIZE = 20;
+
+decl allocator: (
+    base: *any,
+    size: int,
+    offset: int,
+    stack: *any,
+    bibop_table: *char
+);
 
 pub fn init() {
     allocator.offset = 0;
     allocator.stack = sp() + 8;
+    allocator.base = null;
+    allocator.bibop_table = null; // No longer used, but kept for struct layout consistency
 }
 
 pub fn alloc(size: int) -> *any {
-    if size <= 0 {
-        size = 1;
-    }
-    size = (size + 7) & ~7;
-    let new_offset = allocator.offset + size + 8;
+    if size <= 0 { size = 1; }
+    size = (size + 7) & ~7; // Align to 8 bytes
+    let required_block_size = size + 8; // Add space for header
 
+    // --- Initial Heap Creation ---
     if allocator.base == null {
         let initial_size = *SPACE_SIZE;
-        if (new_offset > initial_size) {
-            initial_size = new_offset;
+        if (required_block_size > initial_size) {
+            initial_size = required_block_size;
         }
         allocator.base = mmap(null, initial_size, 3, 34, 0, 0);
         allocator.size = initial_size;
     }
 
-    if new_offset > allocator.size {
+    // --- Collection and Growth Logic ---
+    if allocator.offset + required_block_size > allocator.size {
         collect();
-        let new_offset_after_gc = allocator.offset + size + 8;
-        if new_offset_after_gc > allocator.size {
-            // The heap is truly full and needs to grow.
-            let required_size = *SPACE_SIZE * 2;
-            while(new_offset_after_gc > required_size) {
-                required_size *= 2;
-            }
-            let old_base = allocator.base;
-            let old_size = allocator.size;
-            *SPACE_SIZE = required_size;
-            collect(); // Run collect again, this time it will use the larger SPACE_SIZE
-            munmap(old_base, old_size); // Free the smaller space we collected from
+    }
+    if allocator.offset + required_block_size > allocator.size {
+        let old_size = allocator.size;
+        
+        let new_size = old_size * 2;
+        let required_total = allocator.offset + required_block_size;
+        while (new_size < required_total) {
+            new_size *= 2;
         }
-        new_offset = allocator.offset + size + 8; // Recalculate final offset
+        *SPACE_SIZE = new_size;
+        
+        collect();
     }
 
-    let res = allocator.base + allocator.offset;
-    *(res as *int) = size + 8;
-    *(res as *int + 1) = 0; // Mark as not-forwarded
-    allocator.offset = new_offset;
-    return res + 8;
+    // --- Allocation ---
+    let header_ptr = allocator.base + allocator.offset;
+    
+    *(header_ptr as *int) = required_block_size;
+    allocator.offset += required_block_size;
+    
+    return header_ptr + 8; // Return pointer to payload
 }
 
-fn is_forwarded(ptr: *any) -> bool {
-    return (*(ptr as *int)) < 0;
+pub fn calloc(size: int) -> *any {
+    let ptr = alloc(size);
+
+    if ptr == null {
+        return null;
+    }
+
+    // Phase 1: Zero out the bulk of the memory using `int` (8-byte) writes.
+    let num_ints = size / 8;
+    let i = 0;
+    while i < num_ints {
+        (ptr as *int)[i] = 0;
+        i += 1;
+    }
+
+    // Phase 2: Zero out the remaining 1-7 bytes for precision.
+    let remainder_offset = num_ints * 8;
+    let j = remainder_offset;
+    while j < size {
+        (ptr as *char)[j] = 0;
+        j += 1;
+    }
+
+    return ptr;
 }
 
-fn get_forward(ptr: *any) -> *any {
-    return *((ptr + 8) as **any);
-}
+// Given any pointer `ptr` into the heap, find the header of the object it belongs to.
+fn find_header_for(ptr: *any) -> *any {
+    // This is a robust but slow linear scan of the heap. It replaces BiBOP.
+    let current_header_ptr = allocator.base;
 
-fn set_forward(ptr: *any, new_loc: *any) {
-    *(ptr as *int) = -*(ptr as *int);
-    *((ptr + 8) as **any) = new_loc;
+    // Walk the heap from the beginning.
+    while current_header_ptr < allocator.base + allocator.offset {
+        let object_size_val = *(current_header_ptr as *int);
+        
+        let object_size = object_size_val;
+        if (object_size < 0) {
+            // A forwarded object's header contains -size.
+            object_size = -object_size;
+        }
+
+        if object_size == 0 {
+            // Safeguard to prevent infinite loops on corrupted heap.
+            return null;
+        }
+
+        let object_end_ptr = current_header_ptr + object_size;
+
+        // Check if our target pointer `ptr` falls within this object's data payload.
+        if ptr >= (current_header_ptr + 8) && ptr < object_end_ptr {
+            return current_header_ptr;
+        }
+
+        // Move to the next object in the heap.
+        current_header_ptr = object_end_ptr;
+    }
+
+    // Pointer was not found in any object in the heap.
+    return null;
 }
 
 fn collect() {
-    let stack_end = sp() + 8;
-    // Allocate a new space. Make sure it's big enough.
+    // --- Setup New Space ---
     let new_heap_size = *SPACE_SIZE;
     let to_space = mmap(null, new_heap_size, 3, 34, 0, 0);
-    let offset = 0;
+    let to_space_offset = 0;
 
-    // --- Scan roots ---
-    let scan = allocator.stack;
-    while scan > stack_end {
-        scan -= 8;
-        offset = collect_ptr(scan as **any, to_space, offset);
+    // --- Scan Roots (Stack) ---
+    let scan_ptr = allocator.stack;
+    while scan_ptr > (sp() + 8) {
+        scan_ptr = scan_ptr - 8;
+        to_space_offset = collect_ptr(scan_ptr as **any, to_space, to_space_offset);
     }
 
-    // --- Scan the new heap ---
-    scan = to_space;
-    while scan < to_space + offset {
+    // --- Cheney's Algorithm: Scan the new heap ---
+    let scan = to_space;
+    while scan < to_space + to_space_offset {
         let object_header = scan;
         let object_size = *(object_header as *int);
+        
         let payload_ptr = object_header + 8;
         let payload_size = object_size - 8;
-
         let payload_scan = payload_ptr;
         while payload_scan < payload_ptr + payload_size {
-            collect_ptr(payload_scan as **any, to_space, offset);
-            payload_scan += 8;
+            to_space_offset = collect_ptr(payload_scan as **any, to_space, to_space_offset);
+            payload_scan = payload_scan + 8;
         }
-        
-        scan += object_size; // Correctly jump to the next object
+        scan = scan + object_size;
     }
 
+    // --- Teardown Old Space ---
     munmap(allocator.base, allocator.size);
+    if allocator.bibop_table != null { // For safety, if it was ever allocated
+        munmap(allocator.bibop_table, allocator.size / *CARD_SIZE);
+    }
+
+    // --- Activate New Space ---
     allocator.base = to_space;
     allocator.size = new_heap_size;
-    allocator.offset = offset;
+    allocator.offset = to_space_offset;
+    allocator.bibop_table = null; // Mark as unused
 }
 
 fn collect_ptr(ref_ptr: **any, to_space: *any, offset: int) -> int {
     let ptr = *ref_ptr;
+
+    // Check if ptr is a valid heap pointer into the from_space.
     if ptr < allocator.base || ptr >= allocator.base + allocator.offset {
         return offset;
     }
+    
+    let header_ptr = find_header_for(ptr);
+    if header_ptr == null { return offset; }
 
-    let scan = allocator.base;
-    while scan < allocator.base + allocator.offset {
-        let size = *(scan as *int);
-        if size == 0 {
-            break;
-        }
-        let real_size = size;
-        if size < 0 {
-            real_size = -size;
-        }
-        if ptr >= scan && ptr < scan + real_size {
-            if size < 0 {
-                *ref_ptr = get_forward(scan) + (ptr - scan);
-            } else {
-                copy(scan, to_space + offset, size);
-                set_forward(scan, to_space + offset);
+    let header_val = *(header_ptr as *int);
 
-                *ref_ptr = (to_space + offset) + (ptr - scan);
-                offset += size;
-            }
-            break;
-        }
-        scan += real_size;
+    if header_val < 0 { // Is already forwarded
+        let new_header_loc = get_forward(header_ptr);
+        let interior_offset = ptr - header_ptr;
+        *ref_ptr = new_header_loc + interior_offset;
+    } else { // Not forwarded, needs to be copied
+        let object_size = header_val;
+        let new_header_loc = to_space + offset;
+        
+        copy(header_ptr, new_header_loc, object_size);
+        
+        set_forward(header_ptr, new_header_loc);
+        
+        let interior_offset = ptr - header_ptr;
+        *ref_ptr = new_header_loc + interior_offset;
+        
+        offset = offset + object_size;
     }
     return offset;
+}
+
+fn set_forward(ptr: *any, new_loc: *any) {
+    let size = *(ptr as *int);
+    *(ptr as *int) = -size;
+    *((ptr + 8) as **any) = new_loc;
+}
+
+fn get_forward(ptr: *any) -> *any {
+    return *((ptr + 8) as **any);
 }
 
 pub fn print_heap() {
@@ -671,3 +994,4 @@ pub fn print_stack(offset: int, len: int) {
     print("|");
     print('\n');
 }
+
