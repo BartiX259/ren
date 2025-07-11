@@ -128,14 +128,15 @@ fn int2str(x: int, buf: *char) -> *char {
 }
 
 pub fn str(x: int) -> <char> {
-    let ptr = alloc(32) as *char;
+    let start_ptr = alloc(32) as *char;
+    let current_ptr = start_ptr;
     if x < 0 {
-        *ptr = '-';
-        ptr += 1;
+        *current_ptr = '-';
+        current_ptr += 1;
         x = -x;
     }
-    let end = int2str(x, ptr);
-    return (end - ptr, ptr);
+    let end_ptr = int2str(x, current_ptr);
+    return (end_ptr - start_ptr, start_ptr);
 }
 
 pub fn str(x: <char>) -> <char> {
@@ -270,6 +271,18 @@ pub fn push<T>(list: *[T], sl: <T>) {
 	*(list as *int) += len(sl);
 }
 
+pub fn pop<T>(list: *[T]) -> ?T {
+    let ptr = *(list as **any + 1);
+	if ptr == null {
+		return none;
+	}
+    if len(list) == 0 {
+        return none;
+    }
+    *(list as *int) -= 1;
+    return *(ptr as *T + len(list));
+}
+
 pub fn split<T>(sl: <T>, split: T) -> [<T>] {
 	let base = 0;
 	decl res: [<T>];
@@ -288,7 +301,7 @@ pub fn split<T>(sl: <T>, split: T) -> [<T>] {
 pub fn find<T>(slice: <T>, value: T) -> ?int {
     for i in 0..len(slice) {
         if slice[i] == value {
-            return some(i);
+            return i;
         }
     }
     return none;
@@ -455,7 +468,7 @@ pub fn get<K, V>(map: {K: V}, key: K) -> ?V {
         if *f_ptr == 0 {
             return none;
         }
-        if cmp(*((f_ptr + 1) as *K), key) {
+        if *f_ptr == 1 && cmp(*((f_ptr + 1) as *K), key) {
             break;
         }
         i = (i+1) % capacity;
@@ -501,6 +514,31 @@ pub fn insert<K, V>(map_ref: *{K: V}, key: K, value: V) {
     *f_ptr = 1;
     *((f_ptr + 1) as *K) = key;
     *((f_ptr as *(int, K) + 1) as *V) = value;
+}
+
+pub fn remove<K, V>(map: {K: V}, key: K) -> ?V {
+    if map == null {
+        return none;
+    }
+    let capacity = *(map as *int - 1) / sizeof((int, K, V));
+    let i = hash(key) % capacity;
+    let original_i = i;
+    let f_ptr = (map as *(int, K, V) + i) as *int;
+    loop {
+        if *f_ptr == 0 {
+            return none;
+        }
+        if *f_ptr == 1 && cmp(*((f_ptr + 1) as *K), key) {
+            break;
+        }
+        i = (i+1) % capacity;
+        if i == original_i {
+            return none;
+        }
+        f_ptr = (map as *(int, K, V) + i) as *int;
+    }
+    *f_ptr = 2;
+    return *((f_ptr as *(int, K) + 1) as *V);
 }
 
 pub fn iter<K, V>(map: {K: V}) -> [(key: K, value: V)] {

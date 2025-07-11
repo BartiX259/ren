@@ -1127,7 +1127,7 @@ impl<'a> Gen<'a> {
             offset += self.sp - self.locs.get(&t).unwrap();
         } else if let Term::Double(_) = ptr {
             let (t1, t2) = self.doubles.get(&ptr).unwrap();
-            if offset <= 8 {
+            if offset < 8 {
                 r = t1.to_string();
             } else {
                 r = t2.to_string();
@@ -1150,6 +1150,7 @@ impl<'a> Gen<'a> {
             self.save_reg(&t2, &res);
             self.lock_reg(&t2, true);
             self.doubles.insert(res, (t1, t2));
+            self.clear_reg(&r);
             return Ok(());
         }
         let o = self.fmt_offset(offset);

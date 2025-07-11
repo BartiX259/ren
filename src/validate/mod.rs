@@ -811,6 +811,12 @@ impl Validate {
             }
             "==" | "!=" | "<" | ">" | "<=" | ">=" => {
                 // Comparison operators
+                // if ty1.size() > 8 || ty2.size() > 8 {
+                //     Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
+                // } else 
+                // if ty1.size() > 8 || ty2.size() > 8 {
+                //     panic!("{:?}\n\n{:?}", bin.lhs, bin.rhs);
+                // }
                 if ty1 == ty2 {
                     Ok(Type::Bool)
                 } else {
@@ -819,14 +825,16 @@ impl Validate {
                             r#type: Self::node_type(bin.lhs.span),
                             expr: bin.lhs.clone(),
                         });
-                        return Ok(ty);
+                        bin.lhs.ty = ty;
+                        return Ok(Type::Bool);
                     }
                     if let Ok(ty) = Self::type_cast(ty2.clone(), ty1.clone(), bin.rhs.span) {
                         bin.rhs.kind = ExprKind::TypeCast(node::TypeCast {
                             r#type: Self::node_type(bin.rhs.span),
                             expr: bin.rhs.clone(),
                         });
-                        return Ok(ty);
+                        bin.rhs.ty = ty;
+                        return Ok(Type::Bool);
                     }
                     // match (&ty1, &ty2) {
                     //     (Type::Int, Type::Char) | (Type::Char, Type::Int) => Ok(Type::Bool),
@@ -1135,7 +1143,14 @@ impl Validate {
         return Ok((cur_type, exprs.len()));
     }
 
-    fn find_fn(&mut self, func: &str, mut expected_sig: Vec<Type>, expected_ret: Option<Type>, args: &mut Vec<node::Expr>, span: Span) -> Result<String, SemanticError> {
+    fn find_fn(
+        &mut self,
+        func: &str,
+        mut expected_sig: Vec<Type>,
+        expected_ret: Option<Type>,
+        args: &mut Vec<node::Expr>,
+        span: Span,
+    ) -> Result<String, SemanticError> {
         let mut s = func.to_string();
         let mut call = func.to_string();
         let pos_str = PosStr {
@@ -1152,46 +1167,66 @@ impl Validate {
                     break;
                 }
             }
+
             if !found {
                 let mut generics = HashMap::new();
                 let mut id = -1;
-                for sig in sigs {
+                'sig_loop: for sig in sigs {
                     let tys = &sig.0;
                     if expected_sig.len() != tys.len() {
                         continue;
                     }
-                    found = true;
-                    generics.clear();
 
-                    for (i, (ty1, ty2)) in expected_sig.iter_mut().zip(tys.iter()).enumerate() {
-                        if *ty1 != *ty2 {
-                            let mut temp_generics = generics.clone();
-                            if ty2.match_generics(ty1, &mut temp_generics).is_ok() {
-                                generics = temp_generics;
-                            } else {
-                                // match failed. maybe we can cast?
-                                let substituted_ty2 = ty2.substitute_generics(&generics);
-                                if Self::type_cast(ty1.clone(), substituted_ty2.clone(), span).is_ok() {
-                                    let e = args.get(i).unwrap().clone();
-                                    args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
-                                        r#type: Self::node_type(e.span),
-                                        expr: Box::new(e),
-                                    });
-                                    args.get_mut(i).unwrap().ty = substituted_ty2.clone();
-                                    *ty1 = substituted_ty2.clone();
-                                } else {
-                                    found = false;
-                                    break;
-                                }
-                            }
+                    // --- STAGE 1: Infer ALL possible generics from ALL arguments via structural matching ---
+                    let mut inferred_generics = HashMap::new();
+                    for (arg_type, param_type) in expected_sig.iter().zip(tys.iter()) {
+                        // This is a "soft" match. We ignore the result because failure to match
+                        // one argument shouldn't prevent us from gathering info from others.
+                        let _ = param_type.match_generics(arg_type, &mut inferred_generics);
+                    }
+
+                    // --- STAGE 2: Verify and plan casts using the inferred generics ---
+                    let mut final_arg_types = expected_sig.clone();
+                    let mut cast_info = Vec::new();
+
+                    for (i, (arg_type, param_type)) in final_arg_types.iter().zip(tys.iter()).enumerate() {
+                        let substituted_param_ty = param_type.substitute_generics(&inferred_generics);
+
+                        if *arg_type == substituted_param_ty {
+                            // Perfect match, nothing to do for this argument.
+                            continue;
+                        }
+
+                        if Self::type_cast(arg_type.clone(), substituted_param_ty.clone(), span).is_ok() {
+                            // A cast is possible. Plan to insert a cast node.
+                            cast_info.push((i, substituted_param_ty));
+                        } else {
+                            // No direct match and no cast possible. This signature fails.
+                            // Move on to the next potential signature.
+                            continue 'sig_loop;
                         }
                     }
 
-                    if found {
-                        id = sig.1 as i64;
-                        break;
+                    // --- STAGE 3: Success! This signature is a match. Apply changes. ---
+                    id = sig.1 as i64;
+                    generics = inferred_generics;
+
+                    // Apply the planned casts to the actual AST `args`.
+                    for (i, target_ty) in cast_info {
+                        let e = args.get(i).unwrap().clone();
+                        args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
+                            r#type: Self::node_type(e.span),
+                            expr: Box::new(e),
+                        });
+                        args.get_mut(i).unwrap().ty = target_ty.clone();
+                        // Also update the `expected_sig` we're working with.
+                        expected_sig[i] = target_ty;
                     }
+
+                    found = true;
+                    break 'sig_loop;
                 }
+
                 if id == -1 {
                     return Err(SemanticError::NoFnSig(func.to_string(), span, expected_sig, expected_ret));
                 }
@@ -1205,11 +1240,13 @@ impl Validate {
                             break;
                         }
                     }
-                    for (name, map, i) in self.gcalls.iter() {
-                        if *name == s && generics == *map {
-                            call = format!("{}.{}", s, i);
-                            found = true;
-                            break;
+                    if !found {
+                        for (name, map, i) in self.gcalls.iter() {
+                            if *name == s && generics == *map {
+                                call = format!("{}.{}", s, i);
+                                found = true;
+                                break;
+                            }
                         }
                     }
                     if !found {
@@ -1515,7 +1552,11 @@ impl Validate {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
-            (Type::Pointer(_), Type::HashMap { .. }) => (),
+            (Type::Pointer(p), Type::HashMap { .. }) => {
+                if let Type::HashMap { .. } = **p {
+                    return Err(SemanticError::InvalidCast(span, from, to));
+                }
+            }
             (Type::HashMap { .. }, Type::Pointer(p)) => {
                 if let Type::HashMap { .. } = **p {
                     return Err(SemanticError::InvalidCast(span, from, to));

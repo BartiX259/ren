@@ -173,7 +173,9 @@ fn parse_number_from_stream(p: *ParserState, out: *int) -> int ? <char> {
         p.cursor = start_ptr; // Rewind on failure
         return ?"Invalid JSON number.";
     }
-    if negative { *out = -*out; }
+    if negative {
+        *out = -*out;
+    }
     return 0;
 }
 
@@ -218,7 +220,7 @@ fn parse_string_from_stream(p: *ParserState, out: *<char>) -> int ? <char> {
             else if escaped == 't' { push(&builder, '\t'); }
             // Note: Unicode escapes like \uXXXX are not supported.
             // Other escapes like \b and \f are also not supported.
-            else { 
+            else {
                 // JSON spec says any other escape is an error, but many parsers
                 // are lenient and just pass the character through.
                 return ?"Invalid escape sequence: \\{escaped}";
@@ -247,7 +249,7 @@ fn parse_array<T>(p: *ParserState, out: *[T]) -> int ? <char> {
 
         skip_whitespace(p);
         if p.cursor >= p.end { return ?"Unterminated JSON array."; }
-        
+
         let next_char = *p.cursor;
         if next_char == ']' {
             p.cursor += 1;
@@ -314,8 +316,53 @@ fn parse_object_into_struct<T>(p: *ParserState, out: *T) -> int ? <char> {
             return ?"Expected ',' or '}' in object.";
         }
     }
-        print(1);
+    return 0;
+}
 
+fn parse_object_into_hashmap<K, V>(p: *ParserState, out: *{K: V}) -> int ? <char> {
+    expect_char(p, '{')?;
+    skip_whitespace(p);
+
+    if p.cursor < p.end && *p.cursor == '}' {
+        p.cursor += 1;
+        return 0; // Empty object
+    }
+
+    loop {
+        // 1. All JSON keys are parsed as strings first.
+        decl json_key_str: <char>;
+        parse_string_from_stream(p, &json_key_str)?;
+        expect_char(p, ':')?;
+
+        // 2. We need to convert the string key into the target type K.
+        decl map_key: K;
+        parse(json_key_str, &map_key);
+
+        // 3. Parse the value.
+        decl value: V;
+        parse_value(p, &value)?;
+
+        // 4. Insert the correctly typed key and value into the map.
+        insert(out, map_key, value);
+
+        skip_whitespace(p);
+        if p.cursor >= p.end { return ?"Unterminated JSON object."; }
+
+        let next_char = *p.cursor;
+        if next_char == '}' {
+            p.cursor += 1;
+            break;
+        } else if next_char == ',' {
+            p.cursor += 1;
+            // Handle invalid trailing comma
+            skip_whitespace(p);
+            if p.cursor < p.end && *p.cursor == '}' {
+                return ?"Trailing comma in JSON object.";
+            }
+        } else {
+            return ?"Expected ',' or '}' in object.";
+        }
+    }
     return 0;
 }
 
@@ -365,25 +412,23 @@ fn parse_and_discard_value(p: *ParserState) -> int ? <char> {
 fn parse_value<T>(p: *ParserState, out: *T) -> int ? <char> {
     skip_whitespace(p);
 
-    match <K> T {
+    match <K, V> T {
         int { return parse_number_from_stream(p, out as *int); }
         bool { return parse_bool_from_stream(p, out as *bool); }
         <char> { return parse_string_from_stream(p, out as *<char>); }
         [K] { return parse_array(p, out); }
+        {K: V} { return parse_object_into_hashmap(p, out); }
         struct { return parse_object_into_struct(p, out); }
         ?K {
             skip_whitespace(p);
             if p.cursor < p.end && *p.cursor == 'n' {
                 consume_literal(p, "null")?;
-                *out = none; // Set to 'none' using a safer, language- idiomatic way.
+                *out = none;
                 return 0;
             } else {
-                // NOTE: The original implementation used unsafe pointer arithmetic.
-                // This corrected version assumes there's a safe way to construct a
-                // 'some' value. The exact syntax depends on your language.
                 decl val: K;
                 parse_value(p, &val)?;
-                *out = some(val); // Construct the 'some' variant.
+                *out = val;
                 return 0;
             }
         }
@@ -403,7 +448,6 @@ pub fn from_json<T>(json_str: <char>, out: *T) -> int ? <char> {
     let start_ptr = json_str as *char;
     let end_ptr = start_ptr + len(json_str);
 
-    // CORRECTED: The state struct `p` is now created directly and its address is passed.
     decl p: ParserState;
     p.cursor = start_ptr;
     p.end = end_ptr;
@@ -411,7 +455,6 @@ pub fn from_json<T>(json_str: <char>, out: *T) -> int ? <char> {
     parse_value(&p, out)?;
     skip_whitespace(&p);
 
-    // CORRECTED: The check now correctly compares the final cursor position with the end.
     if p.cursor != p.end {
         return ?"Unexpected trailing characters in JSON input.";
     }

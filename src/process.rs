@@ -383,7 +383,7 @@ impl Process {
                 }
             }
         }
-        if bin.op.str.starts_with("=") {
+        if bin.op.str.starts_with("=") && bin.op.str != "==" {
             if let node::ExprKind::Call(c) = &lhs.kind {
                 let ins_fn = bin.op.str.split("=").last().unwrap();
                 let mut args = c.args.clone();
