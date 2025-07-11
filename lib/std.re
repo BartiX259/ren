@@ -1022,7 +1022,7 @@ pub fn print_stack(offset: int, len: int) {
     let ptr = sp() as *int + offset + 3;
     print(ptr);
     print("| :: ");
-    for let i = 0; i < len; i += 1 {
+    for i in 0..len {
         print(*ptr);
         print(" :: ");
         ptr += 1;

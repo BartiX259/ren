@@ -1011,39 +1011,48 @@ fn parse_match_type(tokens: &mut VecIter<Token>) -> Result<node::MatchType, Pars
     })
 }
 
+fn parse_capture(tokens: &mut VecIter<Token>) -> Result<node::Capture, ParseError> {
+    let tok = check_none(tokens, "a word")?;
+    let Token::Word { value } = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "a word"));
+    };
+    let first = PosStr {
+        str: value,
+        pos_id: tokens.prev_index(),
+    };
+    if let Some(Token::Comma) = tokens.peek() {
+        tokens.next();
+        let mut mult = vec![first];
+        loop {
+            let tok = check_none(tokens, "a word")?;
+            let Token::Word { value } = tok else {
+                return Err(unexp(tok, tokens.prev_index(), "a word"));
+            };
+            mult.push(PosStr {
+                str: value,
+                pos_id: tokens.prev_index(),
+            });
+            if let Some(Token::Comma) = tokens.peek() {
+                tokens.next();
+                continue;
+            } else {
+                break;
+            }
+        }
+        Ok(node::Capture::Multiple(mult))
+    } else {
+        Ok(node::Capture::Single(first))
+    }
+}
+
 fn parse_for(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
     let pos_id = tokens.current_index();
     tokens.next();
-    if let Some(Token::In) = tokens.peek2() {
-        let tok = check_none(tokens, "a word")?;
-        let Token::Word { value } = tok else {
-            return Err(unexp(tok, tokens.prev_index(), "a word"));
-        };
-        let capture = PosStr {
-            str: value,
-            pos_id: tokens.prev_index(),
-        };
-        tokens.next(); // 'in'
-        let expr = parse_expr(tokens, 0)?;
-        let scope = parse_scope(tokens)?;
-        return Ok(node::Stmt::ForIn(node::ForIn { pos_id, capture, expr, scope }));
-    }
-    let init;
-    if let Some(Token::Let) = tokens.peek() {
-        let l = parse_let(tokens)?;
-        let node::Stmt::Let(lt) = l else {
-            panic!("Can't unpack");
-        };
-        init = node::LetOrExpr::Let(lt);
-    } else {
-        init = node::LetOrExpr::Expr(parse_expr(tokens, 0)?);
-        check_semi(tokens)?;
-    }
-    let cond = parse_expr(tokens, 0)?;
-    check_semi(tokens)?;
-    let incr = parse_expr(tokens, 0)?;
+    let capture = parse_capture(tokens)?;
+    tokens.next(); // 'in'
+    let expr = parse_expr(tokens, 0)?;
     let scope = parse_scope(tokens)?;
-    Ok(node::Stmt::For(node::For { pos_id, init, cond, incr, scope }))
+    Ok(node::Stmt::ForIn(node::ForIn { pos_id, capture, expr, scope }))
 }
 
 fn r#type(start: usize, end: usize, kind: node::TypeKind) -> node::Type {

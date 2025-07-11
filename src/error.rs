@@ -123,6 +123,35 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             eprintln!("Invalid return statement.");
             print_module_err_id(path, pos_id);
         }
+        SemanticError::InvalidCapture(capture, ty) => {
+            eprint!("Can't capture {ty} as ");
+            let span = match capture {
+                node::Capture::Single(pos_str) => {
+                    eprint!("{}", pos_str.str);
+                    Span {
+                        start: pos_str.pos_id,
+                        end: pos_str.pos_id,
+                    }
+                }
+                node::Capture::Multiple(pos_strs) => {
+                    let mut first = true;
+                    for p in pos_strs.iter() {
+                        if first {
+                            first = false;
+                        } else {
+                            eprint!(", ");
+                        }
+                        eprint!("{}", p.str);
+                    }
+                    Span {
+                        start: pos_strs.iter().next().unwrap().pos_id,
+                        end: pos_strs.iter().last().unwrap().pos_id,
+                    }
+                }
+            };
+            eprintln!(".");
+            print_module_err_span(path, span);
+        }
         SemanticError::NotInLoop(name, pos_id) => {
             eprintln!("{} statement not in a loop.", name);
             print_module_err_id(path, pos_id);

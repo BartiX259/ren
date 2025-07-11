@@ -81,7 +81,7 @@ fn to_json_recursive<T>(value: T, builder: *[char]) {
         {K: V} {
             push(builder, '{');
             let first = true;
-            for field in iter(value) {
+            for field in value {
                 if !first { push(builder, ','); }
                 // JSON object keys MUST be strings.
                 to_json_recursive(str(field.key), builder);

@@ -60,13 +60,6 @@ impl Process {
                 expr: self.expr(r#while.expr),
                 scope: self.scope(r#while.scope),
             }),
-            node::Stmt::For(r#for) => node::Stmt::For(node::For {
-                pos_id: r#for.pos_id,
-                init: self.let_or_expr(r#for.init),
-                cond: self.expr(r#for.cond),
-                incr: self.expr(r#for.incr),
-                scope: self.scope(r#for.scope),
-            }),
             node::Stmt::ForIn(r#for) => node::Stmt::ForIn(node::ForIn {
                 pos_id: r#for.pos_id,
                 capture: r#for.capture,
@@ -90,13 +83,6 @@ impl Process {
 
     fn opt_expr(&mut self, expr: Option<node::Expr>) -> Option<node::Expr> {
         return expr.map(|e| self.expr(e));
-    }
-
-    fn let_or_expr(&mut self, e: node::LetOrExpr) -> node::LetOrExpr {
-        match e {
-            node::LetOrExpr::Let(r#let) => node::LetOrExpr::Let(r#let),
-            node::LetOrExpr::Expr(expr) => node::LetOrExpr::Expr(self.expr(expr)),
-        }
     }
 
     fn expr_list(&mut self, exprs: Vec<node::Expr>) -> Vec<node::Expr> {

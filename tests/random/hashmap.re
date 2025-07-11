@@ -127,7 +127,7 @@ fn test_resize() {
         let s = "expected {i} got {m[i]!}";
         assert(m[i]! == i, s);
     }
-    for field in iter(m) {
+    for field in m {
         assert(field.key == field.value, "q");
     }
     print("Resize ok\n");
@@ -144,8 +144,8 @@ fn test_json() {
         let s = "expected {i} got {m[i]!}";
         assert(m[i]! == i, s);
     }
-    for field in iter(m) {
-        assert(field.key == field.value, "q");
+    for key, value in m {
+        assert(key == value, "q");
     }
     print("OK\n");
 }

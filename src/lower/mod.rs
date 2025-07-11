@@ -101,7 +101,6 @@ impl<'a> Lower<'a> {
             node::Stmt::If(r#if) => self.r#if(r#if),
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
             node::Stmt::While(r#while) => self.r#while(r#while),
-            node::Stmt::For(r#for) => self.r#for(r#for),
             node::Stmt::ForIn(r#for) => self.for_in(r#for),
             node::Stmt::Break(pos_id) => {
                 self.push_op(
@@ -1514,34 +1513,62 @@ impl<'a> Lower<'a> {
         self.loop_exit.pop();
     }
 
-    fn r#for(&mut self, r#for: &node::For) {
-        match &r#for.init {
-            node::LetOrExpr::Let(r#let) => self.r#let(r#let),
-            node::LetOrExpr::Expr(expr) => {
-                self.expr(expr);
+    fn capture(&mut self, capture: &node::Capture, ty: &Type, term: &Term) {
+        if let node::Capture::Single(pos_str) = capture {
+            self.var_map.insert(pos_str.str.clone(), term.clone());
+            return;
+        }
+        let node::Capture::Multiple(pos_strs) = capture else {
+            unreachable!();
+        };
+        match ty {
+            Type::Tuple(tys) => {
+                let mut offset = 0;
+                for (p, t) in pos_strs.iter().zip(tys) {
+                    self.stack_count += 1;
+                    self.push_op(
+                        Op::Own {
+                            res: Term::Stack(self.stack_count),
+                            term: term.clone(),
+                            offset,
+                        },
+                        0,
+                    );
+                    self.var_map.insert(p.str.clone(), Term::Stack(self.stack_count));
+                    offset += t.size() as i64;
+                }
+            }
+            Type::Struct(map) => {
+                let mut items: Vec<_> = map.iter().collect();
+                items.sort_by_key(|(_, (_, offset))| *offset);
+                for (p, (_, (_, offset))) in pos_strs.iter().zip(items.iter()) {
+                    self.stack_count += 1;
+                    self.push_op(
+                        Op::Own {
+                            res: Term::Stack(self.stack_count),
+                            term: term.clone(),
+                            offset: *offset as i64,
+                        },
+                        0,
+                    );
+                    self.var_map.insert(p.str.clone(), Term::Stack(self.stack_count));
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn remove_capture(&mut self, capture: &node::Capture) {
+        match capture {
+            node::Capture::Single(pos_str) => {
+                self.var_map.remove(&pos_str.str);
+            }
+            node::Capture::Multiple(pos_strs) => {
+                for p in pos_strs {
+                    self.var_map.remove(&p.str);
+                }
             }
         }
-        self.label_count += 3;
-        let s = self.label_count - 2;
-        let c = self.label_count - 1;
-        let e = self.label_count;
-        self.loop_start.push(c);
-        self.loop_exit.push((e, self.scope_depth));
-        self.push_op(Op::Label { label: s }, r#for.pos_id);
-        self.push_op(Op::BeginLoop, 0);
-        self.scope(&r#for.scope, 0);
-        self.push_op(Op::EndLoop, 0);
-        self.push_op(Op::Label { label: c }, r#for.pos_id);
-        self.push_op(Op::NaturalFlow, r#for.pos_id);
-        self.push_op(Op::BeginScope, r#for.pos_id);
-        self.expr(&r#for.incr);
-        self.clear_res();
-        let cond = self.expr(&r#for.cond);
-        self.push_op(Op::CondJump { cond, label: s }, r#for.pos_id);
-        self.push_op(Op::Label { label: e }, r#for.pos_id);
-        self.push_op(Op::NaturalFlow, r#for.pos_id);
-        self.loop_start.pop();
-        self.loop_exit.pop();
     }
 
     fn for_in(&mut self, r#for: &node::ForIn) {
@@ -1572,7 +1599,7 @@ impl<'a> Lower<'a> {
         self.push_op(Op::NaturalFlow, r#for.pos_id);
         self.loop_start.pop();
         self.loop_exit.pop();
-        self.var_map.remove(&r#for.capture.str);
+        self.remove_capture(&r#for.capture);
         self.push_op(Op::EndScope, r#for.pos_id);
     }
     fn for_in_slice(&mut self, r#for: &node::ForIn, sl: Term, inner: &Type, s: u16, i: u16, c: u16) {
@@ -1597,7 +1624,7 @@ impl<'a> Lower<'a> {
             r#for.pos_id,
         );
         let size = Term::IntLit(inner.size() as i64);
-        self.var_map.insert(r#for.capture.str.clone(), el.clone());
+        self.capture(&r#for.capture, inner, &el);
         self.push_op(Op::Jump { label: i }, r#for.pos_id);
         self.push_op(Op::Label { label: s }, r#for.pos_id);
         self.push_op(Op::BeginLoop, 0);
@@ -1651,7 +1678,7 @@ impl<'a> Lower<'a> {
             },
             r#for.pos_id,
         );
-        self.var_map.insert(r#for.capture.str.clone(), range.clone());
+        self.capture(&r#for.capture, &Type::Range, &range);
         self.push_op(Op::Jump { label: i }, r#for.pos_id);
         self.push_op(Op::Label { label: s }, r#for.pos_id);
         self.push_op(Op::BeginLoop, 0);
@@ -1810,7 +1837,7 @@ impl<'a> Lower<'a> {
                     r#for.pos_id,
                 );
             }
-            self.var_map.insert(r#for.capture.str.clone(), el);
+            self.capture(&r#for.capture, ty, &el);
             self.scope(&scope, 0);
             if let Some(pos) = scope.iter().position(|stmt| matches!(stmt, node::Stmt::Marker)) {
                 let remaining = scope.split_off(pos + 1);
@@ -1848,7 +1875,7 @@ impl<'a> Lower<'a> {
                 },
                 r#for.pos_id,
             );
-            self.var_map.insert(r#for.capture.str.clone(), el);
+            self.capture(&r#for.capture, ty, &el);
             self.scope(&scope, 0);
             if let Some(pos) = scope.iter().position(|stmt| matches!(stmt, node::Stmt::Marker)) {
                 let remaining = scope.split_off(pos + 1);

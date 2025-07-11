@@ -171,11 +171,6 @@ pub struct MatchType {
     pub branches: Vec<(Type, Vec<Stmt>, bool)>,
 }
 #[derive(Debug, Clone)]
-pub enum LetOrExpr {
-    Let(Let),
-    Expr(Expr),
-}
-#[derive(Debug, Clone)]
 pub struct Loop {
     pub pos_id: usize,
     pub scope: Vec<Stmt>,
@@ -186,19 +181,16 @@ pub struct While {
     pub expr: Expr,
     pub scope: Vec<Stmt>,
 }
-#[derive(Debug, Clone)]
-pub struct For {
-    pub pos_id: usize,
-    pub init: LetOrExpr,
-    pub cond: Expr,
-    pub incr: Expr,
-    pub scope: Vec<Stmt>,
-}
 
+#[derive(Debug, Clone)]
+pub enum Capture {
+    Single(PosStr),
+    Multiple(Vec<PosStr>)
+}
 #[derive(Debug, Clone)]
 pub struct ForIn {
     pub pos_id: usize,
-    pub capture: PosStr,
+    pub capture: Capture,
     pub expr: Expr,
     pub scope: Vec<Stmt>,
 }
@@ -310,7 +302,6 @@ pub enum Stmt {
     If(If),
     Loop(Loop),
     While(While),
-    For(For),
     ForIn(ForIn),
     Break(usize),
     Continue(usize),

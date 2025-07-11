@@ -1,6 +1,7 @@
 use crate::ir::Symbol;
 use crate::node::{self, ExprKind, PosStr, Span};
 use crate::types::Type;
+use std::arch::x86_64::_MM_FROUND_TO_POS_INF;
 use std::collections::HashMap;
 
 mod hoist;
@@ -200,6 +201,7 @@ pub enum SemanticError {
     NoCapture(Span),
     NoMatch(usize, Type),
     InvalidReturn(usize),
+    InvalidCapture(node::Capture, Type),
     NotInLoop(String, usize),
     InvalidAssign(Span),
     ConstAssign(Span, Type),
@@ -283,7 +285,6 @@ impl Validate {
             node::Stmt::If(r#if) => self.r#if(r#if),
             node::Stmt::Loop(r#loop) => self.r#loop(r#loop),
             node::Stmt::While(r#while) => self.r#while(r#while),
-            node::Stmt::For(r#for) => self.r#for(r#for),
             node::Stmt::ForIn(r#for) => self.for_in(r#for),
             node::Stmt::Break(pos_id) => self.check_loop("Break", *pos_id),
             node::Stmt::Continue(pos_id) => self.check_loop("Continue", *pos_id),
@@ -813,7 +814,7 @@ impl Validate {
                 // Comparison operators
                 // if ty1.size() > 8 || ty2.size() > 8 {
                 //     Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
-                // } else 
+                // } else
                 // if ty1.size() > 8 || ty2.size() > 8 {
                 //     panic!("{:?}\n\n{:?}", bin.lhs, bin.rhs);
                 // }
@@ -1143,14 +1144,7 @@ impl Validate {
         return Ok((cur_type, exprs.len()));
     }
 
-    fn find_fn(
-        &mut self,
-        func: &str,
-        mut expected_sig: Vec<Type>,
-        expected_ret: Option<Type>,
-        args: &mut Vec<node::Expr>,
-        span: Span,
-    ) -> Result<String, SemanticError> {
+    fn find_fn(&mut self, func: &str, mut expected_sig: Vec<Type>, expected_ret: Option<Type>, args: &mut Vec<node::Expr>, span: Span) -> Result<String, SemanticError> {
         let mut s = func.to_string();
         let mut call = func.to_string();
         let pos_str = PosStr {
@@ -1586,17 +1580,53 @@ impl Validate {
         self.loop_count -= 1;
         Ok(())
     }
-    fn r#for(&mut self, r#for: &mut node::For) -> Result<(), SemanticError> {
-        match &mut r#for.init {
-            node::LetOrExpr::Let(r#let) => self.r#let(r#let)?,
-            node::LetOrExpr::Expr(expr) => self.expr(expr).map(|_| ())?,
+
+    fn capture(&mut self, capture: &node::Capture, ty: &Type) -> Result<(), SemanticError> {
+        if let node::Capture::Single(pos_str) = capture {
+            self.symbol_table.insert(pos_str.str.clone(), Symbol::Var { ty: ty.clone() });
+            return Ok(());
         }
-        self.expr(&mut r#for.cond)?;
-        self.expr(&mut r#for.incr)?;
-        self.loop_count += 1;
-        self.scope(&mut r#for.scope)?;
-        self.loop_count -= 1;
+        let node::Capture::Multiple(pos_strs) = capture else {
+            unreachable!();
+        };
+        match ty {
+            Type::Tuple(tys) => {
+                if pos_strs.len() != tys.len() {
+                    return Err(SemanticError::InvalidCapture(capture.clone(), ty.clone()));
+                }
+                for (i, p) in pos_strs.iter().enumerate() {
+                    self.symbol_table.insert(p.str.clone(), Symbol::Var { ty: tys.get(i).unwrap().clone() });
+                }
+            }
+            Type::Struct(map) => {
+                let mut items: Vec<_> = map.iter().collect();
+                items.sort_by_key(|(_, (_, offset))| *offset);
+                if pos_strs.len() != items.len() {
+                    return Err(SemanticError::InvalidCapture(capture.clone(), ty.clone()));
+                }
+                for (p, (name, (t, _))) in pos_strs.iter().zip(items) {
+                    if p.str != *name {
+                        return Err(SemanticError::InvalidCapture(capture.clone(), ty.clone()));
+                    }
+                    self.symbol_table.insert(p.str.clone(), Symbol::Var { ty: t.clone() });
+                }
+            }
+            _ => return Err(SemanticError::InvalidCapture(capture.clone(), ty.clone())),
+        }
         Ok(())
+    }
+
+    fn remove_capture(&mut self, capture: &node::Capture) {
+        match capture {
+            node::Capture::Single(pos_str) => {
+                self.symbol_table.remove(&pos_str.str);
+            }
+            node::Capture::Multiple(pos_strs) => {
+                for p in pos_strs {
+                    self.symbol_table.remove(&p.str);
+                }
+            }
+        }
     }
 
     fn for_in(&mut self, r#for: &mut node::ForIn) -> Result<(), SemanticError> {
@@ -1619,14 +1649,14 @@ impl Validate {
             Type::Tuple(tys) => {
                 let mut scope = vec![];
                 for ty in tys {
-                    self.symbol_table.insert(r#for.capture.str.clone(), Symbol::Var { ty });
+                    self.capture(&r#for.capture, &ty)?;
                     self.loop_count += 1;
                     let mut new_scope = r#for.scope.clone();
                     self.scope(&mut new_scope)?;
                     scope.extend(new_scope);
                     scope.push(node::Stmt::Marker);
                     self.loop_count -= 1;
-                    self.symbol_table.remove(&r#for.capture.str);
+                    self.remove_capture(&r#for.capture);
                 }
                 r#for.scope = scope;
                 return Ok(());
@@ -1642,15 +1672,34 @@ impl Validate {
                     r#for.expr.ty = expected.clone();
                     inner
                 } else {
-                    return Err(SemanticError::NotIterable(r#for.expr.span, other));
+                    let iter_fn = self.find_fn("iter", vec![other.clone()], None, &mut vec![], r#for.expr.span)?;
+                    let ty = self
+                        .symbol_table
+                        .get(&iter_fn)
+                        .map(|sym| match sym {
+                            Symbol::Func { ty: t, .. } | Symbol::ExternFunc { ty: t, .. } | Symbol::Syscall { ty: t, .. } => Some(t),
+                            _ => None,
+                        })
+                        .flatten()
+                        .ok_or(SemanticError::NotIterable(r#for.expr.span, other.clone()))?;
+                    let inner = match ty {
+                        Type::Slice { inner } | Type::List { inner } => *inner.clone(),
+                        _ => return Err(SemanticError::NotIterable(r#for.expr.span, other)),
+                    };
+                    r#for.expr.kind = node::ExprKind::Call(node::Call {
+                        name: PosStr { str: iter_fn, pos_id: r#for.pos_id },
+                        args: vec![r#for.expr.clone()],
+                    });
+                    r#for.expr.ty = Type::Slice { inner: Box::new(inner.clone()) };
+                    inner
                 }
             }
         };
-        self.symbol_table.insert(r#for.capture.str.clone(), Symbol::Var { ty: capture_ty });
+        self.capture(&r#for.capture, &capture_ty)?;
         self.loop_count += 1;
         self.scope(&mut r#for.scope)?;
         self.loop_count -= 1;
-        self.symbol_table.remove(&r#for.capture.str);
+        self.remove_capture(&r#for.capture);
         Ok(())
     }
 
@@ -1662,15 +1711,13 @@ impl Validate {
         for (_, (ty, _)) in items {
             let value_ty = if pointer_mode { Type::Pointer(Box::new(ty.clone())) } else { ty.clone() };
 
-            self.symbol_table.insert(
-                r#for.capture.str.clone(),
-                Symbol::Var {
-                    ty: Type::Struct(HashMap::from([
-                        ("name".to_string(), (Type::Slice { inner: Box::new(Type::Char) }, 0)),
-                        ("value".to_string(), (value_ty, 16)),
-                    ])),
-                },
-            );
+            self.capture(
+                &r#for.capture,
+                &Type::Struct(HashMap::from([
+                    ("name".to_string(), (Type::Slice { inner: Box::new(Type::Char) }, 0)),
+                    ("value".to_string(), (value_ty, 16)),
+                ])),
+            )?;
 
             self.loop_count += 1;
             let mut new_scope = r#for.scope.clone();
@@ -1678,7 +1725,7 @@ impl Validate {
             scope.extend(new_scope);
             scope.push(node::Stmt::Marker);
             self.loop_count -= 1;
-            self.symbol_table.remove(&r#for.capture.str);
+            self.remove_capture(&r#for.capture);
         }
 
         r#for.scope = scope;
