@@ -75,7 +75,7 @@ pub fn parse_opt<T>(argc: *int, argv: **char, name: <char>, opt: *?T) -> int ? <
         let arg = argv[i];
         if cmp(arg, flag) {
             *(opt as *int) = 0;
-            if i >= argc {
+            if i >= *argc - 1 {
                 return ?"Optional argument required for '{name}'.\n";
             }
             let res = parse(argv[i+1], (opt as *int + 1) as *T);

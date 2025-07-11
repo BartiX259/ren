@@ -148,8 +148,7 @@ impl<'a> Gen<'a> {
             self.buf.indent();
 
             const ARG_PARSE_RESULT_SIZE: u32 = 24;
-            let mut big_args_size = 0;
-            let mut small_args_size = 0;
+            let mut args_size = 0;
 
             // Separate arguments into flags and positionals to handle them in two stages.
             let mut flags = Vec::new();
@@ -157,42 +156,20 @@ impl<'a> Gen<'a> {
             let mut reg_info = vec![0; args.len()];
             let mut current_offset = ARG_PARSE_RESULT_SIZE;
 
-            // Small args
             for (i, (ty, parse_fn)) in args.iter().zip(parse_fns.iter()).enumerate() {
                 if parse_fn.is_empty() {
                     continue;
                 }
                 let size = ty.aligned_size();
-                if size <= 16 {
-                    let item = (ty, parse_fn, i, current_offset);
-                    small_args_size += size;
-                    if parse_fn.contains("opt") {
-                        flags.push(item);
-                    } else {
-                        positionals.push(item);
-                    }
-                    reg_info[i] = current_offset;
-                    current_offset += size;
+                let item = (ty, parse_fn, i, current_offset);
+                args_size += size;
+                if parse_fn.contains("opt") {
+                    flags.push(item);
+                } else {
+                    positionals.push(item);
                 }
-            }
-
-            // Big args
-            for (i, (ty, parse_fn)) in args.iter().zip(parse_fns.iter()).enumerate() {
-                if parse_fn.is_empty() {
-                    continue;
-                }
-                let size = ty.aligned_size();
-                if size > 16 {
-                    let item = (ty, parse_fn, i, current_offset);
-                    big_args_size += size;
-                    if parse_fn.contains("opt") {
-                        flags.push(item);
-                    } else {
-                        positionals.push(item);
-                    }
-                    reg_info[i] = current_offset;
-                    current_offset += size;
-                }
+                reg_info[i] = current_offset;
+                current_offset += size;
             }
 
             if !init.is_empty() {
@@ -200,7 +177,7 @@ impl<'a> Gen<'a> {
             }
 
             self.buf.push_line("mov rbp, rsp");
-            self.buf.push_line(format!("sub rsp, {}", small_args_size + big_args_size + ARG_PARSE_RESULT_SIZE));
+            self.buf.push_line(format!("sub rsp, {}", args_size + ARG_PARSE_RESULT_SIZE));
             self.buf.push_line("");
 
             if !flags.is_empty() {
@@ -253,28 +230,6 @@ impl<'a> Gen<'a> {
                 }
             }
 
-            self.buf.push_line(";; Load registers for main function call");
-            let mut param_index = 0;
-            for (ty, offset) in args.iter().zip(reg_info) {
-                let size = ty.aligned_size();
-                for j in (0..size).step_by(8) {
-                    let target = *self.call_order.get(param_index).ok_or(GenError::TooManyArguments(OpLoc {
-                        start_id: span.start,
-                        end_id: span.end,
-                    }))?;
-                    param_index += 1;
-                    if size > 16 {
-                        self.buf.push_line(format!("mov {}, rsp", target));
-                        self.buf.push_line(format!("add {}, {}", target, offset + j));
-                        break;
-                    } else {
-                        self.buf.push_line(format!("mov {}, [rsp+{}]", target, offset + j));
-                    }
-                }
-            }
-
-            self.buf.push_line(";; Restore stack pointer before calling main");
-            self.buf.push_line(format!("add rsp, {}", small_args_size + ARG_PARSE_RESULT_SIZE));
             self.buf.push_line("call main");
             self.buf.push_line("mov rdi, rax"); // Exit with main's return code
             self.buf.push_line("mov rax, 60");
@@ -451,11 +406,23 @@ impl<'a> Gen<'a> {
                     let loc = self.locs.get(&term).unwrap();
                     self.locs.insert(res, loc - offset);
                 }
-                ir::Op::Arg { term, double } => {
+                ir::Op::Arg { term, size } => {
+                    if self.cur_fn == "main" {
+                        if let Term::Pointer(_) = term {
+                            self.buf.push_line(format!("push rsp"));
+                            self.buf.push_line(format!("add qword [rsp], {}", self.sp + self.arg_index as i64 + 32));
+                            self.sp += 8;
+                            self.locs.insert(term, self.sp);
+                        } else {
+                            self.locs.insert(term, -(self.arg_index as i64) - 32);
+                        }
+                        self.arg_index += size as usize;
+                        continue;
+                    }
                     let reg = *self.call_order.get(self.arg_index).ok_or(GenError::TooManyArguments(self.last_loc.clone()))?;
                     self.arg_index += 1;
                     if term.is_stack() {
-                        if double {
+                        if size > 8 && matches!(term, Term::Stack(_)) {
                             self.sp += 16;
                             self.buf.push_line(format!("sub rsp, 16"));
                             self.locs.insert(term, self.sp);

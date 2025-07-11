@@ -298,26 +298,28 @@ impl<'a> Lower<'a> {
         self.var_map.clear();
         match self.ir.get(&decl.name.str).cloned() {
             Some(Symbol::Func { ty, args, .. }) | Some(Symbol::MainFunc { ty, args, .. }) => {
-                if ty.size() > 16 {
+                let size = ty.size();
+                if size > 16 {
                     self.pointer_count += 1;
                     self.ret_salloc = Some(Term::Pointer(self.pointer_count));
                     self.push_op(
                         Op::Arg {
                             term: Term::Pointer(self.pointer_count),
-                            double: false,
+                            size
                         },
                         decl.name.pos_id,
                     );
                 }
                 for (s, ty) in decl.arg_names.iter().zip(args) {
-                    if ty.size() > 16 {
+                    let size = ty.size();
+                    if size > 16 {
                         self.pointer_count += 1;
                         let id = self.pointer_count;
                         self.var_map.insert(s.str.clone(), Term::Pointer(id));
                         self.push_op(
                             Op::Arg {
                                 term: Term::Pointer(id),
-                                double: false,
+                                size
                             },
                             s.pos_id,
                         );
@@ -328,7 +330,7 @@ impl<'a> Lower<'a> {
                         self.push_op(
                             Op::Arg {
                                 term: Term::Pointer(id),
-                                double: false,
+                                size
                             },
                             s.pos_id,
                         );
@@ -339,7 +341,7 @@ impl<'a> Lower<'a> {
                         self.push_op(
                             Op::Arg {
                                 term: Term::Stack(id),
-                                double: ty.size() > 8,
+                                size
                             },
                             s.pos_id,
                         );
