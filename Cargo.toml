@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 
 [[bin]]
-name = "ren"
+name = "renc"
 path = "src/main.rs"
 
 [profile.dev]

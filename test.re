@@ -13,4 +13,3 @@ fn main() {
         print('\n');
     }
 }
-

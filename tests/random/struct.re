@@ -1,7 +1,7 @@
-struct small {
+type small = (
     x: int,
     y: int
-}
+);
 fn get_big(b: int) -> small {
     let x = small { x: 10, y: 50 };
     if b == 1 {
