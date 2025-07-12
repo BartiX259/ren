@@ -28,7 +28,7 @@ impl Process {
         match stmt {
             node::Stmt::Expr(expr) => node::Stmt::Expr(self.expr(expr)),
             node::Stmt::Let(decl) => node::Stmt::Let(node::Let {
-                name: decl.name,
+                capture: decl.capture,
                 expr: self.expr(decl.expr),
             }),
             node::Stmt::LetElseScope(r#else) => node::Stmt::LetElseScope(node::ElseScope {

@@ -381,11 +381,8 @@ impl Validate {
 
     fn r#let(&mut self, decl: &mut node::Let) -> Result<(), SemanticError> {
         if self.cur_func.is_some() {
-            if self.symbol_table.contains_key(&decl.name.str) {
-                return Err(SemanticError::SymbolExists(decl.name.clone()));
-            }
             let ty = self.expr(&mut decl.expr)?;
-            self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
+            self.capture(&decl.capture, &ty, true)?;
         }
         Ok(())
     }
@@ -1581,34 +1578,51 @@ impl Validate {
         Ok(())
     }
 
-    fn capture(&mut self, capture: &node::Capture, ty: &Type) -> Result<(), SemanticError> {
+    fn capture(&mut self, capture: &node::Capture, ty: &Type, push: bool) -> Result<(), SemanticError> {
         if let node::Capture::Single(pos_str) = capture {
-            self.symbol_table.insert(pos_str.str.clone(), Symbol::Var { ty: ty.clone() });
+            if self.symbol_table.contains_key(&pos_str.str) {
+                return Err(SemanticError::SymbolExists(pos_str.clone()));
+            }
+            if push {
+                self.push_symbol(pos_str.str.clone(), Symbol::Var { ty: ty.clone() });
+            } else {
+                self.symbol_table.insert(pos_str.str.clone(), Symbol::Var { ty: ty.clone() });
+            }
             return Ok(());
         }
-        let node::Capture::Multiple(pos_strs) = capture else {
+        let node::Capture::Multiple(pos_strs, dots) = capture else {
             unreachable!();
         };
         match ty {
             Type::Tuple(tys) => {
-                if pos_strs.len() != tys.len() {
+                if !dots && pos_strs.len() != tys.len() || *dots && pos_strs.len() >= tys.len() {
                     return Err(SemanticError::InvalidCapture(capture.clone(), ty.clone()));
                 }
-                for (i, p) in pos_strs.iter().enumerate() {
-                    self.symbol_table.insert(p.str.clone(), Symbol::Var { ty: tys.get(i).unwrap().clone() });
+                for (p, t) in pos_strs.iter().zip(tys.iter()) {
+                    if push {
+                        self.push_symbol(p.str.clone(), Symbol::Var { ty: t.clone() });
+                    } else {
+                        self.symbol_table.insert(p.str.clone(), Symbol::Var { ty: t.clone() });
+                    }
                 }
             }
             Type::Struct(map) => {
-                let mut items: Vec<_> = map.iter().collect();
-                items.sort_by_key(|(_, (_, offset))| *offset);
-                if pos_strs.len() != items.len() {
+                let len = map.iter().len();
+                if !dots && len != pos_strs.len() || *dots && pos_strs.len() >= len {
                     return Err(SemanticError::InvalidCapture(capture.clone(), ty.clone()));
                 }
-                for (p, (name, (t, _))) in pos_strs.iter().zip(items) {
-                    if p.str != *name {
+                for p in pos_strs.iter() {
+                    let Some((t, _)) = map.get(&p.str) else {
                         return Err(SemanticError::InvalidCapture(capture.clone(), ty.clone()));
+                    };
+                    if self.symbol_table.contains_key(&p.str) {
+                        return Err(SemanticError::SymbolExists(p.clone()));
                     }
-                    self.symbol_table.insert(p.str.clone(), Symbol::Var { ty: t.clone() });
+                    if push {
+                        self.push_symbol(p.str.clone(), Symbol::Var { ty: t.clone() });
+                    } else {
+                        self.symbol_table.insert(p.str.clone(), Symbol::Var { ty: t.clone() });
+                    }
                 }
             }
             _ => return Err(SemanticError::InvalidCapture(capture.clone(), ty.clone())),
@@ -1621,7 +1635,7 @@ impl Validate {
             node::Capture::Single(pos_str) => {
                 self.symbol_table.remove(&pos_str.str);
             }
-            node::Capture::Multiple(pos_strs) => {
+            node::Capture::Multiple(pos_strs, _) => {
                 for p in pos_strs {
                     self.symbol_table.remove(&p.str);
                 }
@@ -1649,7 +1663,7 @@ impl Validate {
             Type::Tuple(tys) => {
                 let mut scope = vec![];
                 for ty in tys {
-                    self.capture(&r#for.capture, &ty)?;
+                    self.capture(&r#for.capture, &ty, false)?;
                     self.loop_count += 1;
                     let mut new_scope = r#for.scope.clone();
                     self.scope(&mut new_scope)?;
@@ -1695,7 +1709,7 @@ impl Validate {
                 }
             }
         };
-        self.capture(&r#for.capture, &capture_ty)?;
+        self.capture(&r#for.capture, &capture_ty, false)?;
         self.loop_count += 1;
         self.scope(&mut r#for.scope)?;
         self.loop_count -= 1;
@@ -1717,6 +1731,7 @@ impl Validate {
                     ("name".to_string(), (Type::Slice { inner: Box::new(Type::Char) }, 0)),
                     ("value".to_string(), (value_ty, 16)),
                 ])),
+                false
             )?;
 
             self.loop_count += 1;

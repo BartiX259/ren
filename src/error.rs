@@ -124,7 +124,7 @@ pub fn sematic_err(path: &String, e: SemanticError) {
             print_module_err_id(path, pos_id);
         }
         SemanticError::InvalidCapture(capture, ty) => {
-            eprint!("Can't capture {ty} as ");
+            eprint!("Can't capture {ty} as '");
             let span = match capture {
                 node::Capture::Single(pos_str) => {
                     eprint!("{}", pos_str.str);
@@ -133,7 +133,7 @@ pub fn sematic_err(path: &String, e: SemanticError) {
                         end: pos_str.pos_id,
                     }
                 }
-                node::Capture::Multiple(pos_strs) => {
+                node::Capture::Multiple(pos_strs, dots) => {
                     let mut first = true;
                     for p in pos_strs.iter() {
                         if first {
@@ -143,9 +143,17 @@ pub fn sematic_err(path: &String, e: SemanticError) {
                         }
                         eprint!("{}", p.str);
                     }
-                    Span {
-                        start: pos_strs.iter().next().unwrap().pos_id,
-                        end: pos_strs.iter().last().unwrap().pos_id,
+                    if dots {
+                        eprint!(", ..'");
+                        Span {
+                            start: pos_strs.iter().next().unwrap().pos_id,
+                            end: pos_strs.iter().last().unwrap().pos_id + 2,
+                        }
+                    } else {
+                        Span {
+                            start: pos_strs.iter().next().unwrap().pos_id,
+                            end: pos_strs.iter().last().unwrap().pos_id,
+                        }
                     }
                 }
             };

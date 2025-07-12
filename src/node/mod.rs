@@ -21,7 +21,7 @@ impl Span {
 }
 #[derive(Debug, Clone)]
 pub struct Let {
-    pub name: PosStr,
+    pub capture: Capture,
     pub expr: Expr,
 }
 #[derive(Debug, Clone)]
@@ -185,7 +185,7 @@ pub struct While {
 #[derive(Debug, Clone)]
 pub enum Capture {
     Single(PosStr),
-    Multiple(Vec<PosStr>)
+    Multiple(Vec<PosStr>, bool)
 }
 #[derive(Debug, Clone)]
 pub struct ForIn {

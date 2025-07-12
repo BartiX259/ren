@@ -46,12 +46,15 @@ impl Validate {
                 self.symbol_table.insert(e.name.str.clone(), Symbol::Type { ty });
             }
             node::Stmt::Let(decl) => {
-                if self.symbol_table.contains_key(&decl.name.str) {
-                    return Err(SemanticError::SymbolExists(decl.name.clone()));
+                let node::Capture::Single(pos_str) = &decl.capture else {
+                    return Err(SemanticError::InvalidCapture(decl.capture.clone(), decl.expr.ty.clone()));
+                };
+                if self.symbol_table.contains_key(&pos_str.str) {
+                    return Err(SemanticError::SymbolExists(pos_str.clone()));
                 }
                 let str = self.const_expr(&decl.expr)?;
                 let ty = self.expr(&mut decl.expr)?;
-                self.symbol_table.insert(decl.name.str.clone(), Symbol::Data { ty, str });
+                self.symbol_table.insert(pos_str.str.clone(), Symbol::Data { ty, str });
             }
             node::Stmt::Decl(decl) => {
                 if self.symbol_table.contains_key(&decl.name.str) {

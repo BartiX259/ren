@@ -177,12 +177,8 @@ impl<'a> Lower<'a> {
 
     fn r#let(&mut self, decl: &node::Let) {
         let r = self.expr(&decl.expr);
-        if r.is_stack() && !self.is_var(&r) {
-            self.var_map.insert(decl.name.str.clone(), r);
-        } else {
-            let t = self.make_stack(r, &decl.expr.ty, decl.name.pos_id);
-            self.var_map.insert(decl.name.str.clone(), t);
-        }
+        let t = self.make_stack(r, &decl.expr.ty, 0);
+        self.capture(&decl.capture, &decl.expr.ty, &t);
     }
     fn r#decl(&mut self, decl: &node::Decl) {
         self.stack_count += 1;
@@ -1520,7 +1516,7 @@ impl<'a> Lower<'a> {
             self.var_map.insert(pos_str.str.clone(), term.clone());
             return;
         }
-        let node::Capture::Multiple(pos_strs) = capture else {
+        let node::Capture::Multiple(pos_strs, _) = capture else {
             unreachable!();
         };
         match ty {
@@ -1541,9 +1537,10 @@ impl<'a> Lower<'a> {
                 }
             }
             Type::Struct(map) => {
-                let mut items: Vec<_> = map.iter().collect();
-                items.sort_by_key(|(_, (_, offset))| *offset);
-                for (p, (_, (_, offset))) in pos_strs.iter().zip(items.iter()) {
+                for p in pos_strs.iter() {
+                    let Some((_, offset)) = map.get(&p.str) else {
+                        unreachable!();
+                    };
                     self.stack_count += 1;
                     self.push_op(
                         Op::Own {
@@ -1565,7 +1562,7 @@ impl<'a> Lower<'a> {
             node::Capture::Single(pos_str) => {
                 self.var_map.remove(&pos_str.str);
             }
-            node::Capture::Multiple(pos_strs) => {
+            node::Capture::Multiple(pos_strs, _) => {
                 for p in pos_strs {
                     self.var_map.remove(&p.str);
                 }

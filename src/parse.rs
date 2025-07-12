@@ -507,6 +507,17 @@ fn parse_array_access(tokens: &mut VecIter<Token>, root: node::Expr, start: usiz
 }
 
 fn parse_let(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
+    tokens.next();
+    if let Some(Token::Comma) = tokens.peek2() {
+        let capture = parse_capture(tokens)?;
+        let tok = check_none(tokens, "'='")?;
+        if tok != (Token::Op { value: "=".to_string() }) {
+            return Err(unexp(tok, tokens.prev_index(), "'='"));
+        }
+        let expr = parse_expr(tokens, 0)?;
+        check_semi(tokens)?;
+        return Ok(node::Stmt::Let(node::Let { capture, expr: expr }));
+    }
     let unpack = parse_unpack(tokens)?;
     let res;
     if let Some(Token::Else) = tokens.peek() {
@@ -544,11 +555,12 @@ fn parse_let(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
         let tok = check_none(tokens, "'else'")?;
         return Err(unexp(tok, tokens.prev_index(), "'else'"));
     } else {
-        res = node::Stmt::Let(node::Let { name: unpack.lhs, expr: unpack.expr });
+        res = node::Stmt::Let(node::Let { capture: node::Capture::Single(unpack.lhs), expr: unpack.expr });
     }
     check_semi(tokens)?;
     return Ok(res);
 }
+
 fn parse_decl(tokens: &mut VecIter<Token>) -> Result<node::Decl, ParseError> {
     tokens.next();
     let tok = check_none(tokens, "an identifier")?;
@@ -573,7 +585,6 @@ fn parse_decl(tokens: &mut VecIter<Token>) -> Result<node::Decl, ParseError> {
 }
 
 fn parse_unpack(tokens: &mut VecIter<Token>) -> Result<node::Unpack, ParseError> {
-    tokens.next();
     let tok = check_none(tokens, "an identifier")?;
     let Token::Word { value } = tok else {
         return Err(unexp(tok, tokens.prev_index(), "an identifier"));
@@ -914,6 +925,7 @@ fn parse_if(tokens: &mut VecIter<Token>) -> Result<node::If, ParseError> {
     tokens.next();
     let mut res;
     if let Some(Token::Let) = tokens.peek() {
+        tokens.next();
         res = node::If {
             pos_id: tokens.prev_index(),
             cond: node::IfKind::Unpack(parse_unpack(tokens)?),
@@ -1020,11 +1032,16 @@ fn parse_capture(tokens: &mut VecIter<Token>) -> Result<node::Capture, ParseErro
         str: value,
         pos_id: tokens.prev_index(),
     };
+    let mut dots = false;
     if let Some(Token::Comma) = tokens.peek() {
         tokens.next();
         let mut mult = vec![first];
         loop {
             let tok = check_none(tokens, "a word")?;
+            if tok == (Token::Op { value: "..".to_string() }) {
+                dots = true;
+                break;
+            }
             let Token::Word { value } = tok else {
                 return Err(unexp(tok, tokens.prev_index(), "a word"));
             };
@@ -1039,7 +1056,7 @@ fn parse_capture(tokens: &mut VecIter<Token>) -> Result<node::Capture, ParseErro
                 break;
             }
         }
-        Ok(node::Capture::Multiple(mult))
+        Ok(node::Capture::Multiple(mult, dots))
     } else {
         Ok(node::Capture::Single(first))
     }
