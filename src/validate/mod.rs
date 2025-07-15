@@ -1,7 +1,6 @@
 use crate::ir::Symbol;
 use crate::node::{self, ExprKind, PosStr, Span};
 use crate::types::Type;
-use std::arch::x86_64::_MM_FROUND_TO_POS_INF;
 use std::collections::HashMap;
 
 mod hoist;
@@ -532,6 +531,19 @@ impl Validate {
             if let Type::Option(_) = &arg {
                 parse_fns.push(self.find_fn(
                     "parse_opt",
+                    vec![
+                        Type::Pointer(Box::new(Type::Int)),
+                        Type::Pointer(Box::new(Type::Pointer(Box::new(Type::Char)))),
+                        Type::Slice { inner: Box::new(Type::Char) },
+                        Type::Pointer(Box::new(arg.clone())),
+                    ],
+                    Some(Type::Result(Box::new(Type::Int), Box::new(Type::Slice { inner: Box::new(Type::Char) }))),
+                    &mut vec![],
+                    Span { start: name.pos_id, end: name.pos_id },
+                )?);
+            } else if let Type::Bool = &arg {
+                parse_fns.push(self.find_fn(
+                    "parse_flag",
                     vec![
                         Type::Pointer(Box::new(Type::Int)),
                         Type::Pointer(Box::new(Type::Pointer(Box::new(Type::Char)))),
@@ -1204,7 +1216,7 @@ impl Validate {
 
                     // Apply the planned casts to the actual AST `args`.
                     for (i, target_ty) in cast_info {
-                        let e = args.get(i).unwrap().clone();
+                        let e = args.get(i).ok_or(SemanticError::NoFnSig(func.to_string(), span, expected_sig.clone(), expected_ret.clone())).cloned()?;
                         args.get_mut(i).unwrap().kind = ExprKind::TypeCast(node::TypeCast {
                             r#type: Self::node_type(e.span),
                             expr: Box::new(e),

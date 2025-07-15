@@ -1,15 +1,12 @@
 import lib/std
 
-fn main() {
-    decl list: [(x: int, y: (int, <char>))];
-    for i in 0..100 {
-        let s = "q{i}";
-        push(&list, (x: i, y: (100 - i, s[..])));
-    }
-    for x, y in list {
-        let i, str = y;
-        print(x + i);
-        print(str);
-        print('\n');
-    }
+fn main(a: int, b: <char>, c: ?int, d: ?<char>, e: int, f: bool, g: ?<char>) {
+    print(a);
+    print(b);
+    print(c);
+    print(d);
+    print(e);
+    print(f);
+    print(g);
 }
+

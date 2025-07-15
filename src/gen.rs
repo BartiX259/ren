@@ -163,7 +163,7 @@ impl<'a> Gen<'a> {
                 let size = ty.aligned_size();
                 let item = (ty, parse_fn, i, current_offset);
                 args_size += size;
-                if parse_fn.contains("opt") {
+                if parse_fn.contains("opt") || parse_fn.contains("flag") {
                     flags.push(item);
                 } else {
                     positionals.push(item);
@@ -416,7 +416,7 @@ impl<'a> Gen<'a> {
                         } else {
                             self.locs.insert(term, -(self.arg_index as i64) - 32);
                         }
-                        self.arg_index += size as usize;
+                        self.arg_index += crate::types::Type::align(size) as usize;
                         continue;
                     }
                     let reg = *self.call_order.get(self.arg_index).ok_or(GenError::TooManyArguments(self.last_loc.clone()))?;

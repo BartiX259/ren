@@ -69,8 +69,7 @@ fn shift_args(argc: *int, argv: **char, start: int, count: int) {
 }
 
 pub fn parse_opt<T>(argc: *int, argv: **char, name: <char>, opt: *?T) -> int ? <char> {
-    let flag = +"--";
-    push(&flag, name);
+    let flag = "--{name}";
     for i in 0..*argc {
         let arg = argv[i];
         if cmp(arg, flag) {
@@ -84,6 +83,20 @@ pub fn parse_opt<T>(argc: *int, argv: **char, name: <char>, opt: *?T) -> int ? <
         }
     }
     *(opt as *int) = 1;
+    return 0;
+}
+
+pub fn parse_flag(argc: *int, argv: **char, name: <char>, opt: *bool) -> int ? <char>  {
+    let flag = "--{name}";
+    for i in 0..*argc {
+        let arg = argv[i];
+        if cmp(arg, flag) {
+            *(opt as *bool) = true;
+            shift_args(argc, argv, i, 1);
+            return 0;
+        }
+    }
+    *(opt as *bool) = false;
     return 0;
 }
 
