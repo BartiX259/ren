@@ -6,7 +6,7 @@ pub struct PosStr {
     pub str: String,
     pub pos_id: usize,
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -18,6 +18,17 @@ impl Span {
             end: self.end.max(other.end),
         }
     }
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceLocation {
+    pub file_path: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Scope {
+    pub stmts: Vec<Stmt>,
+    pub end: usize
 }
 #[derive(Debug, Clone)]
 pub struct Let {
@@ -73,13 +84,20 @@ pub struct Type {
 }
 
 #[derive(Debug, Clone)]
+pub struct FnSig {
+    pub name: PosStr,
+    pub arg_types: Vec<Type>,
+    pub decl_type: Option<Type>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Fn {
     pub name: PosStr,
     pub arg_names: Vec<PosStr>,
     pub arg_types: Vec<Type>,
     pub decl_type: Option<Type>,
     pub generics: Vec<String>,
-    pub scope: Vec<Stmt>,
+    pub scope: Scope,
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +106,7 @@ pub struct MainFn {
     pub arg_names: Vec<PosStr>,
     pub arg_types: Vec<Type>,
     pub decl_type: Option<Type>,
-    pub scope: Vec<Stmt>,
+    pub scope: Scope,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum DecoratorKind {
@@ -128,7 +146,7 @@ pub struct ElseScope {
     pub unpack: Unpack,
     pub capture: Option<PosStr>,
     pub pos_str: PosStr,
-    pub scope: Vec<Stmt>,
+    pub scope: Scope,
 }
 #[derive(Debug, Clone)]
 pub struct ElseExpr {
@@ -153,7 +171,7 @@ pub enum IfKind {
 pub struct If {
     pub pos_id: usize,
     pub cond: IfKind,
-    pub scope: Vec<Stmt>,
+    pub scope: Scope,
     pub els: Option<Box<If>>,
 }
 
@@ -161,25 +179,25 @@ pub struct If {
 pub struct Match {
     pub pos_id: usize,
     pub match_expr: Expr,
-    pub branches: Vec<(Expr, Vec<Stmt>)>,
+    pub branches: Vec<(Expr, Scope)>,
 }
 #[derive(Debug, Clone)]
 pub struct MatchType {
     pub pos_id: usize,
     pub generics: Vec<String>,
     pub match_type: Type,
-    pub branches: Vec<(Type, Vec<Stmt>, bool)>,
+    pub branches: Vec<(Type, Scope, bool)>,
 }
 #[derive(Debug, Clone)]
 pub struct Loop {
     pub pos_id: usize,
-    pub scope: Vec<Stmt>,
+    pub scope: Scope,
 }
 #[derive(Debug, Clone)]
 pub struct While {
     pub pos_id: usize,
     pub expr: Expr,
-    pub scope: Vec<Stmt>,
+    pub scope: Scope,
 }
 
 #[derive(Debug, Clone)]
@@ -192,14 +210,12 @@ pub struct ForIn {
     pub pos_id: usize,
     pub capture: Capture,
     pub expr: Expr,
-    pub scope: Vec<Stmt>,
+    pub scope: Scope,
 }
 
 #[derive(Debug, Clone)]
 pub struct Extern {
-    pub name: PosStr,
-    pub types: Vec<Type>,
-    pub decl_type: Option<Type>,
+    pub sig: FnSig
 }
 
 #[derive(Debug, Clone)]
@@ -228,9 +244,7 @@ pub enum StringFragment {
 #[derive(Debug, Clone)]
 pub struct Syscall {
     pub id: i64,
-    pub name: PosStr,
-    pub types: Vec<Type>,
-    pub decl_type: Option<Type>,
+    pub sig: FnSig
 }
 #[derive(Debug, Clone)]
 pub enum BuiltInKind {

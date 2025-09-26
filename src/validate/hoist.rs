@@ -120,51 +120,44 @@ impl Validate {
                 self.cur_generics.clear();
             }
         } else if let node::Stmt::Syscall(decl) = stmt_ref {
-            let ty;
-            if let Some(t) = &decl.decl_type {
-                ty = self.r#type(t, false)?;
-            } else {
-                ty = Type::Void;
+            if self.cur_func.is_some() {
+                return Err(SemanticError::FuncInFunc(decl.sig.name.clone()));
             }
-            let mut types = Vec::new();
-            for arg in decl.types.iter() {
-                let ty = self.r#type(arg, false)?;
-                types.push(ty.clone());
-            }
+            let (ty, types) = self.fn_sig(&mut decl.sig)?;
             if public {
                 let s;
                 let len;
-                if let Some(sigs) = self.fn_map.get_mut(&decl.name.str) {
+                if let Some(sigs) = self.fn_map.get_mut(&decl.sig.name.str) {
                     if sigs.iter().any(|(tys, _)| *tys == types) {
-                        return Err(SemanticError::SymbolExists(decl.name.clone()));
+                        return Err(SemanticError::SymbolExists(decl.sig.name.clone()));
                     }
                     len = sigs.len() + 1;
                     sigs.push((types.clone(), len));
                 } else {
-                    self.fn_map.insert(decl.name.str.clone(), vec![(types.clone(), 1)]);
+                    self.fn_map.insert(decl.sig.name.str.clone(), vec![(types.clone(), 1)]);
                     len = 1;
                 }
-                s = format!("{}.{}", decl.name.str, len);
-                decl.name.str = s.clone();
+                s = format!("{}.{}", decl.sig.name.str, len);
+                decl.sig.name.str = s.clone();
                 if is_public {
                     self.symbol_table.insert(s, Symbol::Syscall { id: decl.id, ty, args: types });
                 }
             } else {
-                let split: Vec<&str> = decl.name.str.split('.').collect();
+                let split: Vec<&str> = decl.sig.name.str.split('.').collect();
                 if split.len() != 2 {
-                    self.symbol_table.insert(decl.name.str.clone(), Symbol::Syscall { id: decl.id, ty, args: types });
+                    self.symbol_table.insert(decl.sig.name.str.clone(), Symbol::Syscall { id: decl.id, ty, args: types });
                 } else {
                     let id = split.last().unwrap().parse::<usize>().unwrap();
                     let name = split[..split.len() - 1].join(".");
                     if let Some(sigs) = self.fn_map.get_mut(&name) {
                         if sigs.iter().any(|(tys, _)| *tys == types) {
-                            return Err(SemanticError::SymbolExists(decl.name.clone()));
+                            return Err(SemanticError::SymbolExists(decl.sig.name.clone()));
                         }
                         sigs.push((types.clone(), id));
                     } else {
                         self.fn_map.insert(name, vec![(types.clone(), id)]);
                     }
-                    self.symbol_table.insert(decl.name.str.clone(), Symbol::Syscall { id: decl.id, ty, args: types });
+                    self.symbol_table.insert(decl.sig.name.str.clone(), Symbol::Syscall { id: decl.id, ty, args: types });
                 }
             }
         }

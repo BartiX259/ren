@@ -1,5 +1,5 @@
 use std::fmt;
-use crate::types::Type;
+use crate::{types::Type};
 
 #[derive(Clone)]
 pub enum Symbol {

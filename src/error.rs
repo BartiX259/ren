@@ -303,6 +303,9 @@ pub fn semantic_err(e: SemanticError) -> ErrorInfo {
             location: Location::PosId(pos_str.pos_id),
             level: "error",
         },
+        SemanticError::GenericInstantiationError { .. } => {
+            panic!("GenericInstantiationError should be handled by the trace printer, not semantic_err.");
+        }
     }
 }
 
@@ -366,9 +369,17 @@ pub fn print_error(path: &String, info: &ErrorInfo, config: &Config) {
 }
 
 fn print_diagnostic_line(path: &str, text: &str, pos: &FilePos, level: &str, message: &str) {
+    let length = if pos.end > pos.start {
+        pos.end - pos.start + 1
+    } else {
+        1
+    };
+    eprintln!("{}:{}:{}: {}: {}", path, file_location(text, pos), length, level, message);
+}
+
+pub fn file_location(text: &str, pos: &FilePos) -> String {
     let mut line_num = 1;
     let mut col_num = 1;
-    
     for (i, char) in text.char_indices() {
         if i >= pos.start {
             break;
@@ -380,12 +391,7 @@ fn print_diagnostic_line(path: &str, text: &str, pos: &FilePos, level: &str, mes
             col_num += 1;
         }
     }
-    let length = if pos.end > pos.start {
-        pos.end - pos.start + 1
-    } else {
-        1
-    };
-    eprintln!("{}:{}:{}:{}: {}: {}", path, line_num, col_num, length, level, message);
+    format!("{}:{}", line_num, col_num)
 }
 
 fn print_err() {
@@ -404,7 +410,7 @@ fn print_module_err_pos(module: &String, file_pos: FilePos) {
 }
 
 fn print_module_err_span(module: &String, span: Span) {
-    let text = fs::read_to_string(&module).unwrap();
+    let text = fs::read_to_string(&module).unwrap_or_else(|e| panic!("{} {}", module, e));
     let (_, locs) = tokenize::tokenize(&text).unwrap();
     print_file_err(&text, module, &FilePos::span(&locs, span));
 }

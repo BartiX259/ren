@@ -676,7 +676,7 @@ fn parse_args(tokens: &mut VecIter<Token>, closing: Token, expr_count: usize) ->
     Ok((exprs, types))
 }
 
-fn parse_scope(tokens: &mut VecIter<Token>) -> Result<Vec<node::Stmt>, ParseError> {
+fn parse_scope(tokens: &mut VecIter<Token>) -> Result<node::Scope, ParseError> {
     let tok = check_none(tokens, "'{'")?;
     if let Token::OpenCurly = tok {
     } else {
@@ -693,7 +693,7 @@ fn parse_scope(tokens: &mut VecIter<Token>) -> Result<Vec<node::Stmt>, ParseErro
         }
         res.push(parse_stmt(tokens)?);
     }
-    Ok(res)
+    Ok(node::Scope { stmts: res, end: tokens.prev_index() })
 }
 
 fn parse_type_args(tokens: &mut VecIter<Token>, closing: Token) -> Result<(Vec<PosStr>, Vec<node::Type>), ParseError> {
@@ -894,9 +894,9 @@ fn parse_extern(tokens: &mut VecIter<Token>) -> Result<node::Extern, ParseError>
     let Token::Fn = tok else {
         return Err(unexp(tok, tokens.prev_index(), "'fn'"));
     };
-    let (name, types, decl_type) = parse_fn_sig(tokens)?;
+    let sig = parse_fn_sig(tokens)?;
     check_semi(tokens)?;
-    Ok(node::Extern { name, types, decl_type })
+    Ok(node::Extern { sig })
 }
 
 fn parse_decorator(tokens: &mut VecIter<Token>) -> Result<node::Decorator, ParseError> {
@@ -1162,7 +1162,7 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
     Ok(ty)
 }
 
-fn parse_fn_sig(tokens: &mut VecIter<Token>) -> Result<(PosStr, Vec<node::Type>, Option<node::Type>), ParseError> {
+fn parse_fn_sig(tokens: &mut VecIter<Token>) -> Result<node::FnSig, ParseError> {
     let tok = check_none(tokens, "a name")?;
     let Token::Word { value: name_str } = tok else {
         return Err(unexp(tok, tokens.prev_index(), "a name"));
@@ -1175,7 +1175,7 @@ fn parse_fn_sig(tokens: &mut VecIter<Token>) -> Result<(PosStr, Vec<node::Type>,
     let Token::OpenParen = tok else {
         return Err(unexp(tok, tokens.prev_index(), "'('"));
     };
-    let (_, types) = parse_args(tokens, Token::CloseParen, 0)?;
+    let (_, arg_types) = parse_args(tokens, Token::CloseParen, 0)?;
     let decl_type;
     if let Some(Token::Op { value }) = tokens.peek() {
         if value == "->" {
@@ -1187,7 +1187,7 @@ fn parse_fn_sig(tokens: &mut VecIter<Token>) -> Result<(PosStr, Vec<node::Type>,
     } else {
         decl_type = None;
     }
-    Ok((name, types, decl_type))
+    Ok(node::FnSig { name, arg_types, decl_type })
 }
 
 fn parse_syscall(tokens: &mut VecIter<Token>) -> Result<node::Syscall, ParseError> {
@@ -1200,9 +1200,9 @@ fn parse_syscall(tokens: &mut VecIter<Token>) -> Result<node::Syscall, ParseErro
     let Token::Colon = tok else {
         return Err(unexp(tok, tokens.prev_index(), "':'"));
     };
-    let (name, types, decl_type) = parse_fn_sig(tokens)?;
+    let sig = parse_fn_sig(tokens)?;
     check_semi(tokens)?;
-    Ok(node::Syscall { id, name, types, decl_type })
+    Ok(node::Syscall { id, sig })
 }
 
 fn check_none(tokens: &mut VecIter<Token>, expected: &str) -> Result<Token, ParseError> {

@@ -1,5 +1,5 @@
 use crate::ir::Symbol;
-use crate::node::{self, ExprKind, PosStr, Span};
+use crate::node::{self, ExprKind, PosStr, SourceLocation, Span};
 use crate::types::Type;
 use std::collections::HashMap;
 
@@ -9,7 +9,7 @@ mod hoist;
 pub fn validate(
     module: &mut node::Module,
     public: Vec<&PublicSymbols>,
-    gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>,
+    gcalls: &mut Vec<GenericCall>,
     gfns: &mut Vec<(String, usize)>,
 ) -> Result<PublicSymbols, SemanticError> {
     let mut val = Validate::new();
@@ -34,13 +34,14 @@ pub fn validate(
     Ok(PublicSymbols {
         symbol_table: val.symbol_table,
         fn_map: val.fn_map,
+        symbol_locs: val.symbol_locs
     })
 }
 
 pub fn resolve(
     module: node::Module,
     symbols: PublicSymbols,
-    gcalls: &mut Vec<(String, HashMap<String, Type>, usize)>,
+    gcalls: &mut Vec<GenericCall>,
     gfns: &mut Vec<(String, usize)>,
 ) -> Result<(PublicSymbols, node::Module), SemanticError> {
     let mut val = Validate::new();
@@ -49,6 +50,7 @@ pub fn resolve(
     val.symbol_table = symbols.symbol_table;
     val.gfns = gfns.drain(..).collect();
     val.fn_map = symbols.fn_map;
+    val.cur_module = new_mod.path.clone();
     for stmt in module.stmts.into_iter() {
         let mut stmt_ref = &stmt;
         let mut is_public = false;
@@ -60,9 +62,11 @@ pub fn resolve(
         }
         if let node::Stmt::Fn(decl) = stmt_ref {
             if decl.generics.len() > 0 {
-                for (index, (name, map, i)) in gcalls.iter().enumerate() {
+                for (index, gcall) in gcalls.iter().enumerate() {
+                    let map = &gcall.type_map;
+                    let call_loc = gcall.call_site.clone();
                     val.cur_generics = map.keys().cloned().collect();
-                    if *name == decl.name.str {
+                    if gcall.base_name == decl.name.str {
                         let mut ty = Type::Void;
                         let mut types = Vec::new();
                         if let Some(decl_type) = &decl.decl_type {
@@ -84,11 +88,19 @@ pub fn resolve(
                             val.symbol_table.insert(k.clone(), Symbol::Type { ty: v.clone() });
                         }
                         new_decl.generics.clear();
-                        new_decl.name.str += format!(".{i}").as_str();
+                        new_decl.name.str = gcall.resolved_name.clone();
                         val.hoist_func_with_types(&mut new_decl, ty, types, false, is_public)?;
-                        val.resolving.push((decl.name.str.clone(), map.clone(), *i));
-                        val.r#fn(&mut new_decl)?;
-                        val.resolving.pop();
+
+                        val.generic_call_stack.push(call_loc.clone());
+                        let result = val.r#fn(&mut new_decl);
+                        val.generic_call_stack.pop(); // Always pop after the call
+                        if let Err(e) = result {
+                            return Err(SemanticError::GenericInstantiationError {
+                                cause: Box::new(e),
+                                call_site: call_loc,
+                                definition_path: new_mod.path.clone(),
+                            });
+                        }
                         for k in map.keys() {
                             val.symbol_table.remove(k);
                         }
@@ -117,12 +129,13 @@ pub fn resolve(
         PublicSymbols {
             symbol_table: val.symbol_table,
             fn_map: val.fn_map,
+            symbol_locs: symbols.symbol_locs
         },
         new_mod,
     ))
 }
 
-pub fn clean_up(module: node::Module, symbols: PublicSymbols) -> (node::Module, HashMap<String, Symbol>) {
+pub fn clean_up(module: node::Module, symbols: PublicSymbols) -> (node::Module, HashMap<String, Symbol>, Vec<(String, Symbol, Span)>) {
     let mut val = Validate::new();
     let mut new_mod = node::Module { path: module.path, stmts: Vec::new() };
     val.symbol_table = symbols.symbol_table;
@@ -154,7 +167,7 @@ pub fn clean_up(module: node::Module, symbols: PublicSymbols) -> (node::Module, 
         }
         new_mod.stmts.push(stmt);
     }
-    (new_mod, val.symbol_table)
+    (new_mod, val.symbol_table, symbols.symbol_locs)
 }
 
 pub fn hoist_public(module: &mut node::Module, public: &HashMap<String, PublicSymbols>, gfns: &mut Vec<(String, usize)>) -> Result<PublicSymbols, SemanticError> {
@@ -180,6 +193,7 @@ pub fn hoist_public(module: &mut node::Module, public: &HashMap<String, PublicSy
     Ok(PublicSymbols {
         symbol_table: val.symbol_table,
         fn_map: val.fn_map,
+        symbol_locs: val.symbol_locs
     })
 }
 
@@ -187,8 +201,21 @@ pub fn hoist_public(module: &mut node::Module, public: &HashMap<String, PublicSy
 pub struct PublicSymbols {
     pub symbol_table: HashMap<String, Symbol>,
     fn_map: HashMap<String, Vec<(Vec<Type>, usize)>>,
+    symbol_locs: Vec<(String, Symbol, Span)>
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericCall {
+    pub display_name: String,
+    pub base_name: String,
+    pub resolved_name: String,
+    pub type_map: HashMap<String, Type>,
+    pub call_site: SourceLocation,
+    pub parent_call_site: Option<SourceLocation>,
+    pub arg_types: Vec<Type>,
+}
+
+#[derive(Debug)]
 pub enum SemanticError {
     InvalidType(Span),
     SymbolExists(PosStr),
@@ -230,20 +257,27 @@ pub enum SemanticError {
     NoBuiltIn(Span, String, Type),
     PrivateAccess(PosStr),
     MainFnCall(PosStr),
+    GenericInstantiationError {
+        cause: Box<SemanticError>,
+        call_site: SourceLocation,
+        definition_path: String,
+    },
 }
 
 struct Validate {
     symbol_table: HashMap<String, Symbol>,
     fn_map: HashMap<String, Vec<(Vec<Type>, usize)>>,
     gfns: Vec<(String, usize)>,
-    gcalls: Vec<(String, HashMap<String, Type>, usize)>,
-    resolving: Vec<(String, HashMap<String, Type>, usize)>,
+    gcalls: Vec<GenericCall>,
     cur_module: String,
     symbol_stack: Vec<Vec<String>>,
+    symbols_for_next_scope: Vec<(PosStr, Symbol)>,
+    symbol_locs: Vec<(String, Symbol, Span)>,
     cur_func: Option<String>,
     cur_ret: Type,
     cur_generics: Vec<String>,
     loop_count: usize,
+    generic_call_stack: Vec<SourceLocation>,
 }
 
 impl Validate {
@@ -253,19 +287,22 @@ impl Validate {
             fn_map: HashMap::new(),
             gfns: Vec::new(),
             gcalls: Vec::new(),
-            resolving: Vec::new(),
             cur_module: String::new(),
             symbol_stack: Vec::new(),
+            symbols_for_next_scope: Vec::new(),
+            symbol_locs: Vec::new(),
             cur_func: None,
             cur_ret: Type::Void,
             cur_generics: Vec::new(),
             loop_count: 0,
+            generic_call_stack: Vec::new(),
         }
     }
 
-    fn push_symbol(&mut self, name: String, sym: Symbol) {
-        self.symbol_table.insert(name.clone(), sym.clone());
-        self.symbol_stack.last_mut().unwrap().push(name.clone());
+    fn push_symbol(&mut self, name: &PosStr, sym: Symbol) {
+        self.symbol_table.insert(name.str.clone(), sym.clone());
+        self.symbol_stack.last_mut().unwrap().push(name.str.clone());
+        self.symbol_locs.push((name.str.clone(), sym.clone(), Span { start: name.pos_id, end: name.pos_id }));
     }
 
     fn stmt(&mut self, stmt: &mut node::Stmt) -> Result<(), SemanticError> {
@@ -381,7 +418,11 @@ impl Validate {
     fn r#let(&mut self, decl: &mut node::Let) -> Result<(), SemanticError> {
         if self.cur_func.is_some() {
             let ty = self.expr(&mut decl.expr)?;
-            self.capture(&decl.capture, &ty, true)?;
+            self.capture(&decl.capture, &ty)?;
+            let syms: Vec<(PosStr, Symbol)> = self.symbols_for_next_scope.drain(..).collect();
+            for (name, sym) in syms {
+                self.push_symbol(&name, sym);
+            }
         }
         Ok(())
     }
@@ -392,7 +433,7 @@ impl Validate {
             }
             let ty = self.r#type(&decl.r#type, false)?;
             decl.ty = ty.clone();
-            self.push_symbol(decl.name.str.clone(), Symbol::Var { ty });
+            self.push_symbol(&decl.name, Symbol::Var { ty });
         }
         Ok(())
     }
@@ -411,7 +452,7 @@ impl Validate {
             if let Some(s) = &unpack.brackets {
                 let ty = vars.get(pos).unwrap().1.clone().unwrap();
                 res = Some(ty.clone());
-                self.push_symbol(s.str.clone(), Symbol::Var { ty });
+                self.push_symbol(&s, Symbol::Var { ty });
             }
             let ty = self.expr(&mut unpack.expr)?;
             let pos_str = PosStr {
@@ -429,7 +470,7 @@ impl Validate {
             match &ty {
                 Type::Result(ok, _) | Type::Option(ok) => {
                     res = Some(*ok.clone());
-                    self.push_symbol(unpack.lhs.str.clone(), Symbol::Var { ty: *ok.clone() });
+                    self.push_symbol(&unpack.lhs, Symbol::Var { ty: *ok.clone() });
                 }
                 _ => return Err(SemanticError::NotUnwrappable(unpack.lhs.clone())),
             }
@@ -460,16 +501,12 @@ impl Validate {
             .expect(&format!("Function symbol not found {}", decl.name.str));
 
         for (name, ty) in decl.arg_names.iter().zip(arg_types) {
-            self.symbol_table.insert(name.str.clone(), Symbol::Var { ty: ty.clone() });
+            self.symbols_for_next_scope.push((name.clone(), Symbol::Var { ty }));
         }
 
         self.cur_func = Some(decl.name.str.clone());
 
         self.scope(&mut decl.scope)?;
-
-        for name in decl.arg_names.iter() {
-            self.symbol_table.remove(&name.str);
-        }
 
         self.cur_ret = Type::Void;
         self.cur_func = None;
@@ -485,6 +522,11 @@ impl Validate {
         let span = Span { start: decl.pos_id, end: decl.pos_id };
         if self.cur_func.is_some() {
             return Err(SemanticError::FuncInFunc(pos_str));
+        }
+        for name in decl.arg_names.iter() {
+            if self.symbol_table.contains_key(&name.str) {
+                return Err(SemanticError::SymbolExists(name.clone()));
+            }
         }
         let ty = if let Some(t) = &decl.decl_type { self.r#type(&t, false)? } else { Type::Void };
         let mut arg_types = Vec::new();
@@ -581,16 +623,12 @@ impl Validate {
             },
         );
         for (name, ty) in decl.arg_names.iter().zip(arg_types) {
-            self.symbol_table.insert(name.str.clone(), Symbol::Var { ty: ty.clone() });
+            self.symbols_for_next_scope.push((name.clone(), Symbol::Var { ty: ty.clone() }));
         }
 
         self.cur_func = Some("main".to_string());
 
         self.scope(&mut decl.scope)?;
-
-        for name in decl.arg_names.iter() {
-            self.symbol_table.remove(&name.str);
-        }
 
         self.cur_ret = Type::Void;
         self.cur_func = None;
@@ -618,15 +656,24 @@ impl Validate {
         }
     }
 
-    fn scope(&mut self, scope: &mut Vec<node::Stmt>) -> Result<(), SemanticError> {
+    fn scope(&mut self, scope: &mut node::Scope) -> Result<(), SemanticError> {
         self.symbol_stack.push(Vec::new());
-        for stmt in scope.iter_mut() {
+        let syms: Vec<(PosStr, Symbol)> = self.symbols_for_next_scope.drain(..).collect();
+        for (name, sym) in syms {
+            self.push_symbol(&name, sym);
+        }
+        for stmt in scope.stmts.iter_mut() {
             self.stmt(stmt)?;
         }
         // Remove the local symbols from the symbol table
+        let mut locs = Vec::new();
         for sym in self.symbol_stack.pop().unwrap() {
+            let (name, s, mut span) = self.symbol_locs.pop().unwrap();
+            span.end = scope.end;
+            locs.push((name, s, span));
             self.symbol_table.remove(&sym);
         }
+        self.symbol_locs.extend(locs);
         Ok(())
     }
 
@@ -1098,7 +1145,7 @@ impl Validate {
             if self.symbol_table.contains_key(&c.str) {
                 return Err(SemanticError::SymbolExists(c.clone()));
             }
-            self.push_symbol(c.str.clone(), Symbol::Var { ty: *err.clone() });
+            self.push_symbol(c, Symbol::Var { ty: *err.clone() });
         }
         self.scope(&mut r#else.scope)?;
         if let Some(c) = &r#else.capture {
@@ -1158,7 +1205,7 @@ impl Validate {
         let mut call = func.to_string();
         let pos_str = PosStr {
             str: func.to_string(),
-            pos_id: span.end,
+            pos_id: span.start,
         };
         if let Some(sigs) = self.fn_map.get(func) {
             let mut found = false;
@@ -1189,7 +1236,7 @@ impl Validate {
                     }
 
                     // --- STAGE 2: Verify and plan casts using the inferred generics ---
-                    let mut final_arg_types = expected_sig.clone();
+                    let final_arg_types = expected_sig.clone();
                     let mut cast_info = Vec::new();
 
                     for (i, (arg_type, param_type)) in final_arg_types.iter().zip(tys.iter()).enumerate() {
@@ -1236,27 +1283,34 @@ impl Validate {
                 s = format!("{}.{}", s, id);
                 if !generics.is_empty() {
                     let mut found = false;
-                    for (res_name, res_map, res_id) in self.resolving.iter() {
-                        if *res_name == s && generics == *res_map {
-                            call = format!("{}.{}", s, res_id);
+                    for gcall in self.gcalls.iter() {
+                        if gcall.base_name == s && gcall.type_map == generics {
+                            call = gcall.resolved_name.clone();
                             found = true;
                             break;
                         }
                     }
                     if !found {
-                        for (name, map, i) in self.gcalls.iter() {
-                            if *name == s && generics == *map {
-                                call = format!("{}.{}", s, i);
-                                found = true;
-                                break;
-                            }
-                        }
-                    }
-                    if !found {
                         for (name, id) in self.gfns.iter_mut() {
                             if *name == s {
-                                self.gcalls.push((s.clone(), generics, *id));
-                                call = format!("{}.{}", s, id);
+                                let call_location = SourceLocation {
+                                    file_path: self.cur_module.clone(),
+                                    span,
+                                };
+                                let resolved_name = format!("{}.{}", s, id);
+                                let parent_call_site = self.generic_call_stack.last().cloned();
+
+                                self.gcalls.push(GenericCall {
+                                    display_name: func.to_string(),
+                                    base_name: s.clone(),
+                                    resolved_name: resolved_name.clone(),
+                                    type_map: generics,
+                                    call_site: call_location,
+                                    parent_call_site,
+                                    arg_types: expected_sig.clone(),
+                                });
+                                
+                                call = resolved_name;
                                 *id += 1;
                                 found = true;
                                 break;
@@ -1571,6 +1625,7 @@ impl Validate {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
+            (ty1, ty2) if ty1 == ty2 => (),
             _ => return Err(SemanticError::InvalidCast(span, from, to)),
         }
         Ok(to)
@@ -1590,16 +1645,12 @@ impl Validate {
         Ok(())
     }
 
-    fn capture(&mut self, capture: &node::Capture, ty: &Type, push: bool) -> Result<(), SemanticError> {
+    fn capture(&mut self, capture: &node::Capture, ty: &Type) -> Result<(), SemanticError> {
         if let node::Capture::Single(pos_str) = capture {
             if self.symbol_table.contains_key(&pos_str.str) {
                 return Err(SemanticError::SymbolExists(pos_str.clone()));
             }
-            if push {
-                self.push_symbol(pos_str.str.clone(), Symbol::Var { ty: ty.clone() });
-            } else {
-                self.symbol_table.insert(pos_str.str.clone(), Symbol::Var { ty: ty.clone() });
-            }
+            self.symbols_for_next_scope.push((pos_str.clone(), Symbol::Var { ty: ty.clone() }));
             return Ok(());
         }
         let node::Capture::Multiple(pos_strs, dots) = capture else {
@@ -1611,11 +1662,7 @@ impl Validate {
                     return Err(SemanticError::InvalidCapture(capture.clone(), ty.clone()));
                 }
                 for (p, t) in pos_strs.iter().zip(tys.iter()) {
-                    if push {
-                        self.push_symbol(p.str.clone(), Symbol::Var { ty: t.clone() });
-                    } else {
-                        self.symbol_table.insert(p.str.clone(), Symbol::Var { ty: t.clone() });
-                    }
+                    self.symbols_for_next_scope.push((p.clone(), Symbol::Var { ty: t.clone() }));
                 }
             }
             Type::Struct(map) => {
@@ -1630,29 +1677,12 @@ impl Validate {
                     if self.symbol_table.contains_key(&p.str) {
                         return Err(SemanticError::SymbolExists(p.clone()));
                     }
-                    if push {
-                        self.push_symbol(p.str.clone(), Symbol::Var { ty: t.clone() });
-                    } else {
-                        self.symbol_table.insert(p.str.clone(), Symbol::Var { ty: t.clone() });
-                    }
+                    self.symbols_for_next_scope.push((p.clone(), Symbol::Var { ty: t.clone() }));
                 }
             }
             _ => return Err(SemanticError::InvalidCapture(capture.clone(), ty.clone())),
         }
         Ok(())
-    }
-
-    fn remove_capture(&mut self, capture: &node::Capture) {
-        match capture {
-            node::Capture::Single(pos_str) => {
-                self.symbol_table.remove(&pos_str.str);
-            }
-            node::Capture::Multiple(pos_strs, _) => {
-                for p in pos_strs {
-                    self.symbol_table.remove(&p.str);
-                }
-            }
-        }
     }
 
     fn for_in(&mut self, r#for: &mut node::ForIn) -> Result<(), SemanticError> {
@@ -1675,16 +1705,15 @@ impl Validate {
             Type::Tuple(tys) => {
                 let mut scope = vec![];
                 for ty in tys {
-                    self.capture(&r#for.capture, &ty, false)?;
+                    self.capture(&r#for.capture, &ty)?;
                     self.loop_count += 1;
                     let mut new_scope = r#for.scope.clone();
                     self.scope(&mut new_scope)?;
-                    scope.extend(new_scope);
+                    scope.extend(new_scope.stmts);
                     scope.push(node::Stmt::Marker);
                     self.loop_count -= 1;
-                    self.remove_capture(&r#for.capture);
                 }
-                r#for.scope = scope;
+                r#for.scope = node::Scope { stmts: scope, end: r#for.scope.end };
                 return Ok(());
             }
             other => {
@@ -1721,11 +1750,10 @@ impl Validate {
                 }
             }
         };
-        self.capture(&r#for.capture, &capture_ty, false)?;
+        self.capture(&r#for.capture, &capture_ty)?;
         self.loop_count += 1;
         self.scope(&mut r#for.scope)?;
         self.loop_count -= 1;
-        self.remove_capture(&r#for.capture);
         Ok(())
     }
 
@@ -1742,40 +1770,43 @@ impl Validate {
                 &Type::Struct(HashMap::from([
                     ("name".to_string(), (Type::Slice { inner: Box::new(Type::Char) }, 0)),
                     ("value".to_string(), (value_ty, 16)),
-                ])),
-                false
+                ]))
             )?;
 
             self.loop_count += 1;
             let mut new_scope = r#for.scope.clone();
             self.scope(&mut new_scope)?;
-            scope.extend(new_scope);
+            scope.extend(new_scope.stmts);
             scope.push(node::Stmt::Marker);
             self.loop_count -= 1;
-            self.remove_capture(&r#for.capture);
         }
 
-        r#for.scope = scope;
+        r#for.scope = node::Scope { stmts: scope, end: r#for.scope.end };
         Ok(())
     }
 
     fn r#extern(&mut self, ext: &mut node::Extern) -> Result<(), SemanticError> {
         if self.cur_func.is_some() {
-            return Err(SemanticError::FuncInFunc(ext.name.clone()));
+            return Err(SemanticError::FuncInFunc(ext.sig.name.clone()));
         }
+        let (ty, args) = self.fn_sig(&mut ext.sig)?;
+        self.symbol_table.insert(ext.sig.name.str.clone(), Symbol::ExternFunc { ty, args });
+        Ok(())
+    }
+
+    fn fn_sig(&mut self, sig: &mut node::FnSig) -> Result<(Type, Vec<Type>), SemanticError> {
         let ty;
-        if let Some(t) = &ext.decl_type {
+        if let Some(t) = &sig.decl_type {
             ty = self.r#type(t, false)?;
         } else {
             ty = Type::Void;
         }
         let mut args = Vec::new();
-        for arg in ext.types.iter() {
+        for arg in sig.arg_types.iter() {
             let ty = self.r#type(arg, false)?;
             args.push(ty.clone());
         }
-        self.symbol_table.insert(ext.name.str.clone(), Symbol::ExternFunc { ty, args });
-        Ok(())
+        Ok((ty, args))
     }
 
     fn r#match(&mut self, m: &mut node::Match) -> Result<(), SemanticError> {

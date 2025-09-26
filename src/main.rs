@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::process::ExitCode;
 
@@ -88,7 +89,7 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
                     return Err(format!("Unknown flag: {}", arg));
                 }
                 if config.input_file.is_empty() {
-                    config.input_file = arg.clone();
+                    config.input_file = get_path(&".".to_string(), arg);
                 } else {
                     return Err(format!("Unexpected argument '{}'. Input file already set to '{}'.", arg, config.input_file));
                 }
@@ -103,10 +104,9 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
     Ok(config)
 }
 
-
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
-    
+
     let config = match parse_config(&args) {
         Ok(c) => c,
         Err(e) => {
@@ -184,7 +184,9 @@ fn main() -> ExitCode {
 
     let mut files = Vec::new();
     let mut generic_calls = Vec::new();
+    let mut all_generic_calls = Vec::new();
     let mut unresolved = Vec::new();
+    let mut resolved = Vec::new();
 
     for (mut module, (imports, is_generic)) in modules.into_iter().zip(import_names.into_iter().zip(is_generic_vec.into_iter())) {
         let mut pub_symbols = Vec::new();
@@ -196,30 +198,30 @@ fn main() -> ExitCode {
         let syms = match validate::validate(&mut module, pub_symbols, &mut generic_calls, &mut generic_fns) {
             Ok(res) => res,
             Err(e) => {
-                let info = error::semantic_err(e);
-                error::print_error(&module.path, &info, &config);
+                print_full_error_trace(&module.path, e, &config, &generic_calls);
                 return ExitCode::from(1);
             }
         };
 
         if is_generic {
             unresolved.push((module, syms));
-            continue;
+        } else {
+            resolved.push((module, syms));
         }
 
-        let (m, ir) = validate::clean_up(module, syms);
-        match gen_module(m, ir, &config) {
-            Ok(file) => files.push(file),
-            Err(e) => return e,
-        }
+        // let (m, ir) = validate::clean_up(module, syms);
+        // match gen_module(m, ir, &config) {
+        //     Ok(file) => files.push(file),
+        //     Err(e) => return e,
+        // }
     }
-    
+
+    all_generic_calls = generic_calls.clone();
+
     if config.verbose {
         println!("UNRESOLVED MODULES: {}", unresolved.len());
         println!("INITIAL GENERIC CALLS: {:?}", generic_calls);
     }
-    
-    let mut resolved_modules = Vec::new();
 
     loop {
         if config.verbose {
@@ -236,11 +238,13 @@ fn main() -> ExitCode {
                     if config.verbose {
                         println!("Updated generic calls: {:?}", generic_calls);
                     }
-                    resolved_modules.push((resolved_module, ir));
+                    resolved.push((resolved_module, ir));
                 }
                 Err(e) => {
-                    let info = error::semantic_err(e);
-                    error::print_error(&path, &info, &config);
+                    all_generic_calls.extend(generic_calls.iter().cloned());
+                    
+                    // NOW, print the error using the complete history
+                    print_full_error_trace(&path, e, &config, &all_generic_calls);
                     return ExitCode::from(1);
                 }
             }
@@ -248,23 +252,27 @@ fn main() -> ExitCode {
 
         if generic_calls.is_empty() {
             break;
+        // The new calls discovered by `resolve` are now in `generic_calls`.
+        // Add them to the master history list for the next iteration.
         } else if before == generic_calls {
             panic!("Compiler Error: No progress made on resolving generic calls. Aborting. {:?}", generic_calls);
         } else {
-            unresolved = resolved_modules.drain(..).collect();
+            all_generic_calls.extend(generic_calls.iter().cloned());
+            unresolved = resolved.drain(..).collect();
         }
     }
 
-    
-    for (module, syms) in resolved_modules {
-        let (m, ir) = validate::clean_up(module, syms);
+    for (module, syms) in resolved {
+        let (m, ir, locs) = validate::clean_up(module, syms);
+        if config.diagnostics_mode && m.path == config.input_file {
+            print_module_diagnostics(&m, &ir, locs);
+        }
         match gen_module(m, ir, &config) {
             Ok(file) => files.push(file),
             Err(e) => return e,
         }
     }
 
-    
     if config.verbose {
         println!("FINAL GENERIC CALLS: {:?}", generic_calls);
         println!("Generated Assembly files: {:?}", files);
@@ -273,20 +281,17 @@ fn main() -> ExitCode {
     if config.diagnostics_mode {
         return ExitCode::from(0);
     }
-    
+
     let mut obj_files = Vec::new();
     for file in files {
         let path = Path::new(&file);
 
-        if !config.assembly_only { 
+        if !config.assembly_only {
             let stem = path.file_stem().unwrap();
             let obj = format!("{}.o", stem.to_string_lossy());
-            
-            let nasm_output = Command::new("nasm")
-                .args(["-felf64", &file, "-o", &obj])
-                .output()
-                .expect("Failed to execute nasm assembler.");
-            
+
+            let nasm_output = Command::new("nasm").args(["-felf64", &file, "-o", &obj]).output().expect("Failed to execute nasm assembler.");
+
             if config.verbose || !nasm_output.status.success() {
                 println!("nasm {}:", file);
                 if !nasm_output.stdout.is_empty() {
@@ -296,7 +301,7 @@ fn main() -> ExitCode {
                     eprintln!("{}", String::from_utf8_lossy(&nasm_output.stderr));
                 }
             }
-            
+
             if !nasm_output.status.success() {
                 eprintln!("nasm failed for file {}. Aborting.", file);
                 return ExitCode::from(1);
@@ -316,11 +321,7 @@ fn main() -> ExitCode {
         return ExitCode::from(0);
     }
 
-    let ld_output = Command::new("ld")
-        .args(&obj_files)
-        .args(["-o", &config.output_file])
-        .output()
-        .expect("Failed to execute ld linker.");
+    let ld_output = Command::new("ld").args(&obj_files).args(["-o", &config.output_file]).output().expect("Failed to execute ld linker.");
 
     if config.verbose || !ld_output.status.success() {
         println!("ld -o {}:", config.output_file);
@@ -402,7 +403,115 @@ fn gen_module(module: node::Module, mut ir: HashMap<String, ir::Symbol>, config:
     Ok(res_file)
 }
 
+fn print_full_error_trace(
+    initial_path: &String,
+    e: validate::SemanticError,
+    config: &Config,
+    gcalls: &[validate::GenericCall],
+) {
+    if let validate::SemanticError::GenericInstantiationError { cause, call_site, definition_path } = e {
+        // 1. Print the root cause of the error first.
+        let root_info = error::semantic_err(*cause);
+        error::print_error(&definition_path, &root_info, config);
+
+        // 2. Start the trace from the initial failure site.
+        let mut current_call_site_opt = Some(call_site);
+
+        // 3. Walk up the parent chain using the stable SourceLocation.
+        while let Some(current_call_site) = current_call_site_opt {
+            // Find the corresponding GenericCall for the current site.
+            if let Some(gcall) = gcalls.iter().find(|gc| gc.call_site == current_call_site) {
+                eprintln!(); // Add a blank line for readability
+
+                // Format the argument types into a nice string like "(int, *<char>)"
+                let arg_types_str = gcall.arg_types
+                    .iter()
+                    .map(|t| format!("{}", t)) // Assumes your Type has a good Display impl
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
+                // Create the new, more descriptive message
+                let message = format!(
+                    "Can't call '{}' with ({}).",
+                    gcall.display_name,
+                    arg_types_str
+                );
+
+                let note_info = ErrorInfo {
+                    message, // Use our new descriptive message
+                    location: Location::Span(gcall.call_site.span),
+                    level: "error",
+                };
+                error::print_error(&gcall.call_site.file_path, &note_info, config);
+
+                // Move to the next parent in the chain.
+                current_call_site_opt = gcall.parent_call_site.clone();
+            } else {
+                // Stop if we can't find the parent (e.g., top of the trace).
+                break;
+            }
+        }
+    } else {
+        // Base case for non-generic errors.
+        let info = error::semantic_err(e);
+        error::print_error(initial_path, &info, config);
+    }
+}
+
 fn get_path(parent: &String, s: &String) -> String {
     let parent = Path::new(&parent).parent().unwrap_or_else(|| Path::new("."));
-    parent.join(s).with_extension("re").display().to_string().replace('\\', "/")
+    let input = parent.join(s).with_extension("re");
+    let mut result = PathBuf::new();
+    for component in input.components() {
+        use std::path::Component;
+        match component {
+            Component::CurDir => {} // skip "."
+            _ => result.push(component),
+        }
+    }
+    result.display().to_string().replace('\\', "/")
+}
+
+fn print_module_diagnostics(module: &node::Module, ir: &HashMap<String, ir::Symbol>, locs: Vec<(String, ir::Symbol, node::Span)>) {
+    for (key, val) in ir.iter() {
+        match val {
+            ir::Symbol::Type { ty } => {
+                println!("TYPE::{}: {} as {}", key, ty, key);
+            }
+            ir::Symbol::Func { args, .. } | ir::Symbol::ExternFunc { args, .. } | ir::Symbol::Syscall { args, .. } => {
+                let dot_count = key.chars().filter(|&c| c == '.').count();
+                if dot_count > 1 {
+                    continue;
+                }
+                let mut arg_string = String::new();
+                let mut first = true;
+                for a in args {
+                    if !first {
+                        arg_string.push_str(", ");
+                    }
+                    arg_string.push_str(&format!("{}", a));
+                    first = false;
+                }
+                if dot_count == 1 {
+                    let fn_name = &key[0..key.find(".").unwrap()];
+                    println!("FUNC::{}: {}({})", fn_name, fn_name, arg_string);
+                } else {
+                    println!("FUNC::{}: {}({})", key, key, arg_string);
+                }
+            }
+            _ => (),
+        }
+    }
+    for (name, sym, span) in locs {
+        match sym {
+            ir::Symbol::Var { ty } => {
+                let text = fs::read_to_string(&module.path).unwrap();
+                let (_, locs) = tokenize::tokenize(&text).unwrap();
+                let start = error::file_location(&text, locs.get(span.start).unwrap());
+                let end = error::file_location(&text, locs.get(span.end).unwrap());
+                println!("VAR::{}:{}:{}:{}", name, start, end, ty);
+            }
+            _ => panic!("not var")
+        }
+    }
 }

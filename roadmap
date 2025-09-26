@@ -1,8 +1,8 @@
 Compiler features:
 - Custom iterators
 - Improve arg parsing
-- Traces
-- Floats?
+- Floats (?)
+- if let {} else err {} (?)
 
 Optimizations:
 - remove temporary stack variables
@@ -13,9 +13,11 @@ Std library:
 - hashmaps
 - lists
 - strings
+
+New libraries:
 - math
 - networking
+- tty
 
 Other:
 - tests
-

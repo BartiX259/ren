@@ -188,6 +188,13 @@ pub fn str<T>(x: ?T) -> <char> {
     }
 }
 
+pub fn str<T, K>(x: T ? K) -> <char> {
+    let ok = x else err {
+        return str(err);
+    };
+    return str(ok);
+}
+
 pub fn str<T>(x: T) -> <char> {
     decl s: [char];
     match <K> T {

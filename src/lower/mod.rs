@@ -357,13 +357,13 @@ impl<'a> Lower<'a> {
         self.cur_block = None;
     }
 
-    fn scope(&mut self, scope: &Vec<node::Stmt>, offset: i64) {
+    fn scope(&mut self, scope: &node::Scope, offset: i64) {
         if offset != 0 {
             self.push_op(Op::BeginScopeOffset(offset), 0);
         } else {
             self.push_op(Op::BeginScope, 0);
         }
-        for s in scope.iter() {
+        for s in scope.stmts.iter() {
             if let node::Stmt::Marker = s {
                 break;
             }
@@ -1721,7 +1721,7 @@ impl<'a> Lower<'a> {
     fn for_in_struct(&mut self, r#for: &node::ForIn, st: Term, map: &HashMap<String, (Type, u32)>, pointer_mode: bool) {
         let mut items: Vec<_> = map.iter().collect();
         items.sort_by_key(|(_, (_, offset))| *offset);
-        let mut scope: Vec<_> = r#for.scope.clone();
+        let mut scope= r#for.scope.clone();
         for (name, (ty, offset)) in items {
             self.push_op(Op::BeginScope, r#for.pos_id);
             self.stack_count += 1;
@@ -1838,9 +1838,9 @@ impl<'a> Lower<'a> {
             }
             self.capture(&r#for.capture, ty, &el);
             self.scope(&scope, 0);
-            if let Some(pos) = scope.iter().position(|stmt| matches!(stmt, node::Stmt::Marker)) {
-                let remaining = scope.split_off(pos + 1);
-                scope = remaining;
+            if let Some(pos) = scope.stmts.iter().position(|stmt| matches!(stmt, node::Stmt::Marker)) {
+                let remaining = scope.stmts.split_off(pos + 1);
+                scope.stmts = remaining;
             }
             self.push_op(Op::EndScope, r#for.pos_id);
         }
@@ -1848,7 +1848,7 @@ impl<'a> Lower<'a> {
 
     fn for_in_tuple(&mut self, r#for: &node::ForIn, tup: Term, tys: &Vec<Type>) {
         let mut offset = 0;
-        let mut scope: Vec<_> = r#for.scope.clone();
+        let mut scope= r#for.scope.clone();
         for ty in tys {
             self.push_op(Op::BeginScope, r#for.pos_id);
             self.stack_count += 1;
@@ -1876,9 +1876,9 @@ impl<'a> Lower<'a> {
             );
             self.capture(&r#for.capture, ty, &el);
             self.scope(&scope, 0);
-            if let Some(pos) = scope.iter().position(|stmt| matches!(stmt, node::Stmt::Marker)) {
-                let remaining = scope.split_off(pos + 1);
-                scope = remaining;
+            if let Some(pos) = scope.stmts.iter().position(|stmt| matches!(stmt, node::Stmt::Marker)) {
+                let remaining = scope.stmts.split_off(pos + 1);
+                scope.stmts = remaining;
             }
             self.push_op(Op::EndScope, r#for.pos_id);
         }

@@ -1,12 +1,12 @@
 import lib/std
+import lib/json
 
-fn main(a: int, b: <char>, c: ?int, d: ?<char>, e: int, f: bool, g: ?<char>) {
-    print(a);
-    print(b);
-    print(c);
-    print(d);
-    print(e);
-    print(f);
+type h = (x: int, y: <char>);
+type k = int;
+
+fn main() {
+    let x = list_dir(".");
+    let g = to_json(x);
+
     print(g);
 }
-

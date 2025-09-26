@@ -157,13 +157,13 @@ impl Process {
         }
     }
 
-    fn scope(&mut self, scope: Vec<node::Stmt>) -> Vec<node::Stmt> {
+    fn scope(&mut self, scope: node::Scope) -> node::Scope {
         self.stmts.push(Vec::new());
-        for s in scope.into_iter() {
+        for s in scope.stmts.into_iter() {
             let new_stmt = self.stmt(s);
             self.push(new_stmt);
         }
-        return self.stmts.pop().unwrap();
+        return node::Scope { stmts: self.stmts.pop().unwrap(), end: scope.end };
     }
 
     fn unpack(&mut self, unpack: node::Unpack) -> node::Unpack {
