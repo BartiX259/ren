@@ -257,6 +257,7 @@ pub enum SemanticError {
     NoBuiltIn(Span, String, Type),
     PrivateAccess(PosStr),
     MainFnCall(PosStr),
+    FnMultipleDefs(PosStr),
     GenericInstantiationError {
         cause: Box<SemanticError>,
         call_site: SourceLocation,
@@ -389,15 +390,38 @@ impl Validate {
                     value: Box::new(val_ty),
                 })
             }
-            node::ExprKind::Variable(pos_str) => self
-                .symbol_table
-                .get(&pos_str.str)
-                .and_then(|symbol| match symbol {
-                    Symbol::Var { ty } => Some(ty.clone()),
-                    Symbol::Data { ty, .. } => Some(Type::Pointer(Box::new(ty.clone()))),
-                    _ => None,
-                })
-                .ok_or(SemanticError::UndeclaredSymbol(pos_str.clone())),
+            node::ExprKind::Variable(pos_str) => {
+                if let Some(symbol) = self.symbol_table.get(&pos_str.str) {
+                    match symbol {
+                        Symbol::Var { ty } => Ok(ty.clone()),
+                        Symbol::Data { ty, .. } => Ok(Type::Pointer(Box::new(ty.clone()))),
+                        _ => Err(SemanticError::UndeclaredSymbol(pos_str.clone())),
+                    }
+                } else if let Some(sigs) = self.fn_map.get(&pos_str.str) {
+                    println!("{:?}", sigs);
+                    let name_dot = format!("{}.", pos_str.str);
+                    if sigs.len() > 1 {
+                        Err(SemanticError::FnMultipleDefs(pos_str.clone()))
+                    } else if self.gfns.iter().any(|(name, _)| name.starts_with(&name_dot)) {
+                        Err(SemanticError::FnMultipleDefs(pos_str.clone()))
+                    } else {
+                        let (args, id) = sigs.get(0).unwrap();
+                        let mangled_name = format!("{}{}", name_dot, id);
+                        let ret = match self.symbol_table.get(&mangled_name) {
+                            Some(Symbol::Func { ty, .. }) => ty.clone(),
+                            Some(Symbol::ExternFunc { ty, .. }) => ty.clone(),
+                            Some(Symbol::Syscall { ty, .. }) => ty.clone(),
+                            _ => unreachable!("Symbol for function '{}' was not a function symbol.", mangled_name),
+                        };
+                        Ok(Type::Fn {
+                            arg_types: args.to_vec(),
+                            ret: Box::new(ret),
+                        })
+                    }
+                } else {
+                    Err(SemanticError::UndeclaredSymbol(pos_str.clone()))
+                }
+            }
             node::ExprKind::Call(call) => self.call(call, expr.span),
             node::ExprKind::BuiltIn(built_in) => self.built_in(built_in, expr.span),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr, expr.span),
@@ -1371,6 +1395,19 @@ impl Validate {
             arg_types.push(self.expr(s)?);
             arg_spans.push(s.span);
         }
+        if let Some(Symbol::Var { ty }) = self.symbol_table.get(&call.name.str) {
+            if let Type::Fn { arg_types: tys, ret } = ty {
+                if tys.len() != arg_types.len() {
+                    return Err(SemanticError::InvalidArgCount(span, tys.len(), arg_types.len()))
+                }
+                for ((ty, expected), arg_span) in tys.iter().zip(arg_types.iter()).zip(arg_spans) {
+                    if ty != expected {
+                        return Err(SemanticError::ArgTypeMismatch(arg_span, ty.clone(), expected.clone()));
+                    }
+                }
+                return Ok(*ret.clone());
+            }
+        }
         let name = self.find_fn(&call.name.str, arg_types, None, &mut call.args, span)?;
         call.name.str = name;
         let ty;
@@ -1536,6 +1573,19 @@ impl Validate {
                 key: Box::new(self.r#type(k, false)?),
                 value: Box::new(self.r#type(v, false)?),
             }),
+            node::TypeKind::Fn(tys, ret) => {
+                let mut new_tys = Vec::new();
+                for ty in tys {
+                    new_tys.push(self.r#type(ty, false)?);
+                }
+                let new_ret;
+                if let Some(t) = ret {
+                    new_ret = self.r#type(t, false)?;
+                } else {
+                    new_ret = Type::Void;
+                }
+                Ok(Type::Fn { arg_types: new_tys, ret: Box::new(new_ret) })
+            }
         }
     }
 

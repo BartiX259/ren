@@ -1137,6 +1137,9 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
             return Err(unexp(tok, tokens.prev_index(), "'}'"));
         };
         Ok(r#type(start, tokens.prev_index(), node::TypeKind::Map(Box::new(k), Box::new(v))))
+    } else if let Token::Fn = &tok {
+        let (tys, ret) = parse_args_and_ret(tokens)?;
+        Ok(r#type(start, tokens.prev_index(), node::TypeKind::Fn(tys, ret.map(Box::new))))
     } else {
         Err(unexp(tok, tokens.prev_index(), "a type"))
     }?;
@@ -1163,15 +1166,7 @@ fn parse_type(tokens: &mut VecIter<Token>) -> Result<node::Type, ParseError> {
     Ok(ty)
 }
 
-fn parse_fn_sig(tokens: &mut VecIter<Token>) -> Result<node::FnSig, ParseError> {
-    let tok = check_none(tokens, "a name")?;
-    let Token::Word { value: name_str } = tok else {
-        return Err(unexp(tok, tokens.prev_index(), "a name"));
-    };
-    let name = PosStr {
-        str: name_str,
-        pos_id: tokens.prev_index(),
-    };
+fn parse_args_and_ret(tokens: &mut VecIter<Token>) -> Result<(Vec<node::Type>, Option<node::Type>), ParseError> {
     let tok = check_none(tokens, "'('")?;
     let Token::OpenParen = tok else {
         return Err(unexp(tok, tokens.prev_index(), "'('"));
@@ -1188,6 +1183,19 @@ fn parse_fn_sig(tokens: &mut VecIter<Token>) -> Result<node::FnSig, ParseError> 
     } else {
         decl_type = None;
     }
+    Ok((arg_types, decl_type))
+}
+
+fn parse_fn_sig(tokens: &mut VecIter<Token>) -> Result<node::FnSig, ParseError> {
+    let tok = check_none(tokens, "a name")?;
+    let Token::Word { value: name_str } = tok else {
+        return Err(unexp(tok, tokens.prev_index(), "a name"));
+    };
+    let name = PosStr {
+        str: name_str,
+        pos_id: tokens.prev_index(),
+    };
+    let (arg_types, decl_type) = parse_args_and_ret(tokens)?;
     Ok(node::FnSig { name, arg_types, decl_type })
 }
 

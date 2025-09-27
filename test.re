@@ -4,9 +4,15 @@ import lib/json
 type h = (x: int, y: <char>);
 type k = int;
 
-fn main() {
-    let x = list_dir(".");
-    let vvv = 5;
+fn pretty_print(func: fn(<char>) -> <char>, str: <char>) {
+    print(func("pretty\n"));
+    print(func(str));
+}
 
-    print(vvv);
+fn pr(t: <char>) -> <char> {
+    return "pretty: {t}";
+}
+
+fn main() {
+    pretty_print(pr, "asd");
 }

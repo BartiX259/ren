@@ -490,47 +490,18 @@ impl<'a> Gen<'a> {
                         self.buf.push_line(format!("call {}", func));
                     }
                     self.buf.comment(format!("{:?}", op_clone));
-                    if let Some(r) = res {
-                        if r.is_stack() {
-                            self.store_term(r.clone(), "rax".to_string());
-                        } else {
-                            self.lock_reg(&"rax".to_string(), true);
-                        }
-                        self.save_reg(&"rax".to_string(), &r);
-                        if let Term::Double(_) = r {
-                            self.doubles.insert(r.clone(), ("rax".to_string(), "rdx".to_string()));
-                            self.save_reg(&"rdx".to_string(), &r);
-                            self.lock_reg(&"rdx".to_string(), true);
-                        }
-                    }
-                    for name in self.call_order.clone() {
-                        self.clear_reg(&name.to_string());
-                    }
-                    // Restore
-                    let state = self.saved_states.pop().unwrap();
-                    self.params.pop();
-                    self.param_index = state.param_index;
-                    if self.sp != state.sp {
-                        self.buf.push_line(format!("add rsp, {}", self.sp - state.sp));
-                        self.buf.comment(format!("restore sp (call)"));
-                        self.sp = state.sp;
-                    }
-                    for r in state.regs.iter().rev() {
-                        if r.name == "rax" {
-                            let free_name = self.get_free_reg()?;
-                            let free_reg = self.get_reg(&free_name).unwrap();
-                            *free_reg = r.clone();
-                            free_reg.name = free_name.clone();
-                            self.buf.push_line(format!("pop {}", free_name));
-                        } else {
-                            *self.get_reg(&r.name).unwrap() = r.clone();
-                            self.buf.push_line(format!("pop {}", r.name));
-                        }
-                        self.sp -= 8;
-                        // println!("restore {:?} into {} lock {:?}", r.term.clone().unwrap(), r.name, self.get_reg(&r.name));
-                        self.buf.comment(format!("restore {:?}", r.term.clone().unwrap()));
-                    }
-                    self.calling = false;
+                    self.handle_call_result(res)?; // Refactor result handling
+                    self.restore_after_call()?;    // Refactor register restoration
+                }
+                ir::Op::CallIndirect { func_ptr, res } => {
+                    // Evaluate the function pointer term into a register.
+                    let reg = self.eval_term(func_ptr, None, false)?;
+                    self.buf.push_line(format!("call {}", reg));
+                    self.clear_reg(&reg); // The register is now free
+
+                    self.buf.comment(format!("{:?}", op_clone));
+                    self.handle_call_result(res)?; // Use the same helper
+                    self.restore_after_call()?;    // Use the same helper
                 }
                 ir::Op::Label { label } => {
                     self.buf.dedent();
@@ -610,7 +581,7 @@ impl<'a> Gen<'a> {
                 ir::Op::BreakScope { depth } => self.restore_sp(depth),
             }
             match op_clone {
-                ir::Op::BeginLoop | ir::Op::EndLoop | ir::Op::Param { .. } | ir::Op::Call { .. } | ir::Op::BeginCall { .. } | ir::Op::BeginScope | ir::Op::EndScope | ir::Op::NaturalFlow => (),
+                ir::Op::BeginLoop | ir::Op::EndLoop | ir::Op::Param { .. } | ir::Op::Call { .. } | ir::Op::BeginCall { .. } | ir::Op::CallIndirect { .. } | ir::Op::BeginScope | ir::Op::EndScope | ir::Op::NaturalFlow => (),
                 _ => self.buf.comment(format!("{:?}", op_clone)),
             }
         }
@@ -793,9 +764,22 @@ impl<'a> Gen<'a> {
             return;
         }
         if let Term::Data(s) = t {
-            if let Some(Symbol::Data { .. }) = self.symbol_table.get(&s) {
-                self.buf.push_line(format!("mov {}, {}", target, s));
-                return;
+            if let Some(symbol) = self.symbol_table.get(&s) {
+                match symbol {
+                    Symbol::Data { .. } => {
+                        // This case is for global data variables, it's correct.
+                        self.buf.push_line(format!("mov {}, {}", target, s));
+                        return;
+                    }
+                    Symbol::Func { .. } | Symbol::MainFunc { .. } | Symbol::ExternFunc { .. } => {
+                        // NEW CASE: The value of a function is its address (label).
+                        // In NASM, moving a label into a register loads its address.
+                        self.buf.push_line(format!("mov {}, {}", target, s));
+                        self.buf.comment(format!("load address of function '{}'", s));
+                        return;
+                    }
+                    _ => {} // Fall through to the panic for other symbol types like Type.
+                }
             }
         }
         panic!("Couldn't find {:?}", term);
@@ -1196,6 +1180,54 @@ impl<'a> Gen<'a> {
         self.buf.push_line(format!("cmp {}, {}", Self::reg_name(r1, size), Self::reg_name(r2, size)));
         self.buf.push_line(format!("{} {}", cond, Self::reg_name(r1, 1)));
         self.buf.push_line(format!("movzx {}, {}", Self::reg_name(r1, 8), Self::reg_name(r1, 1)));
+    }
+
+    fn handle_call_result(&mut self, res: Option<Term>) -> Result<(), GenError> {
+        if let Some(r) = res {
+            if r.is_stack() {
+                self.store_term(r.clone(), "rax".to_string());
+            } else {
+                self.lock_reg(&"rax".to_string(), true);
+            }
+            self.save_reg(&"rax".to_string(), &r);
+            if let Term::Double(_) = r {
+                self.doubles.insert(r.clone(), ("rax".to_string(), "rdx".to_string()));
+                self.save_reg(&"rdx".to_string(), &r);
+                self.lock_reg(&"rdx".to_string(), true);
+            }
+        }
+        Ok(())
+    }
+
+    fn restore_after_call(&mut self) -> Result<(), GenError> {
+        for name in self.call_order.clone() {
+            self.clear_reg(&name.to_string());
+        }
+        // Restore
+        let state = self.saved_states.pop().unwrap();
+        self.params.pop();
+        self.param_index = state.param_index;
+        if self.sp != state.sp {
+            self.buf.push_line(format!("add rsp, {}", self.sp - state.sp));
+            self.buf.comment(format!("restore sp (call)"));
+            self.sp = state.sp;
+        }
+        for r in state.regs.iter().rev() {
+            if r.name == "rax" {
+                let free_name = self.get_free_reg()?;
+                let free_reg = self.get_reg(&free_name).unwrap();
+                *free_reg = r.clone();
+                free_reg.name = free_name.clone();
+                self.buf.push_line(format!("pop {}", free_name));
+            } else {
+                *self.get_reg(&r.name).unwrap() = r.clone();
+                self.buf.push_line(format!("pop {}", r.name));
+            }
+            self.sp -= 8;
+            self.buf.comment(format!("restore {:?}", r.term.clone().unwrap()));
+        }
+        self.calling = false;
+        Ok(())
     }
 
     fn word_size_name(size: u32) -> &'static str {

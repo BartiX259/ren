@@ -76,6 +76,7 @@ pub enum TypeKind {
     Result(Box<Type>, Box<Type>),
     Option(Box<Type>),
     Map(Box<Type>, Box<Type>),
+    Fn(Vec<Type>, Option<Box<Type>>)
 }
 #[derive(Debug, Clone)]
 pub struct Type {

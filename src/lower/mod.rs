@@ -154,11 +154,31 @@ impl<'a> Lower<'a> {
             node::ExprKind::Null => Term::IntLit(0),
             node::ExprKind::None => self.none(&expr.ty, expr.span.end),
             node::ExprKind::Variable(pos_str) => {
+                // 1. Check for a local variable first.
                 if let Some(var) = self.var_map.get(&pos_str.str) {
-                    var.clone()
-                } else {
-                    Term::Data(pos_str.str.clone())
+                    return var.clone();
                 }
+
+                // 2. Check if the symbol is a function in the global symbol table.
+                // The key in the `ir` table will be the mangled name (e.g., "pr.1").
+                // We construct this name and check for its existence.
+                let mangled_name = format!("{}.1", pos_str.str);
+
+                if let Some(symbol) = self.ir.get(&mangled_name) {
+                     if matches!(symbol, Symbol::Func { .. } | Symbol::ExternFunc { .. }) {
+                        // It's an unambiguous function reference. Its "value" is its address.
+                        return Term::Data(mangled_name);
+                     }
+                }
+                
+                // 3. If it's not a function, check if it's a global data variable.
+                // This uses the unmangled name.
+                if self.ir.contains_key(&pos_str.str) {
+                     return Term::Data(pos_str.str.clone());
+                }
+
+                // 4. If we've reached here, validation should have failed.
+                unreachable!("Undeclared symbol '{}' in lower pass.", pos_str.str);
             }
             node::ExprKind::ArrLit(arr_lit) => self.arr_lit(arr_lit, &expr),
             node::ExprKind::ListLit(arr_lit, alloc_fn) => self.list_lit(arr_lit, alloc_fn, &expr),
@@ -166,7 +186,7 @@ impl<'a> Lower<'a> {
             node::ExprKind::StringLit(frags, alloc_fn) => self.string_lit(frags, alloc_fn, &expr),
             node::ExprKind::TupleLit(exprs) => self.tuple_lit(exprs, &expr),
             node::ExprKind::MapLit(map) => self.map_lit(map),
-            node::ExprKind::Call(call) => self.call(call),
+            node::ExprKind::Call(call) => self.call(call, &expr.ty),
             node::ExprKind::BuiltIn(built_in) => self.built_in(built_in, expr.span.end),
             node::ExprKind::BinExpr(bin_expr) => self.bin_expr(bin_expr, expr.ty.size()),
             node::ExprKind::UnExpr(un_expr) => self.un_expr(un_expr, &expr.ty),
@@ -1343,32 +1363,62 @@ impl<'a> Lower<'a> {
         params
     }
 
-    fn call(&mut self, call: &node::Call) -> Term {
+    fn call(&mut self, call: &node::Call, return_ty: &Type) -> Term {
+        // An enum to represent the two types of callees we can have.
+        enum Callee {
+            Direct(String),
+            Indirect(Term),
+        }
+
+        // --- Step 1: Determine the callee and its return type ---
+        let callee = {
+            // First, check if the name corresponds to a known, static function.
+            if let Some(symbol) = self.ir.get(&call.name.str) {
+                match symbol {
+                    // It's a direct call to a function or syscall.
+                    Symbol::Func { .. } | Symbol::ExternFunc { .. } | Symbol::Syscall { .. } => {
+                        Callee::Direct(call.name.str.clone())
+                    },
+                    // It's a global variable (constant function pointer).
+                    Symbol::Var { ty } => {
+                        let Type::Fn { .. } = ty.clone() else { unreachable!("Validation should ensure this is a function type (1)") };
+                        let func_ptr_term = Term::Data(call.name.str.clone());
+                        Callee::Indirect(func_ptr_term)
+                    }
+                    _ => unreachable!("Invalid symbol type for a call: {:?}", symbol),
+                }
+            } else {
+                let term = self.var_map.get(&call.name.str).unwrap();
+                Callee::Indirect(term.clone())
+            }
+        };
+
+
+        // --- Step 2: Unified logic for return value setup ---
         let mut res = None;
         let mut is_double = false;
-        let mut params = Vec::new();
-        match self.ir.get(&call.name.str) {
-            Some(Symbol::Func { ty, .. }) | Some(Symbol::ExternFunc { ty, .. }) | Some(Symbol::Syscall { ty, .. }) => {
-                if ty.size() > 16 {
-                    // Pass pointer as first argument
-                    self.stack_count += 1;
-                    let r = Term::Stack(self.stack_count);
-                    self.push_op(
-                        Op::Decl {
-                            term: r.clone(),
-                            size: ty.aligned_size(),
-                        },
-                        call.name.pos_id,
-                    );
-                    res = Some(r);
-                } else if ty.size() > 8 {
-                    is_double = true;
-                }
-            }
-            _ => (),
+        if return_ty.size() > 16 {
+            // Pass pointer as first argument for large return types
+            self.stack_count += 1;
+            let r = Term::Stack(self.stack_count);
+            self.push_op(
+                Op::Decl {
+                    term: r.clone(),
+                    size: return_ty.aligned_size(),
+                },
+                call.name.pos_id,
+            );
+            res = Some(r);
+        } else if return_ty.size() > 8 {
+            is_double = true;
         }
+
+        // --- Step 3: Unified logic for parameter preparation ---
         let idx = self.cur_block.as_ref().unwrap().ops.len();
         self.push_op(Op::BeginCall { params: vec![] }, call.name.pos_id);
+        let mut params = Vec::new();
+
+        // Handle the implicit 'return' pointer argument if needed
         if let Some(r) = &res {
             self.temp_count += 1;
             self.push_op(
@@ -1382,39 +1432,63 @@ impl<'a> Lower<'a> {
             );
             params.push(Term::Temp(self.temp_count));
         }
+
+        // Handle all explicit arguments
         for arg in call.args.iter() {
             let r = self.expr(arg);
             for p in self.param(r, arg.ty.size(), arg.ty.aligned_size(), call.name.pos_id) {
                 params.push(p);
             }
         }
+        
+        // Push all parameter ops
         for p in params.iter() {
             self.push_op(Op::Param { term: p.clone() }, call.name.pos_id);
         }
+
+        // Go back and update the BeginCall op with the complete list of params
         if let Op::BeginCall { params: ps } = &mut self.cur_block.as_mut().unwrap().ops[idx] {
             *ps = params;
         } else {
             unreachable!("Expected BeginCall at index {}", idx);
         }
+
         if let Some(r) = res.clone() {
             self.stack_return = Some(r);
         }
-        let res;
-        if is_double {
+
+        // --- Step 4: Unified logic for generating the result term ---
+        let result_term = if is_double {
             self.double_count += 1;
-            res = Term::Double(self.double_count);
+            Term::Double(self.double_count)
         } else {
             self.temp_count += 1;
-            res = Term::Temp(self.temp_count);
+            Term::Temp(self.temp_count)
+        };
+
+        // --- Step 5: The DIVERGENCE. Push the correct final call Op ---
+        match callee {
+            Callee::Direct(func_name) => {
+                self.push_op(
+                    Op::Call {
+                        func: func_name,
+                        res: Some(result_term.clone()),
+                    },
+                    call.name.pos_id,
+                );
+            }
+            Callee::Indirect(func_ptr_term) => {
+                self.push_op(
+                    Op::CallIndirect {
+                        func_ptr: func_ptr_term,
+                        res: Some(result_term.clone()),
+                    },
+                    call.name.pos_id,
+                );
+            }
         }
-        self.push_op(
-            Op::Call {
-                func: call.name.str.clone(),
-                res: Some(res.clone()),
-            },
-            call.name.pos_id,
-        );
-        res
+
+        result_term
     }
 
     fn built_in(&mut self, built_in: &node::BuiltIn, pos_id: usize) -> Term {

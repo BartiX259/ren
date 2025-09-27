@@ -315,6 +315,11 @@ pub fn semantic_err(e: SemanticError) -> ErrorInfo {
             location: Location::PosId(pos_str.pos_id),
             level: "error",
         },
+        SemanticError::FnMultipleDefs(pos_str) => ErrorInfo {
+            message: format!("Function '{}' has multiple definitions, try using a wrapper function.", pos_str.str),
+            location: Location::PosId(pos_str.pos_id),
+            level: "error",
+        },
         SemanticError::GenericInstantiationError { .. } => {
             panic!("GenericInstantiationError should be handled by the trace printer, not semantic_err.");
         }

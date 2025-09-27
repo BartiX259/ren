@@ -20,6 +20,7 @@ pub enum Type {
     Result(Box<Type>, Box<Type>),
     Option(Box<Type>),
     HashMap { key: Box<Type>, value: Box<Type> },
+    Fn { arg_types: Vec<Type>, ret: Box<Type> }
 }
 
 impl Type {
@@ -38,7 +39,7 @@ impl Type {
                 let tag_size = ((tag_bits + 7) / 8).max(1); // At least 1 byte
                 max_variant_size + tag_size
             }
-            Type::Int | Type::Float | Type::Pointer(_) => 8,
+            Type::Int | Type::Float | Type::Pointer(_) | Type::Fn { .. } => 8,
             Type::Char | Type::Bool | Type::Any | Type::Void => 1,
             Type::Generic(_) => panic!("Generic size called ({self})"),
         }
@@ -181,6 +182,20 @@ impl Type {
     }
 }
 
+fn write_vec(f: &mut std::fmt::Formatter<'_>, tys: &Vec<Type>) -> std::fmt::Result {
+    write!(f, "(")?;
+    let mut start = true;
+    for ty in tys {
+        if !start {
+            write!(f, ", ")?;
+        } else {
+            start = false;
+        }
+        write!(f, "{ty}")?;
+    }
+    write!(f, ")")
+}
+
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -211,23 +226,16 @@ impl Display for Type {
                 }
                 write!(f, ")")
             }
-            Type::Tuple(tys) => {
-                write!(f, "(")?;
-                let mut start = true;
-                for ty in tys {
-                    if !start {
-                        write!(f, ", ")?;
-                    } else {
-                        start = false;
-                    }
-                    write!(f, "{ty}")?;
-                }
-                write!(f, ")")
-            }
+            Type::Tuple(tys) => write_vec(f, tys),
             Type::Enum(_) => write!(f, "enum"),
             Type::Result(ty, err) => write!(f, "{ty} ? {err}"),
             Type::Option(ty) => write!(f, "?{ty}"),
             Type::HashMap { key, value } => write!(f, "{{{key}: {value}}}"),
+            Type::Fn { arg_types, ret } => {
+                write!(f, "fn")?;
+                write_vec(f, arg_types);
+                write!(f, " -> {ret}")
+            }
         }
     }
 }

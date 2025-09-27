@@ -1,7 +1,6 @@
 Compiler features:
 - Custom iterators
 - Improve arg parsing
-- Function pointers
 - Floats (?)
 - if let {} else err {} (?)
 
@@ -21,4 +20,5 @@ New libraries:
 - tty
 
 Other:
+- make runtime safe
 - tests
