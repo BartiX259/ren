@@ -48,18 +48,33 @@ pub struct ErrorInfo {
 pub fn token_err(e: TokenizeError) -> ErrorInfo {
     match e {
         TokenizeError::InvalidCharacter(c) => ErrorInfo {
-            message: format!("Invalid character '{}'", c.ch),
+            message: format!("Invalid character '{}'.", c.ch),
             location: Location::FilePos(c.pos),
             level: "error",
         },
         TokenizeError::InvalidNumberCharacter(c) => ErrorInfo {
-            message: format!("Invalid character '{}' in number", c.ch),
+            message: format!("Invalid character '{}' in number.", c.ch),
             location: Location::FilePos(c.pos),
             level: "error",
         },
         TokenizeError::UnclosedCharacter(c) => ErrorInfo {
-            message: format!("Unclosed character '{}'", c.ch),
+            message: format!("Unclosed character '{}'.", c.ch),
             location: Location::FilePos(c.pos),
+            level: "error",
+        },
+        TokenizeError::InvalidUnicodeEscape(pos) => ErrorInfo {
+            message: "Invalid unicode escape, expected '\\u{value}'.".to_string(),
+            location: Location::FilePos(pos),
+            level: "error",
+        },
+        TokenizeError::UnicodeInCharLiteral(pos) => ErrorInfo {
+            message: "Can't fit a unicode character into a char.".to_string(),
+            location: Location::FilePos(pos),
+            level: "error",
+        },
+        TokenizeError::NonAsciiCharLiteral(pos) => ErrorInfo {
+            message: "Can't fit a non-ascii character into a char.".to_string(),
+            location: Location::FilePos(pos),
             level: "error",
         },
     }

@@ -120,6 +120,9 @@ pub enum TokenizeError {
     InvalidCharacter(InvalidCharacter),
     InvalidNumberCharacter(InvalidCharacter),
     UnclosedCharacter(InvalidCharacter),
+    InvalidUnicodeEscape(FilePos),
+    UnicodeInCharLiteral(FilePos),
+    NonAsciiCharLiteral(FilePos),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,7 +130,7 @@ pub enum Token {
     Word { value: String },
     IntLit { value: i64 },
     StringLit { value: StringLit },
-    CharLit { value: u32 },
+    CharLit { value: u8 },
     Op { value: String },
     Import { module: String },
     Let,
@@ -338,10 +341,11 @@ fn tok_op(start: char, iter: &mut VecIter<char>) -> Token {
 /// Builds a string literal until `start` appears
 fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<(Token, bool), TokenizeError> {
     let mut res = Vec::new();
-    let mut str = String::new();
+    let mut str_buf = String::new();
     let start_pos = iter.prev_index();
     let mut closed = false;
     let mut interp = false;
+
     while let Some(next_ch) = iter.next() {
         if next_ch == start {
             closed = true;
@@ -351,8 +355,11 @@ fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<(Token, bool), Token
             interp = true;
             break;
         } else if next_ch == '\\' {
-            res.push(StringFragment::String(str));
-            str = String::new();
+            // Flush the buffer before handling the escape sequence
+            if !str_buf.is_empty() {
+                res.push(StringFragment::String(str_buf.clone()));
+                str_buf.clear();
+            }
             let Some(esc) = iter.next() else {
                 return Err(TokenizeError::UnclosedCharacter(InvalidCharacter {
                     ch: '\\',
@@ -362,31 +369,37 @@ fn tok_str(start: char, iter: &mut VecIter<char>) -> Result<(Token, bool), Token
                     },
                 }));
             };
-            res.push(StringFragment::Char(esc_char(esc, iter)?));
+            res.push(esc_char(esc, iter)?);
+        } else if next_ch.is_ascii() && !next_ch.is_ascii_control() {
+            str_buf.push(next_ch);
         } else {
-            str.push(next_ch);
+            // Flush the buffer before handling the Unicode character
+            if !str_buf.is_empty() {
+                res.push(StringFragment::String(str_buf.clone()));
+                str_buf.clear();
+            }
+            res.push(StringFragment::Unicode(next_ch as u32));
         }
     }
+
     if !closed {
         Err(TokenizeError::UnclosedCharacter(InvalidCharacter {
             ch: start,
             pos: FilePos { start: start_pos, end: start_pos },
         }))
     } else {
-        if str.chars().count() > 0 {
-            res.push(StringFragment::String(str));
+        // Final flush for any remaining characters
+        if !str_buf.is_empty() {
+            res.push(StringFragment::String(str_buf));
         }
-        res.push(StringFragment::Char(0));
+        res.push(StringFragment::Byte(0)); // Null terminator
         Ok((Token::StringLit { value: StringLit { frags: res } }, interp))
     }
 }
 
 /// Builds a char literal until `start` appears
 fn tok_char(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError> {
-    let startpos = FilePos {
-        start: iter.current_index(),
-        end: iter.current_index(),
-    };
+    let start_pos = iter.current_index();
     let value = match iter.next() {
         Some('\\') => {
             let Some(esc) = iter.next() else {
@@ -398,28 +411,98 @@ fn tok_char(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeErro
                     },
                 }));
             };
-            esc_char(esc, iter)?
+            let frag = esc_char(esc, iter)?;
+            match frag {
+                StringFragment::Byte(b) => b,
+                StringFragment::Unicode(_) => {
+                    return Err(TokenizeError::UnicodeInCharLiteral(FilePos {
+                        start: start_pos,
+                        end: iter.current_index(),
+                    }))
+                }
+                _ => unreachable!(), // Should not be possible to get a String fragment here
+            }
         }
-        None => return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { ch: start, pos: startpos })),
-        Some(val) => val as u32,
+        None => {
+            return Err(TokenizeError::UnclosedCharacter(InvalidCharacter {
+                ch: start,
+                pos: FilePos { start: start_pos, end: start_pos },
+            }))
+        }
+        Some(val) => {
+            if !val.is_ascii() {
+                return Err(TokenizeError::NonAsciiCharLiteral(FilePos {
+                    start: start_pos,
+                    end: iter.current_index(),
+                }));
+            }
+            val as u8
+        }
     };
     let Some('\'') = iter.next() else {
-        return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { ch: start, pos: startpos }));
+        return Err(TokenizeError::UnclosedCharacter(InvalidCharacter { ch: start, pos: FilePos { start: start_pos, end: iter.current_index()} }));
     };
     Ok(Token::CharLit { value })
 }
 
-fn esc_char(esc: char, iter: &mut VecIter<char>) -> Result<u32, TokenizeError> {
+fn esc_char(esc: char, iter: &mut VecIter<char>) -> Result<StringFragment, TokenizeError> {
     match esc {
-        'n' => Ok('\n' as u32),
-        'r' => Ok('\r' as u32),
-        't' => Ok('\t' as u32),
-        '\\' => Ok('\\' as u32),
-        '\'' => Ok('\'' as u32),
-        '"' => Ok('"' as u32),
-        '0' => Ok('\0' as u32),
-        _ => Err(TokenizeError::UnclosedCharacter(InvalidCharacter {
-            ch: '\\',
+        'n' => Ok(StringFragment::Byte(b'\n')),
+        'r' => Ok(StringFragment::Byte(b'\r')),
+        't' => Ok(StringFragment::Byte(b'\t')),
+        '\\' => Ok(StringFragment::Byte(b'\\')),
+        '\'' => Ok(StringFragment::Byte(b'\'')),
+        '"' => Ok(StringFragment::Byte(b'"')),
+        '0' => Ok(StringFragment::Byte(b'\0')),
+        'u' => {
+            let start_pos = iter.prev_index();
+            if iter.next() != Some('{') {
+                return Err(TokenizeError::InvalidUnicodeEscape(FilePos { start: start_pos, end: iter.current_index() }));
+            }
+            let mut hex = String::new();
+            let mut closed = false;
+            while let Some(&c) = iter.peek() {
+                if c == '}' {
+                    iter.next(); // consume '}'
+                    closed = true;
+                    break;
+                }
+                if !c.is_ascii_hexdigit() {
+                    return Err(TokenizeError::InvalidCharacter(InvalidCharacter {
+                        ch: c,
+                        pos: FilePos {
+                            start: iter.current_index() + 1,
+                            end: iter.current_index() + 1,
+                        },
+                    }));
+                }
+                hex.push(c);
+                iter.next();
+            }
+
+            if !closed || hex.is_empty() || hex.len() > 6 {
+                return Err(TokenizeError::InvalidUnicodeEscape(FilePos {
+                    start: start_pos,
+                    end: iter.current_index(),
+                }));
+            }
+
+            let code_point = u32::from_str_radix(&hex, 16).map_err(|_| {
+                TokenizeError::InvalidUnicodeEscape(FilePos {
+                    start: start_pos,
+                    end: iter.current_index(),
+                })
+            })?;
+            std::char::from_u32(code_point).ok_or_else(|| {
+                TokenizeError::InvalidUnicodeEscape(FilePos {
+                    start: start_pos,
+                    end: iter.current_index(),
+                })
+            })?;
+            Ok(StringFragment::Unicode(code_point))
+        }
+        _ => Err(TokenizeError::InvalidCharacter(InvalidCharacter {
+            ch: esc,
             pos: FilePos {
                 start: iter.prev_index(),
                 end: iter.prev_index(),

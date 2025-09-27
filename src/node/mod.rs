@@ -284,7 +284,7 @@ pub struct Expr {
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     IntLit(i64),
-    CharLit(u32),
+    CharLit(u8),
     BoolLit(bool),
     Null,
     None,

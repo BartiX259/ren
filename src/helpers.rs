@@ -121,17 +121,9 @@ impl IndentedBuf {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum StringFragment {
     String(String),
-    Char(u32)
+    Byte(u8),
+    Unicode(u32),
 }
-
-// impl StringFragment {
-//     pub fn char_to_string(i: u32) -> String {
-//         match i {
-//             10 => "\\n",
-//             _ => panic!("Unknown character")
-//         }.to_string()
-//     }
-// }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StringLit {
@@ -139,18 +131,41 @@ pub struct StringLit {
 }
 
 impl fmt::Display for StringLit {
+    // CORRECTED a typo here: fmt.Formatter -> fmt::Formatter
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut start = true;
-        for frag in self.frags.iter() {
-            if !start {
-                write!(f, ", ")?;
+        let mut first = true;
+        let mut write_comma = |f: &mut fmt::Formatter<'_>| -> fmt::Result {
+            if first {
+                first = false;
+                Ok(())
             } else {
-                start = false;
+                write!(f, ", ")
             }
+        };
+
+        for frag in &self.frags {
             match frag {
-                StringFragment::String(s) => write!(f, "\"{}\"", s),
-                StringFragment::Char(i) => write!(f, "{}", i),
-            }?
+                StringFragment::String(s) if !s.is_empty() => {
+                    write_comma(f)?;
+                    // Use backticks for NASM strings, escaping any literal backticks.
+                    let escaped_s = s.replace('`', "\\`");
+                    write!(f, "`{}`", escaped_s)?;
+                }
+                StringFragment::Byte(b) => {
+                    write_comma(f)?;
+                    write!(f, "0x{:02X}", b)?;
+                }
+                StringFragment::Unicode(c) => {
+                    if let Some(ch) = std::char::from_u32(*c) {
+                        let mut buf = [0; 4];
+                        for &byte in ch.encode_utf8(&mut buf).as_bytes() {
+                            write_comma(f)?;
+                            write!(f, "0x{:02X}", byte)?;
+                        }
+                    }
+                }
+                _ => {} // Ignore empty String fragments.
+            }
         }
         Ok(())
     }
@@ -162,19 +177,10 @@ impl StringLit {
         for frag in self.frags.iter() {
             match frag {
                 StringFragment::String(s) => res += s.chars().count(),
-                StringFragment::Char(i) => if *i != 0 { res += 1 },
+                StringFragment::Byte(b) => if *b != 0 { res += 1 },
+                StringFragment::Unicode(c) => if *c != 0 { res += std::char::from_u32(*c).map_or(0, |c| c.len_utf8()) },
             }
         }
         res
     }
-    // pub fn to_string(self) -> String {
-    //     let mut res = String::new();
-    //     for frag in self.frags.iter() {
-    //         match frag {
-    //             StringFragment::String(s) => res += s,
-    //             StringFragment::Char(i) => res += StringFragment::char_to_string(*i).as_str(),
-    //         }
-    //     }
-    //     res
-    // }
 }
