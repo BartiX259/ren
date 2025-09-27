@@ -23,11 +23,18 @@ impl FilePos {
             end: locs.get(span.end).unwrap().end,
         }
     }
+    pub fn after_pos_id(locs: &[FilePos], pos_id: usize) -> Self {
+        let mut res = locs.get(pos_id).unwrap().clone();
+        res.start = res.end + 1;
+        res.end = res.end + 1;
+        res
+    }
 }
 
 pub enum Location {
     Span(Span),
     PosId(usize),
+    AfterPosId(usize),
     FilePos(FilePos),
     OpLoc(OpLoc),
 }
@@ -63,6 +70,11 @@ pub fn parse_err(e: ParseError) -> ErrorInfo {
         ParseError::UnexpectedToken(u) => ErrorInfo {
             message: format!("Unexpected token '{}', expected {}.", u.token.to_string(), u.expected),
             location: Location::PosId(u.pos_id),
+            level: "error",
+        },
+        ParseError::ExpectedSemicolon(pos_id) => ErrorInfo {
+            message: "Expected semicolon.".to_string(),
+            location: Location::AfterPosId(pos_id),
             level: "error",
         },
         ParseError::UnexpectedEndOfInput(expected) => ErrorInfo {
@@ -342,6 +354,7 @@ pub fn print_error(path: &String, info: &ErrorInfo, config: &Config) {
         let file_pos = match &info.location {
             Location::Span(span) => FilePos::span(&locs, *span),
             Location::PosId(pos_id) if *pos_id != usize::MAX => FilePos::pos_id(&locs, *pos_id),
+            Location::AfterPosId(pos_id) => FilePos::after_pos_id(&locs, *pos_id),
             Location::FilePos(pos) => pos.clone(),
             Location::OpLoc(op) => FilePos {
                 start: locs.get(op.start_id).unwrap().start,
@@ -361,6 +374,7 @@ pub fn print_error(path: &String, info: &ErrorInfo, config: &Config) {
         match &info.location {
             Location::Span(span) => print_module_err_span(path, *span),
             Location::PosId(pos_id) if *pos_id != usize::MAX => print_module_err_id(path, *pos_id),
+            Location::AfterPosId(pos_id) => print_module_err_after_id(path, *pos_id),
             Location::FilePos(pos) => print_module_err_pos(path, pos.clone()),
             Location::OpLoc(op) => print_module_err_op(path, op.clone()),
             _ => {} // No pretty printing for errors without a specific location
@@ -402,6 +416,12 @@ fn print_module_err_id(module: &String, pos_id: usize) {
     let text = fs::read_to_string(&module).unwrap();
     let (_, locs) = tokenize::tokenize(&text).unwrap();
     print_file_err(&text, module, &FilePos::pos_id(&locs, pos_id));
+}
+
+fn print_module_err_after_id(module: &String, pos_id: usize) {
+    let text = fs::read_to_string(&module).unwrap();
+    let (_, locs) = tokenize::tokenize(&text).unwrap();
+    print_file_err(&text, module, &FilePos::after_pos_id(&locs, pos_id));
 }
 
 fn print_module_err_pos(module: &String, file_pos: FilePos) {

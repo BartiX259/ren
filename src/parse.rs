@@ -30,6 +30,7 @@ pub struct UnexpectedToken {
 #[derive(Debug)]
 pub enum ParseError {
     UnexpectedToken(UnexpectedToken),
+    ExpectedSemicolon(usize),
     UnexpectedEndOfInput(String),
     ImportNotAtStart(usize),
 }
@@ -1218,7 +1219,7 @@ fn check_semi(tokens: &mut VecIter<Token>) -> Result<(), ParseError> {
     if let Token::Semi = tok {
         Ok(())
     } else {
-        Err(unexp(tok, tokens.prev_index(), "';'"))
+        Err(ParseError::ExpectedSemicolon(tokens.prev_index() - 1))
     }
 }
 

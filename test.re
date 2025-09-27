@@ -6,7 +6,7 @@ type k = int;
 
 fn main() {
     let x = list_dir(".");
-    let g = to_json(x);
+    let vvv = 5;
 
-    print(g);
+    print(vvv);
 }
