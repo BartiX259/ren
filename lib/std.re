@@ -27,6 +27,12 @@ pub fn print_help(name: *char, expected: <<char>>) {
 }
 
 pub fn arg_parse(args: <*char>, expected: <<char>>) -> int ? <char> {
+    for a in args {
+        if a[0] == '-' {
+            let ret = "Invalid flag '{a}'.\n";
+            return ?ret;
+        }
+    }
     if len(args) - 1 != len(expected) {
         let ret = "Invalid argument count, expected {len(expected)} argument(s), got {len(args) - 1}.\n";
         return ?ret;
@@ -68,6 +74,29 @@ fn shift_args(argc: *int, argv: **char, start: int, count: int) {
     *argc -= count;
 }
 
+fn single_flag(arg: <char>, expected: char) -> (found: bool, new_flag: <char>) {
+    if len(arg) < 2 {
+        return (found: false, new_flag: arg);
+    }
+    if arg[0] != '-' {
+        return (found: false, new_flag: arg);
+    }
+    let found = false;
+    let new_flag = +"-";
+    for c in arg[1..] {
+        if !is_alpha(c) {
+            print("not alpha {c}\n");
+            return (found: false, new_flag: arg);
+        }
+        if c == expected {
+            found = true;
+        } else {
+            push(&new_flag, c);
+        }
+    }
+    return (found: found, new_flag: new_flag[..]);
+}
+
 pub fn parse_opt<T>(argc: *int, argv: **char, name: <char>, opt: *?T) -> int ? <char> {
     let flag = "--{name}";
     for i in 0..*argc {
@@ -80,6 +109,22 @@ pub fn parse_opt<T>(argc: *int, argv: **char, name: <char>, opt: *?T) -> int ? <
             let res = parse(argv[i+1], (opt as *int + 1) as *T);
             shift_args(argc, argv, i, 2);
             return res;
+        } else {
+            let found, new_flag = single_flag(str(arg), name[0]);
+            if found {
+                *(opt as *int) = 0;
+                if i >= *argc - 1 {
+                    return ?"Optional argument required for '{name}'.\n";
+                }
+                let res = parse(argv[i+1], (opt as *int + 1) as *T);
+                if len(new_flag) > 1 {
+                    let ptr = null_terminate(new_flag);
+                    argv[i] = ptr;
+                } else {
+                    shift_args(argc, argv, i, 2);
+                }
+                return res;
+            }
         }
     }
     *(opt as *int) = 1;
@@ -362,6 +407,10 @@ pub fn find<T>(haystack: <T>, needle: <T>) -> ?int {
     }
 
     return none;
+}
+
+pub fn is_alpha(ch: char) -> bool {
+    return ('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z');
 }
 
 // Checks if a "haystack" slice contains a "needle" slice.

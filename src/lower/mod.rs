@@ -18,6 +18,7 @@ pub fn lower(stmts: Vec<node::Stmt>, ir: &mut HashMap<String, Symbol>) {
 struct Lower<'a> {
     ir: &'a mut HashMap<String, Symbol>,
     cur_salloc: Option<Term>,
+    logical_dest: Option<Term>,
     ret_salloc: Option<Term>,
     salloc_offset: i64,
     cur_block: Option<Block>,
@@ -39,6 +40,7 @@ impl<'a> Lower<'a> {
         Self {
             ir,
             cur_salloc: None,
+            logical_dest: None,
             ret_salloc: None,
             salloc_offset: 0,
             cur_block: None,
@@ -526,9 +528,17 @@ impl<'a> Lower<'a> {
         if bin.is_bool() {
             self.label_count += 1;
             let l = self.label_count;
-            self.stack_count += 1;
-            let s = Term::Stack(self.stack_count);
-            self.push_op(Op::Let { res: s.clone(), term: lhs.clone() }, bin.op.pos_id);
+            let s;
+            let mut dest_owner = true;
+            if let Some(dest) = &self.logical_dest {
+                s = dest.clone();
+                dest_owner = false;
+            } else {
+                self.stack_count += 1;
+                s = Term::Stack(self.stack_count);
+                self.push_op(Op::Let { res: s.clone(), term: lhs.clone() }, bin.op.pos_id);
+                self.logical_dest = Some(s.clone());
+            }
             self.push_op(Op::BeginScope, bin.op.pos_id);
             if bin.op.str == "&&" {
                 self.temp_count += 1;
@@ -559,8 +569,12 @@ impl<'a> Lower<'a> {
                 bin.op.pos_id,
             );
             self.push_op(Op::Label { label: l }, bin.op.pos_id);
+            if dest_owner {
+                self.logical_dest = None;
+            }
             return s;
         }
+
         if bin.is_assign() {
             self.cur_salloc = Some(lhs.clone());
         }

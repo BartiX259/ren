@@ -1,5 +1,6 @@
 import lib/std
 
-fn main() {
-    print("┌ \u{1F600}");
+fn main(list: ?<char>, long: ?<char>) {
+    print(list);
+    print(long);
 }

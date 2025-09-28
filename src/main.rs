@@ -30,6 +30,8 @@ struct Config {
     assembly_only: bool,
     compile_only: bool,
     diagnostics_mode: bool,
+    print_ir_symbols: bool,
+    print_ir: Option<String>
 }
 
 /// Parses command-line arguments into a Config struct.
@@ -42,6 +44,8 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
         assembly_only: false,
         compile_only: false,
         diagnostics_mode: false,
+        print_ir_symbols: false,
+        print_ir: None
     };
 
     // Check for a help flag first
@@ -54,6 +58,8 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
              -c                     Compile and assemble; do not link.\n\
              -v, --verbose          Enable verbose output for debugging.\n\
              --diagnostics          Output errors in a machine-readable format for IDEs.\n\
+             --print-ir-symbols     Print all ir symbols.
+             --print-ir <symbol>    Print the given symbol in the ir.
              -h, --help             Display this help message.",
             args.get(0).unwrap_or(&"compiler".to_string())
         );
@@ -83,6 +89,16 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
             }
             "--diagnostics" => {
                 config.diagnostics_mode = true;
+            }
+            "--print-ir-symbols" => {
+                config.print_ir_symbols = true;
+            }
+            "--print-ir" => {
+                if let Some(val) = args_iter.next() {
+                    config.print_ir = Some(val.clone());
+                } else {
+                    return Err("Expected a function name after '--print-ir' flag.".to_string());
+                }
             }
             _ => {
                 if arg.starts_with('-') {
@@ -384,12 +400,23 @@ fn parse_module(import: &node::Import, config: &Config) -> Result<(Vec<node::Stm
 
 fn gen_module(module: node::Module, mut ir: HashMap<String, ir::Symbol>, config: &Config) -> Result<String, ExitCode> {
     let path = Path::new(&module.path);
+    let display_path = module.path.clone();
     let stem = path.file_stem().unwrap();
     let res_file = format!("{}.S", stem.to_string_lossy());
 
     let processed_stmts = process::process(module);
 
     lower::lower(processed_stmts, &mut ir);
+
+    if config.print_ir_symbols {
+        println!("{}", display_path);
+        println!("{:?}", ir.keys());
+    }
+
+    if let Some(print_ir) = &config.print_ir {
+        println!("{}", display_path);
+        println!("{:?}", ir.get(print_ir));
+    }
 
     let result = match gen::gen(&mut ir) {
         Ok(res) => res,
@@ -423,14 +450,12 @@ fn print_full_error_trace(
             if let Some(gcall) = gcalls.iter().find(|gc| gc.call_site == current_call_site) {
                 eprintln!(); // Add a blank line for readability
 
-                // Format the argument types into a nice string like "(int, *<char>)"
                 let arg_types_str = gcall.arg_types
                     .iter()
                     .map(|t| format!("{}", t)) // Assumes your Type has a good Display impl
                     .collect::<Vec<String>>()
                     .join(", ");
 
-                // Create the new, more descriptive message
                 let message = format!(
                     "Can't call '{}' with ({}).",
                     gcall.display_name,
