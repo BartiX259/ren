@@ -813,29 +813,23 @@ impl<'a> Lower<'a> {
             let Type::Slice { inner } = &un.expr.ty else {
                 unreachable!();
             };
-            let p;
-            let pa;
             let s;
             let len;
-            self.pointer_count += 1;
-            p = Term::Pointer(self.pointer_count);
-            pa = Term::PointerArithmetic(self.pointer_count);
+            let p_offset = if self.cur_salloc.is_some() { self.salloc_offset - 8 } else { 8 };
             if term.is_stack() && !self.is_var(&term) {
-                self.push_op(
-                    Op::Own {
-                        res: p.clone(),
-                        term: term.clone(),
-                        offset: 8,
-                    },
-                    un.op.pos_id,
-                );
                 s = term.clone();
                 self.push_op(Op::BeginScope, un.op.pos_id);
                 self.stack_count += 1;
                 len = Term::Stack(self.stack_count);
-                self.push_op(Op::Let { res: len.clone(), term: term.clone() }, un.op.pos_id);
+                if self.cur_salloc.is_some() {
+                    self.temp_count += 1;
+                    let t = Term::Temp(self.temp_count);
+                    self.push_op(Op::Read { res: t.clone(), ptr: term.clone(), offset: self.salloc_offset - 16, size: 8 }, un.op.pos_id);
+                    self.push_op(Op::Let { res: len.clone(), term: t }, un.op.pos_id);
+                } else {
+                    self.push_op(Op::Let { res: len.clone(), term: term.clone() }, un.op.pos_id);
+                }
             } else {
-                self.push_op(Op::Decl { term: p.clone(), size: 8 }, un.op.pos_id);
                 s = self.make_stack(term.clone(), &Type::Int, un.op.pos_id);
                 self.push_op(Op::BeginScope, un.op.pos_id);
                 len = self.make_stack(term.clone(), &Type::Int, un.op.pos_id);
@@ -863,75 +857,44 @@ impl<'a> Lower<'a> {
                 },
                 un.op.pos_id,
             );
-            if s == term {
-                self.pointer_count += 1;
-                self.push_op(
-                    Op::Let {
-                        res: Term::Pointer(self.pointer_count),
-                        term: Term::Temp(self.temp_count),
-                    },
-                    un.op.pos_id,
-                );
-                self.temp_count += 1;
-                self.push_op(
-                    Op::Read {
-                        res: Term::Temp(self.temp_count),
-                        ptr: term.clone(),
-                        offset: 8,
-                        size: 8,
-                    },
-                    un.op.pos_id,
-                );
-                self.push_op(
-                    Op::Copy {
-                        from: Term::Temp(self.temp_count),
-                        to: Term::Pointer(self.pointer_count),
-                        size: len.clone(),
-                    },
-                    un.op.pos_id,
-                );
-                self.push_op(
-                    Op::Store {
-                        res: None,
-                        ptr: pa,
-                        offset: 0,
-                        op: "=".to_string(),
-                        term: Term::Pointer(self.pointer_count),
-                        size: 8,
-                    },
-                    un.op.pos_id,
-                );
-            } else {
-                self.push_op(
-                    Op::Store {
-                        res: None,
-                        ptr: pa,
-                        offset: 0,
-                        op: "=".to_string(),
-                        term: Term::Temp(self.temp_count),
-                        size: 8,
-                    },
-                    un.op.pos_id,
-                );
-                self.temp_count += 1;
-                self.push_op(
-                    Op::Read {
-                        res: Term::Temp(self.temp_count),
-                        ptr: term.clone(),
-                        offset: 8,
-                        size: 8,
-                    },
-                    un.op.pos_id,
-                );
-                self.push_op(
-                    Op::Copy {
-                        from: Term::Temp(self.temp_count),
-                        to: p.clone(),
-                        size: len.clone(),
-                    },
-                    un.op.pos_id,
-                );
-            }
+            self.pointer_count += 1;
+            self.push_op(
+                Op::Let {
+                    res: Term::Pointer(self.pointer_count),
+                    term: Term::Temp(self.temp_count),
+                },
+                un.op.pos_id,
+            );
+            self.temp_count += 1;
+            self.push_op(
+                Op::Read {
+                    res: Term::Temp(self.temp_count),
+                    ptr: term.clone(),
+                    offset: p_offset,
+                    size: 8,
+                },
+                un.op.pos_id,
+            );
+            self.push_op(
+                Op::Copy {
+                    from: Term::Temp(self.temp_count),
+                    to: Term::Pointer(self.pointer_count),
+                    size: len.clone(),
+                },
+                un.op.pos_id,
+            );
+            self.push_op(
+                Op::Store {
+                    res: None,
+                    ptr: term.clone(),
+                    offset: p_offset,
+                    op: "=".to_string(),
+                    term: Term::Pointer(self.pointer_count),
+                    size: 8,
+                },
+                un.op.pos_id,
+            );
+
             self.push_op(Op::EndScope, un.op.pos_id);
             return s;
         }
