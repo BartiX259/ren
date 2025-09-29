@@ -149,14 +149,32 @@ fn parse_expr(tokens: &mut VecIter<Token>, min_prec: u8) -> Result<node::Expr, P
                 return Err(unexp(member_tok, tokens.prev_index(), "a member identifier"));
             };
 
-            let rhs = expr(
-                tokens.prev_index(),
-                tokens.prev_index(),
-                node::ExprKind::Variable(PosStr {
-                    str: member_name,
-                    pos_id: tokens.prev_index(),
-                }),
-            );
+            let rhs;
+            if let Some(Token::OpenParen) = tokens.peek() {
+                tokens.next();
+                let start = tokens.prev_index();
+                let (args, _) = parse_args(tokens, Token::CloseParen, usize::MAX)?;
+                rhs = expr(
+                    start,
+                    tokens.prev_index(),
+                    node::ExprKind::Call(node::Call {
+                        name: PosStr {
+                            str: member_name,
+                            pos_id: start,
+                        },
+                        args
+                    }),
+                )
+            } else {
+                rhs = expr(
+                    tokens.prev_index(),
+                    tokens.prev_index(),
+                    node::ExprKind::Variable(PosStr {
+                        str: member_name,
+                        pos_id: tokens.prev_index(),
+                    }),
+                );
+            }
 
             root = expr(
                 start,
@@ -556,7 +574,10 @@ fn parse_let(tokens: &mut VecIter<Token>) -> Result<node::Stmt, ParseError> {
         let tok = check_none(tokens, "'else'")?;
         return Err(unexp(tok, tokens.prev_index(), "'else'"));
     } else {
-        res = node::Stmt::Let(node::Let { capture: node::Capture::Single(unpack.lhs), expr: unpack.expr });
+        res = node::Stmt::Let(node::Let {
+            capture: node::Capture::Single(unpack.lhs),
+            expr: unpack.expr,
+        });
     }
     check_semi(tokens)?;
     return Ok(res);

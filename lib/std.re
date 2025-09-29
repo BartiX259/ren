@@ -5,12 +5,17 @@ syscall 5: fstat(int, *any) -> int;
 syscall 6: close(int) -> int;
 syscall 9: mmap(*any, int, int, int, int, int) -> *any;
 syscall 10: munmap(*any, int);
+syscall 57: fork() -> int;
+syscall 59: execve(*char, **char, **char) -> int;
+syscall 61: wait4(int, *int, int, *any) -> int;
 syscall 82: rename(*char, *char) -> int;
 syscall 83: mkdir(*char, int) -> int;
 syscall 87: unlink(*char) -> int;
 syscall 84: rmdir(*char) -> int;
 syscall 217: getdents64(int, *any, int) -> int;
 pub syscall 60: exit(int);
+
+// -- ARG PARSE --
 
 pub fn print_help(name: *char, expected: <<char>>) {
     print("Usage: {name} ");
@@ -40,9 +45,8 @@ pub fn arg_parse(args: <*char>, expected: <<char>>) -> int ? <char> {
     return 0;
 }
 
-pub fn parse(str: *char, res: *int) -> int ? <char> {
+pub fn parse(slice: <char>, res: *int) -> int ? <char> {
     *res = 0;
-    let slice = str(str);
     let mult = 1;
     let i = len(slice);
     loop {
@@ -60,10 +64,19 @@ pub fn parse(str: *char, res: *int) -> int ? <char> {
     return 0;
 }
 
-pub fn parse(str: *char, res: *<char>) -> int ? <char> {
-    let slice = str(str);
+pub fn parse(slice: <char>, res: *<char>) -> int ? <char> {
     copy(&slice, res, 16);
     return 0;
+}
+
+pub fn parse(str: *char, res: *int) -> int ? <char> {
+    let slice = str(str);
+    return parse(slice, res);
+}
+
+pub fn parse(str: *char, res: *<char>) -> int ? <char> {
+    let slice = str(str);
+    return parse(slice, res);
 }
 
 fn shift_args(argc: *int, argv: **char, start: int, count: int) {
@@ -175,6 +188,8 @@ pub fn cmp(l: *char, r: <char>) -> bool {
     return false;
 }
 
+// -- PRINTING --
+
 fn int2str(x: int, buf: *char) -> *char {
     if x < 10 {
         *buf = '0' + x;
@@ -225,6 +240,10 @@ pub fn str(x: *char) -> <char> {
     return (len, x);
 }
 
+pub fn str(x: *any) -> <char> {
+    return str(x as int);
+}
+
 pub fn str<T>(x: ?T) -> <char> {
     if let s = x {
         return str(s);
@@ -233,7 +252,7 @@ pub fn str<T>(x: ?T) -> <char> {
     }
 }
 
-pub fn str<T, K>(x: T ? K) -> <char> {
+pub fn str<T, E>(x: T ? E) -> <char> {
     let ok = x else err {
         return str(err);
     };
@@ -242,9 +261,10 @@ pub fn str<T, K>(x: T ? K) -> <char> {
 
 pub fn str<T>(x: T) -> <char> {
     decl s: [char];
-    match <K> T {
+    match <K, V> T {
         struct { push(&s, '('); }
         tuple { push(&s, '('); }
+        {K: V} { push(&s, '{'); }
         K { push(&s, '['); }
     }
     let start = true;
@@ -254,15 +274,16 @@ pub fn str<T>(x: T) -> <char> {
         } else {
             push(&s, ", ");
         }
-        match <K> T {
+        match <K, V> T {
             struct { push(&s, "{field.name}: {field.value}"); }
+            {K: V} { push(&s, "{field.key}: {field.value}"); }
             K { push(&s, str(field)); }
         }
-
     }
-    match <K> T {
+    match <K, V> T {
         struct { push(&s, ')'); }
         tuple { push(&s, ')'); }
+        {K: V} { push(&s, '}'); }
         K { push(&s, ']'); }
     }
     return s;
@@ -298,6 +319,8 @@ pub fn assert(condition: bool, message: <char>) {
         exit(1);
     }
 }
+
+// -- LISTS AND SLICES --
 
 pub fn push<T>(list: *[T], el: T) {
 	let ptr = *(list as **any + 1);
@@ -559,6 +582,8 @@ pub fn to_uppercase(s: <char>) -> [char] {
     return builder;
 }
 
+// -- HASHMAP ---
+
 pub fn hash(x: int) -> int {
     let hash = 14695981039346656037;
     for i in 0..8 {
@@ -586,7 +611,7 @@ pub fn init_map<K, V>(fields: <(K, V)>) -> {K: V} {
         *f_ptr = 1;
         *((f_ptr + 1) as *(K, V)) = f;
     }
-    return ptr;
+    return ptr as {K: V};
 }
 
 pub fn get<K, V>(map: {K: V}, key: K) -> ?V {
@@ -601,7 +626,7 @@ pub fn get<K, V>(map: {K: V}, key: K) -> ?V {
         if *f_ptr == 0 {
             return none;
         }
-        if *f_ptr == 1 && cmp(*((f_ptr + 1) as *K), key) {
+        if *f_ptr == 1 && cmp(*((f_ptr + 1) as *any as *K), key) {
             break;
         }
         i = (i+1) % capacity;
@@ -610,11 +635,11 @@ pub fn get<K, V>(map: {K: V}, key: K) -> ?V {
         }
         f_ptr = (map as *(int, K, V) + i) as *int;
     }
-    return *((f_ptr as *(int, K) + 1) as *V);
+    return *((f_ptr as *(int, K) + 1) as *any as *V);
 }
 
 pub fn insert<K, V>(map_ref: *{K: V}, key: K, value: V) {
-    if *map_ref == null {
+    if *(map_ref as **any) == null {
         *map_ref = init_map((0, null) as <(K, V)>);
     }
     let map = *map_ref;
@@ -735,6 +760,8 @@ pub fn iter<K, V>(map: {K: V}) -> [(key: K, value: V)] {
 
     return res;
 }
+
+// --- FILESYSTEM ---
 
 pub fn null_terminate(s: <char>) -> *char {
     let new = alloc(len(s) + 1) as *char;
@@ -932,6 +959,75 @@ pub fn list_dir(path: <char>) -> [<char>] ? <char> {
     close(fd);
     return entries;
 }
+
+// --- PROCESS ---
+
+pub fn run(command: <char>, argv: <<char>>) -> int ? <char> {
+    let pid = fork();
+
+    if pid < 0 {
+        return ?"Failed to fork process.";
+    }
+
+    if pid == 0 {
+        // --- This code runs in the CHILD process ---
+
+        // We allocate space for the pointers from argv plus one for the null terminator.
+        let exec_argv = alloc((len(argv) + 1) * sizeof(*char)) as **char;
+        
+        // Iterate through the user-provided argument slices, null-terminate each one,
+        for i in 0..len(argv) {
+            exec_argv[i] = null_terminate(argv[i]);
+        }
+        exec_argv[len(argv)] = null; // The array must end with a null pointer.
+
+        // We'll pass a null environment pointer for simplicity.
+        let envp = null as **char;
+
+        // Convert the command path to a null-terminated string for the syscall.
+        let nt_command = null_terminate(command);
+
+        // execve replaces the current process image with a new one.
+        // If it succeeds, it never returns.
+        execve(nt_command, exec_argv, envp);
+
+        // If execve returns, it means an error occurred.
+        eprint("execve failed\n");
+        exit(127); // Exit with a standard code indicating command execution failure.
+    } else {
+        // --- This code runs in the PARENT process ---
+
+        // Allocate memory to store the exit status from wait4.
+        let status_ptr = alloc(sizeof(int)) as *int;
+
+        // wait4 waits for a child process to change state (e.g., terminate).
+        let wait_res = wait4(pid, status_ptr, 0, null);
+
+        if wait_res < 0 {
+            return ?"wait4 failed while waiting for child process.";
+        }
+
+        // The integer returned by wait4 contains encoded status information.
+        // We need to decode it to get the actual exit code.
+        let status = *status_ptr;
+        let exit_code = 0;
+
+        // If the low byte is 0, the process exited normally.
+        if (status & 0xff) == 0 {
+            // The actual exit code is in the second byte.
+            exit_code = (status >> 8) & 0xff;
+        } else {
+            // The process was terminated by a signal. The signal number is in the low 7 bits.
+            // By convention, the exit code is 128 + signal number.
+            let signal_num = status & 0x7f;
+            exit_code = 128 + signal_num;
+        }
+
+        return exit_code;
+    }
+}
+
+// --- GC ---
 
 let SPACE_SIZE = 20;
 

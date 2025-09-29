@@ -1584,7 +1584,7 @@ impl<'a> Lower<'a> {
                         0,
                     );
                     self.var_map.insert(p.str.clone(), Term::Stack(self.stack_count));
-                    offset += t.size() as i64;
+                    offset += t.aligned_size() as i64;
                 }
             }
             Type::Struct(map) => {
@@ -1916,7 +1916,7 @@ impl<'a> Lower<'a> {
                 },
                 r#for.pos_id,
             );
-            offset += ty.size() as i64;
+            offset += ty.aligned_size() as i64;
             self.push_op(
                 Op::Copy {
                     from,

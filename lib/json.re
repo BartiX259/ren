@@ -58,26 +58,6 @@ fn to_json_recursive<T>(value: T, builder: *[char]) {
                 push(builder, "null");
             }
         }
-        [K] {
-            push(builder, '[');
-            let first = true;
-            for element in value {
-                if !first { push(builder, ','); }
-                to_json_recursive(element, builder);
-                first = false;
-            }
-            push(builder, ']');
-        }
-        <K> {
-            push(builder, '[');
-            let first = true;
-            for element in value {
-                if !first { push(builder, ','); }
-                to_json_recursive(element, builder);
-                first = false;
-            }
-            push(builder, ']');
-        }
         {K: V} {
             push(builder, '{');
             let first = true;
@@ -102,6 +82,16 @@ fn to_json_recursive<T>(value: T, builder: *[char]) {
                 first = false;
             }
             push(builder, '}');
+        }
+        K {
+            push(builder, '[');
+            let first = true;
+            for element in value {
+                if !first { push(builder, ','); }
+                to_json_recursive(element, builder);
+                first = false;
+            }
+            push(builder, ']');
         }
     }
 }
@@ -336,7 +326,7 @@ fn parse_object_into_hashmap<K, V>(p: *ParserState, out: *{K: V}) -> int ? <char
 
         // 2. We need to convert the string key into the target type K.
         decl map_key: K;
-        parse(json_key_str, &map_key);
+        parse(json_key_str, &map_key)?;
 
         // 3. Parse the value.
         decl value: V;

@@ -245,7 +245,8 @@ fn main() -> ExitCode {
         }
 
         let drained: Vec<_> = unresolved.drain(..).collect();
-        let before = generic_calls.clone();
+
+        let before_calls = generic_calls.clone();
 
         for (module, syms) in drained {
             let path = module.path.clone();
@@ -268,14 +269,37 @@ fn main() -> ExitCode {
 
         if generic_calls.is_empty() {
             break;
-        // The new calls discovered by `resolve` are now in `generic_calls`.
-        // Add them to the master history list for the next iteration.
-        } else if before == generic_calls {
-            panic!("Compiler Error: No progress made on resolving generic calls. Aborting. {:?}", generic_calls);
-        } else {
-            all_generic_calls.extend(generic_calls.iter().cloned());
-            unresolved = resolved.drain(..).collect();
         }
+
+        let no_progress = if before_calls.len() == generic_calls.len() {
+            before_calls.iter().all(|before_call| {
+                generic_calls.iter().any(|after_call| {
+                    before_call.base_name == after_call.base_name 
+                    && before_call.type_map == after_call.type_map
+                })
+            })
+        } else {
+            // Lengths are different, so progress was definitely made.
+            false
+        };
+        
+        // 3. If no progress was made, we've detected the infinite loop.
+        if no_progress {
+            eprintln!("Compiler Error: Circular dependency detected in generic instantiation.");
+            eprintln!("The following generic calls are being generated repeatedly:");
+            for call in generic_calls.iter() {
+                let type_map_str = call.type_map.iter()
+                    .map(|(k, v)| format!("{} = {}", k, v))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!("  - {}<{}> at {:?}", call.display_name, type_map_str, call.call_site);
+            }
+            eprintln!("\nThis is likely caused by a generic function recursively calling itself.");
+            return ExitCode::from(1);
+        }
+
+        all_generic_calls.extend(generic_calls.iter().cloned());
+        unresolved = resolved.drain(..).collect();
     }
 
     for (module, syms) in resolved {

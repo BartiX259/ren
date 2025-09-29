@@ -1,5 +1,6 @@
 Compiler features:
 - Custom iterators
+- Use 'cmp' implicitly
 - Floats (?)
 - if let {} else err {} (?)
 - Improve arg parsing message

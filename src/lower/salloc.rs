@@ -39,8 +39,10 @@ impl<'a> Lower<'a> {
         };
         let size = inner.size();
         let inner_salloc = inner.salloc();
+        let mut is_salloc = true;
         if let Some(p) = &self.cur_salloc {
             ptr = p.clone();
+            is_salloc = false;
         } else {
             self.stack_count += 1;
             ptr = Term::Stack(self.stack_count);
@@ -64,14 +66,14 @@ impl<'a> Lower<'a> {
                         offset: self.salloc_offset,
                         op: "=".to_string(),
                         term: r,
-                        size: expr.ty.size(),
+                        size,
                     },
                     arr_lit.pos_id,
                 );
                 self.salloc_offset += size as i64;
             }
         }
-        if Some(ptr.clone()) == self.cur_salloc {
+        if is_salloc {
             self.cur_salloc = None;
             self.salloc_offset = 0;
         }
@@ -169,7 +171,7 @@ impl<'a> Lower<'a> {
                         offset: self.salloc_offset,
                         op: "=".to_string(),
                         term: r,
-                        size: expr.ty.size(),
+                        size: size,
                     },
                     arr_lit.pos_id,
                 );

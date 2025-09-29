@@ -290,11 +290,45 @@ fn tok_word(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeErro
     }
     Ok(Token::Word { value: word })
 }
-/// Builds a number literal token starting with the given character.
-/// Ensures all characters in the word are digits.
+
+/// Builds a number literal token, supporting both decimal and hexadecimal formats.
+/// - Decimal numbers are sequences of digits (e.g., 123).
+/// - Hexadecimal numbers must start with "0x" followed by hex digits (0-9, a-f, A-F).
 fn tok_num(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError> {
     let mut word = String::new();
-    let st = iter.prev_index();
+    let st = iter.current_index();
+
+    // Check for hexadecimal prefix "0x"
+    if start == '0' {
+        if let Some('x' | 'X') = iter.peek() {
+            iter.next(); // Consume the 'x' or 'X'
+
+            // Read all subsequent hexadecimal digits
+            while let Some(&next_ch) = iter.peek() {
+                if next_ch.is_ascii_hexdigit() {
+                    word.push(next_ch);
+                    iter.next(); // Consume the hex digit
+                } else {
+                    break; // End of the hex number
+                }
+            }
+
+            // After "0x", we must have at least one hex digit
+            if word.is_empty() {
+                return Err(TokenizeError::InvalidNumberCharacter(InvalidCharacter {
+                    ch: iter.peek().copied().unwrap_or(' '),
+                    pos: FilePos { start: st, end: iter.current_index() + 1 },
+                }));
+            }
+
+            // Parse the hexadecimal string into a number
+            let value = i64::from_str_radix(&word, 16).unwrap();
+            return Ok(Token::IntLit { value });
+        }
+    }
+
+    // --- Fallback to Decimal Parsing ---
+    // If it's not a hex number, use the original logic for decimal numbers.
     word.push(start);
 
     while let Some(&next_ch) = iter.peek() {
@@ -302,14 +336,17 @@ fn tok_num(start: char, iter: &mut VecIter<char>) -> Result<Token, TokenizeError
             word.push(next_ch);
             iter.next(); // Consume the character
         } else if next_ch.is_alphabetic() {
+            // Invalid character in a decimal number
             return Err(TokenizeError::InvalidNumberCharacter(InvalidCharacter {
                 ch: next_ch,
-                pos: FilePos { start: st, end: iter.current_index() },
+                pos: FilePos { start: st, end: iter.current_index() + 1 },
             }));
         } else {
             break;
         }
     }
+    
+    // Parse the decimal string into a number
     Ok(Token::IntLit {
         value: word.parse::<i64>().or_else(|_| word.parse::<u64>().map(|u| i64::from_ne_bytes(u.to_ne_bytes()))).unwrap(),
     })
@@ -453,6 +490,8 @@ fn esc_char(esc: char, iter: &mut VecIter<char>) -> Result<StringFragment, Token
         '\\' => Ok(StringFragment::Byte(b'\\')),
         '\'' => Ok(StringFragment::Byte(b'\'')),
         '"' => Ok(StringFragment::Byte(b'"')),
+        '{' => Ok(StringFragment::Byte(b'{')),
+        '}' => Ok(StringFragment::Byte(b'}')),
         '0' => Ok(StringFragment::Byte(b'\0')),
         'u' => {
             let start_pos = iter.prev_index();
@@ -504,8 +543,8 @@ fn esc_char(esc: char, iter: &mut VecIter<char>) -> Result<StringFragment, Token
         _ => Err(TokenizeError::InvalidCharacter(InvalidCharacter {
             ch: esc,
             pos: FilePos {
-                start: iter.prev_index(),
-                end: iter.prev_index(),
+                start: iter.current_index(),
+                end: iter.current_index(),
             },
         })),
     }

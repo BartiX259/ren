@@ -91,9 +91,14 @@ pub fn resolve(
                         new_decl.name.str = gcall.resolved_name.clone();
                         val.hoist_func_with_types(&mut new_decl, ty, types, false, is_public)?;
 
-                        val.generic_call_stack.push(call_loc.clone());
+                        val.generic_call_stack.push(GenericCallFrame {
+                            call_site: call_loc.clone(),
+                            base_name: gcall.base_name.clone(),
+                            type_map: gcall.type_map.clone(),
+                            resolved_name: gcall.resolved_name.clone(),
+                        });
                         let result = val.r#fn(&mut new_decl);
-                        val.generic_call_stack.pop(); // Always pop after the call
+                        val.generic_call_stack.pop();
                         if let Err(e) = result {
                             return Err(SemanticError::GenericInstantiationError {
                                 cause: Box::new(e),
@@ -215,6 +220,14 @@ pub struct GenericCall {
     pub arg_types: Vec<Type>,
 }
 
+#[derive(Debug, Clone)]
+pub struct GenericCallFrame {
+    pub call_site: SourceLocation,
+    pub base_name: String,
+    pub type_map: HashMap<String, Type>,
+    pub resolved_name: String,
+}
+
 #[derive(Debug)]
 pub enum SemanticError {
     InvalidType(Span),
@@ -278,7 +291,7 @@ struct Validate {
     cur_ret: Type,
     cur_generics: Vec<String>,
     loop_count: usize,
-    generic_call_stack: Vec<SourceLocation>,
+    generic_call_stack: Vec<GenericCallFrame>,
 }
 
 impl Validate {
@@ -339,7 +352,7 @@ impl Validate {
             node::ExprKind::CharLit(_) => Ok(Type::Char),
             node::ExprKind::BoolLit(_) => Ok(Type::Bool),
             node::ExprKind::Null => Ok(Type::Pointer(Box::new(Type::Any))),
-            node::ExprKind::None => Ok(Type::Option(Box::new(Type::Int))),
+            node::ExprKind::None => Ok(Type::Option(Box::new(Type::Any))),
             node::ExprKind::ArrLit(arr_lit) => self.expr_list(&mut arr_lit.exprs, arr_lit.pos_id).map(|res| Type::Array {
                 inner: Box::new(res.0),
                 length: res.1,
@@ -398,7 +411,6 @@ impl Validate {
                         _ => Err(SemanticError::UndeclaredSymbol(pos_str.clone())),
                     }
                 } else if let Some(sigs) = self.fn_map.get(&pos_str.str) {
-                    println!("{:?}", sigs);
                     let name_dot = format!("{}.", pos_str.str);
                     if sigs.len() > 1 {
                         Err(SemanticError::FnMultipleDefs(pos_str.clone()))
@@ -430,7 +442,7 @@ impl Validate {
             node::ExprKind::TypeCast(cast) => {
                 let from = self.expr(&mut cast.expr)?;
                 let to = self.r#type(&cast.r#type, false)?;
-                Self::type_cast(from, to, expr.span)
+                Self::type_cast(from, to, expr.span, true)
             }
         };
         if let Ok(ty) = &res {
@@ -709,7 +721,7 @@ impl Validate {
             let span = expr.span;
             let ty = self.expr(expr)?;
             if self.cur_ret != ty {
-                Self::type_cast(ty, self.cur_ret.clone(), span)?;
+                Self::type_cast(ty, self.cur_ret.clone(), span, false)?;
                 expr.kind = node::ExprKind::TypeCast(node::TypeCast {
                     r#type: Self::node_type(span),
                     expr: Box::new(expr.clone()),
@@ -901,7 +913,7 @@ impl Validate {
                 if ty1 == ty2 {
                     Ok(Type::Bool)
                 } else {
-                    if let Ok(ty) = Self::type_cast(ty1.clone(), ty2.clone(), bin.lhs.span) {
+                    if let Ok(ty) = Self::type_cast(ty1.clone(), ty2.clone(), bin.lhs.span, false) {
                         bin.lhs.kind = ExprKind::TypeCast(node::TypeCast {
                             r#type: Self::node_type(bin.lhs.span),
                             expr: bin.lhs.clone(),
@@ -909,7 +921,7 @@ impl Validate {
                         bin.lhs.ty = ty;
                         return Ok(Type::Bool);
                     }
-                    if let Ok(ty) = Self::type_cast(ty2.clone(), ty1.clone(), bin.rhs.span) {
+                    if let Ok(ty) = Self::type_cast(ty2.clone(), ty1.clone(), bin.rhs.span, false) {
                         bin.rhs.kind = ExprKind::TypeCast(node::TypeCast {
                             r#type: Self::node_type(bin.rhs.span),
                             expr: bin.rhs.clone(),
@@ -929,7 +941,7 @@ impl Validate {
                 if ty1 == ty2 {
                     Ok(ty1)
                 } else {
-                    if let Ok(ty) = Self::type_cast(ty2.clone(), ty1.clone(), bin.rhs.span) {
+                    if let Ok(ty) = Self::type_cast(ty2.clone(), ty1.clone(), bin.rhs.span, false) {
                         bin.rhs.kind = ExprKind::TypeCast(node::TypeCast {
                             r#type: Self::node_type(bin.rhs.span),
                             expr: bin.rhs.clone(),
@@ -1086,7 +1098,7 @@ impl Validate {
             "?" => {
                 if let Type::Result(_, err) = &self.cur_ret {
                     if ty != **err {
-                        Self::type_cast(ty.clone(), *err.clone(), span)?;
+                        Self::type_cast(ty.clone(), *err.clone(), span, false)?;
                         un.expr.ty = *err.clone();
                         un.expr.kind = node::ExprKind::TypeCast(node::TypeCast {
                             r#type: Self::node_type(span),
@@ -1185,7 +1197,7 @@ impl Validate {
         };
         let ty2 = self.expr(&mut r#else.else_expr)?;
         if ty != ty2 {
-            Self::type_cast(ty2, ty.clone(), r#else.else_expr.span)?;
+            Self::type_cast(ty2, ty.clone(), r#else.else_expr.span, false)?;
             r#else.else_expr.kind = node::ExprKind::TypeCast(node::TypeCast {
                 r#type: Self::node_type(r#else.else_expr.span),
                 expr: r#else.else_expr.clone(),
@@ -1201,7 +1213,7 @@ impl Validate {
             if map.contains_key(&node_name.str) {
                 return Err(SemanticError::SymbolExists(node_name.clone()));
             }
-            let add = ty.size();
+            let add = ty.aligned_size();
             map.insert(node_name.str.clone(), (ty, i));
             i += add;
         }
@@ -1271,7 +1283,7 @@ impl Validate {
                             continue;
                         }
 
-                        if Self::type_cast(arg_type.clone(), substituted_param_ty.clone(), span).is_ok() {
+                        if Self::type_cast(arg_type.clone(), substituted_param_ty.clone(), span, false).is_ok() {
                             // A cast is possible. Plan to insert a cast node.
                             cast_info.push((i, substituted_param_ty));
                         } else {
@@ -1307,6 +1319,10 @@ impl Validate {
                 s = format!("{}.{}", s, id);
                 if !generics.is_empty() {
                     let mut found = false;
+                    if let Some(frame) = self.generic_call_stack.iter().find(|frame| frame.base_name == s && frame.type_map == generics) {
+                        call = frame.resolved_name.clone();
+                        found = true;
+                    }
                     for gcall in self.gcalls.iter() {
                         if gcall.base_name == s && gcall.type_map == generics {
                             call = gcall.resolved_name.clone();
@@ -1322,7 +1338,7 @@ impl Validate {
                                     span,
                                 };
                                 let resolved_name = format!("{}.{}", s, id);
-                                let parent_call_site = self.generic_call_stack.last().cloned();
+                                let parent_call_site = self.generic_call_stack.last().map(|frame| frame.call_site.clone());
 
                                 self.gcalls.push(GenericCall {
                                     display_name: func.to_string(),
@@ -1560,7 +1576,7 @@ impl Validate {
                         map.insert(node_name.str.clone(), (ty, i));
                         i += 1;
                     } else {
-                        let add = ty.size();
+                        let add = ty.aligned_size();
                         map.insert(node_name.str.clone(), (ty, i));
                         i += add;
                     }
@@ -1589,9 +1605,10 @@ impl Validate {
         }
     }
 
-    fn type_cast(from: Type, to: Type, span: Span) -> Result<Type, SemanticError> {
+    fn type_cast(from: Type, to: Type, span: Span, explicit: bool) -> Result<Type, SemanticError> {
         match (&from, &to) {
-            (Type::List { inner }, Type::Pointer(i)) | (Type::List { inner }, Type::Slice { inner: i }) | (Type::Array { inner, .. }, Type::Slice { inner: i }) if inner == i => (),
+            (Type::List { inner }, Type::Pointer(i)) if inner == i && explicit => (),
+            (Type::List { inner }, Type::Slice { inner: i }) | (Type::Array { inner, .. }, Type::Slice { inner: i }) if inner == i => (),
             (Type::Int, Type::Char) | (Type::Char, Type::Int) => (),
             (Type::Struct(s1), Type::Struct(s2)) => {
                 for (n2, (t2, _)) in s2.iter() {
@@ -1647,29 +1664,42 @@ impl Validate {
             //         return Err(SemanticError::InvalidCast(span, from, to));
             //     }
             // }
-            (Type::Pointer(_), Type::Pointer(_)) => (),
-            (Type::Slice { inner }, Type::Pointer(p)) => {
+            (Type::Pointer(p1), Type::Pointer(p2)) => {
+                if !explicit {
+                    if !( 
+                        **p1 == Type::Any || **p2 == Type::Any ||
+                        p1 == p2
+                    ) {
+                        return Err(SemanticError::InvalidCast(span, from, to));
+                    }
+                }
+            }
+            (Type::Slice { inner }, Type::Pointer(p)) if explicit => {
                 if inner != p {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
-            (Type::Pointer(_), Type::Int) => (),
+            (Type::Pointer(_), Type::Int) if explicit => (),
             (ty, Type::Result(ok, _)) => {
                 if *ty != **ok {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
-            (Type::Pointer(p), Type::HashMap { .. }) => {
+            (Type::Pointer(p), Type::HashMap { .. }) if explicit => {
                 if let Type::HashMap { .. } = **p {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
-            (Type::HashMap { .. }, Type::Pointer(p)) => {
+            (Type::HashMap { .. }, Type::Pointer(p)) if explicit => {
                 if let Type::HashMap { .. } = **p {
                     return Err(SemanticError::InvalidCast(span, from, to));
                 }
             }
-            (Type::Option(_), Type::Option(_)) => (),
+            (Type::Option(o), Type::Option(_)) => {
+                if !explicit && **o != Type::Any {
+                    return Err(SemanticError::InvalidCast(span, from, to));
+                } 
+            }
             (ty, Type::Option(opt)) => {
                 if *ty != **opt {
                     return Err(SemanticError::InvalidCast(span, from, to));
@@ -1769,7 +1799,7 @@ impl Validate {
             other => {
                 let inner = other.inner(1).clone();
                 let expected = Type::Slice { inner: Box::new(inner.clone()) };
-                if Self::type_cast(other.clone(), expected.clone(), r#for.expr.span).is_ok() {
+                if Self::type_cast(other.clone(), expected.clone(), r#for.expr.span, false).is_ok() {
                     r#for.expr.kind = node::ExprKind::TypeCast(node::TypeCast {
                         r#type: Self::node_type(r#for.expr.span),
                         expr: Box::new(r#for.expr.clone()),
