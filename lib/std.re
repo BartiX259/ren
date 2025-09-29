@@ -409,6 +409,70 @@ pub fn find<T>(haystack: <T>, needle: <T>) -> ?int {
     return none;
 }
 
+pub fn map<T, U>(sl: <T>, f: fn(T)->U) -> <U> {
+    let new_sl = (len(sl), alloc(len(sl) * sizeof(U))) as [U];
+    for i in 0..len(sl) {
+        new_sl[i] = f(sl[i]);
+    }
+    return new_sl;
+}
+
+pub fn filter<T>(sl: <T>, f: fn(T)->bool) -> <T> {
+    decl new_sl: [T];
+    for s in sl {
+        if f(s) {
+            push(&new_sl, s);
+        }
+    }
+    return new_sl;
+}
+
+pub fn reduce<T, U>(sl: <T>, f: fn(U, T) -> U, initial: U) -> U {
+    let accumulator = initial;
+    for item in sl {
+        accumulator = f(accumulator, item);
+    }
+    return accumulator;
+}
+
+pub fn some<T>(sl: <T>, f: fn(T) -> bool) -> bool {
+    for item in sl {
+        if f(item) {
+            return true;
+        }
+    }
+    return false;
+}
+
+pub fn all<T>(sl: <T>, f: fn(T) -> bool) -> bool {
+    for item in sl {
+        if !f(item) {
+            return false;
+        }
+    }
+    return true;
+}
+
+pub fn sum(sl: <int>) -> int {
+    let s = 0;
+    for item in sl {
+        s += item;
+    }
+    return s;
+}
+
+pub fn zip<T, U>(sl1: <T>, sl2: <U>) -> <(T, U)> {
+    let min_len = len(sl1);
+    if len(sl2) < min_len {
+        min_len = len(sl2);
+    }
+    let new_sl = (min_len, alloc(min_len * sizeof((T, U)))) as [(T, U)];
+    for i in 0..min_len {
+        new_sl[i] = (sl1[i], sl2[i]);
+    }
+    return new_sl;
+}
+
 pub fn is_alpha(ch: char) -> bool {
     return ('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z');
 }
@@ -869,23 +933,19 @@ pub fn list_dir(path: <char>) -> [<char>] ? <char> {
     return entries;
 }
 
-
-let CARD_SIZE = 8; 
 let SPACE_SIZE = 20;
 
 decl allocator: (
     base: *any,
     size: int,
     offset: int,
-    stack: *any,
-    bibop_table: *char
+    stack: *any
 );
 
 pub fn init() {
     allocator.offset = 0;
     allocator.stack = sp() + 8;
     allocator.base = null;
-    allocator.bibop_table = null; // No longer used, but kept for struct layout consistency
 }
 
 pub fn alloc(size: int) -> *any {
@@ -1021,15 +1081,11 @@ fn collect() {
 
     // --- Teardown Old Space ---
     munmap(allocator.base, allocator.size);
-    if allocator.bibop_table != null { // For safety, if it was ever allocated
-        munmap(allocator.bibop_table, allocator.size / *CARD_SIZE);
-    }
 
     // --- Activate New Space ---
     allocator.base = to_space;
     allocator.size = new_heap_size;
     allocator.offset = to_space_offset;
-    allocator.bibop_table = null; // Mark as unused
 }
 
 fn collect_ptr(ref_ptr: **any, to_space: *any, offset: int) -> int {

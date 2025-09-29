@@ -26,9 +26,9 @@ pub enum Type {
 impl Type {
     pub fn size(&self) -> u32 {
         match self {
-            Type::Struct(map) => map.iter().map(|(_, (ty, _))| ty.size()).sum(),
+            Type::Struct(map) => map.iter().map(|(_, (ty, _))| ty.aligned_size()).sum(),
             Type::Array { inner, length } => *length as u32 * inner.size(),
-            Type::Tuple(tys) => tys.iter().map(|ty| ty.size()).sum(),
+            Type::Tuple(tys) => tys.iter().map(|ty| ty.aligned_size()).sum(),
             Type::Result(ty, err) => ty.size().max(err.size()) + 8,
             Type::Option(ty) => ty.size() + 8,
             Type::Range | Type::Slice { .. } | Type::List { .. } => 16,
@@ -131,6 +131,15 @@ impl Type {
                 k1.match_generics(k2, generics)?;
                 v1.match_generics(v2, generics)
             }
+            (Type::Fn { arg_types: a_args, ret: a_ret }, Type::Fn { arg_types: b_args, ret: b_ret }) => {
+                if a_args.len() != b_args.len() {
+                    return Err("Function argument count mismatch".to_string());
+                }
+                for (a_arg, b_arg) in a_args.iter().zip(b_args.iter()) {
+                    a_arg.match_generics(b_arg, generics)?;
+                }
+                a_ret.match_generics(b_ret, generics)
+            }
             _ => {
                 if self == expected {
                     Ok(())
@@ -160,6 +169,10 @@ impl Type {
             Type::HashMap { key, value } => Type::HashMap {
                 key: Box::new(key.substitute_generics(generics)),
                 value: Box::new(value.substitute_generics(generics)),
+            },
+            Type::Fn { arg_types, ret } => Type::Fn {
+                arg_types: arg_types.iter().map(|t| t.substitute_generics(generics)).collect(),
+                ret: Box::new(ret.substitute_generics(generics)),
             },
             Type::Struct(fields) => {
                 let mut i = 0;
@@ -233,7 +246,7 @@ impl Display for Type {
             Type::HashMap { key, value } => write!(f, "{{{key}: {value}}}"),
             Type::Fn { arg_types, ret } => {
                 write!(f, "fn")?;
-                write_vec(f, arg_types);
+                write_vec(f, arg_types)?;
                 write!(f, " -> {ret}")
             }
         }

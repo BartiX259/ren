@@ -216,11 +216,11 @@ impl<'a> Lower<'a> {
                         offset: self.salloc_offset,
                         op: "=".to_string(),
                         term: r,
-                        size: expr.ty.size(),
+                        size: expr.ty.aligned_size(),
                     },
                     expr.span.end,
                 );
-                self.salloc_offset += expr.ty.size() as i64;
+                self.salloc_offset += expr.ty.aligned_size() as i64;
             }
         }
         if is_salloc {
@@ -541,11 +541,11 @@ impl<'a> Lower<'a> {
                         offset: self.salloc_offset,
                         op: "=".to_string(),
                         term: r,
-                        size: expr.ty.size(),
+                        size: expr.ty.aligned_size(),
                     },
                     expr.span.end,
                 );
-                self.salloc_offset += expr.ty.size() as i64;
+                self.salloc_offset += expr.ty.aligned_size() as i64;
             }
         }
         if is_salloc {

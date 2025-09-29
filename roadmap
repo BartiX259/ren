@@ -3,6 +3,7 @@ Compiler features:
 - Floats (?)
 - if let {} else err {} (?)
 - Improve arg parsing message
+- Closures
 
 Optimizations:
 - remove temporary stack variables
