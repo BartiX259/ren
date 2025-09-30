@@ -103,7 +103,6 @@ impl Type {
                 a.match_generics(b, generics)
             }
             (Type::Slice { inner: a }, Type::Array { inner: b, .. }) | (Type::Array { inner: a, .. }, Type::Slice { inner: b }) => {
-                println!("{}, {}", a, b);
                 a.match_generics(b, generics)
             }
             (Type::Struct(a_fields), Type::Struct(b_fields)) => {

@@ -663,6 +663,7 @@ impl Validate {
         }
 
         self.cur_func = Some("main".to_string());
+        self.cur_ret = ty;
 
         self.scope(&mut decl.scope)?;
 
@@ -915,11 +916,7 @@ impl Validate {
                     } else {
                         Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
                     }
-                } else
-                // if ty1.size() > 8 || ty2.size() > 8 {
-                //     panic!("{:?}\n\n{:?}", bin.lhs, bin.rhs);
-                // }
-                if ty1 == ty2 {
+                } else if ty1 == ty2 {
                     Ok(Type::Bool)
                 } else {
                     if let Ok(ty) = Self::type_cast(ty1.clone(), ty2.clone(), bin.lhs.span, false) {

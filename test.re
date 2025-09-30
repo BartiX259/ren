@@ -1,9 +1,7 @@
 import lib/std
 
 fn main() {
-    let names = ["A", "B"];
-    let scores = [99, 88, 77];
-    for name, score in zip(names, scores) {
-        print("{name}: {score}\n");
-    }
+    let l = [1, 2, 3];
+    let j = find(l, 5);
+    print(j == none);
 }

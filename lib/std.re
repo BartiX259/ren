@@ -176,6 +176,18 @@ pub fn cmp(l: *char, r: <char>) -> bool {
     return false;
 }
 
+pub fn cmp<T>(l: ?T, r: ?T) -> bool {
+    if let okl = l {
+        if let okr = r {
+            return okl == okr;
+        }
+        return false;
+    } else if let okr = r {
+        return false;
+    }
+    return true;
+}
+
 pub fn cmp<T>(l: <T>, r: <T>) -> bool {
     if len(l) != len(r) {
         return false;
@@ -675,7 +687,7 @@ pub fn insert<K, V>(map_ref: *{K: V}, key: K, value: V) {
 }
 
 pub fn remove<K, V>(map: {K: V}, key: K) -> ?V {
-    if map == null {
+    if (map as *any) == null {
         return none;
     }
     let capacity = *(map as *int - 1) / sizeof((int, K, V));
