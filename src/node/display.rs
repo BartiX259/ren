@@ -1,5 +1,5 @@
-use std::fmt;
 use crate::node; // Assuming your AST structs are in crate::node
+use std::fmt;
 
 // types::Type (resolved type) already has Display, used as crate::types::Type
 // helpers::StringLit already has Display, used as crate::helpers::StringLit
@@ -25,11 +25,10 @@ fn indent_lines(text: &str, indent: &str) -> String {
     // If the original text ended with a newline, preserve it.
     // text.lines() drops trailing newline.
     if text.ends_with('\n') && !result.ends_with('\n') {
-         result.push('\n');
+        result.push('\n');
     }
     result
 }
-
 
 // ============== Display for node::PosStr ==============
 impl fmt::Display for node::PosStr {
@@ -56,22 +55,112 @@ impl fmt::Display for node::TypeKind {
             node::TypeKind::Tuple(types) => {
                 write!(f, "(")?;
                 for (i, t) in types.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", t)?;
                 }
-                if types.len() == 1 { write!(f, ",")?; }
+                if types.len() == 1 {
+                    write!(f, ",")?;
+                }
                 write!(f, ")")
             }
             node::TypeKind::Struct(names, types) => {
                 write!(f, "struct {{ ")?;
                 for (i, (name, ty)) in names.iter().zip(types.iter()).enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}: {}", name, ty)?;
                 }
                 write!(f, " }}")
             }
             node::TypeKind::Result(ok_t, err_t) => write!(f, "Result<{}, {}>", ok_t, err_t),
+            node::TypeKind::Option(t) => write!(f, "Option<{}>", t),
+            node::TypeKind::Map(k, v) => write!(f, "Map<{}, {}>", k, v),
+            node::TypeKind::Fn(args, ret) => {
+                write!(f, "fn(")?;
+                for (i, t) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", t)?;
+                }
+                write!(f, ")")?;
+                if let Some(ret_type) = ret {
+                    write!(f, " -> {}", ret_type)?;
+                }
+                Ok(())
+            }
         }
+    }
+}
+
+// ============== Display for Helper Node Types ==============
+
+impl fmt::Display for node::Capture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            node::Capture::Single(s) => write!(f, "{}", s),
+            node::Capture::Multiple(names, has_brackets) => {
+                if *has_brackets {
+                    write!(f, "[")?;
+                } else {
+                    write!(f, "(")?;
+                }
+                for (i, name) in names.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", name)?;
+                }
+                if *has_brackets {
+                    write!(f, "]")
+                } else {
+                    write!(f, ")")
+                }
+            }
+        }
+    }
+}
+
+impl fmt::Display for node::Unpack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(brackets) = &self.brackets {
+            write!(f, "{}", brackets)?;
+        }
+        write!(f, "{}", self.lhs)?;
+        if let Some(rhs) = &self.rhs {
+            write!(f, ", {}", rhs)?;
+        }
+        write!(f, " = {}", self.expr)
+    }
+}
+
+impl fmt::Display for node::IfKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            node::IfKind::Expr(e) => write!(f, "{}", e),
+            node::IfKind::Unpack(u) => write!(f, "let {}", u),
+            node::IfKind::None => Ok(()),
+        }
+    }
+}
+
+impl fmt::Display for node::FnSig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}(", self.name)?;
+        for (i, ty_arg) in self.arg_types.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", ty_arg)?;
+        }
+        write!(f, ")")?;
+        if let Some(decl_type) = &self.decl_type {
+            write!(f, " -> {}", decl_type)?;
+        }
+        Ok(())
     }
 }
 
@@ -81,10 +170,25 @@ impl fmt::Display for node::ArrLit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
         for (i, expr) in self.exprs.iter().enumerate() {
-            if i > 0 { write!(f, ", ")?; }
+            if i > 0 {
+                write!(f, ", ")?;
+            }
             write!(f, "{}", expr)?;
         }
         write!(f, "]")
+    }
+}
+
+impl fmt::Display for node::MapLit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{{")?;
+        for (i, (key, value)) in self.keys.iter().zip(&self.values).enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}: {}", key, value)?;
+        }
+        write!(f, "}}")
     }
 }
 
@@ -92,7 +196,9 @@ impl fmt::Display for node::StructLit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{{ ")?;
         for (i, (name, expr)) in self.field_names.iter().zip(&self.field_exprs).enumerate() {
-            if i > 0 { write!(f, ", ")?; }
+            if i > 0 {
+                write!(f, ", ")?;
+            }
             write!(f, "{}: {}", name, expr)?;
         }
         write!(f, " }}")
@@ -103,7 +209,9 @@ impl fmt::Display for node::Call {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}(", self.name)?;
         for (i, arg) in self.args.iter().enumerate() {
-            if i > 0 { write!(f, ", ")?; }
+            if i > 0 {
+                write!(f, ", ")?;
+            }
             write!(f, "{}", arg)?;
         }
         write!(f, ")")
@@ -118,10 +226,13 @@ impl fmt::Display for node::BuiltIn {
             node::BuiltInKind::StackPointer => "stack_pointer",
             node::BuiltInKind::Sizeof => "sizeof",
             node::BuiltInKind::Param => "param",
+            node::BuiltInKind::IsType => "is_type",
         };
         write!(f, "{}(", name)?;
         for (i, arg) in self.args.iter().enumerate() {
-            if i > 0 { write!(f, ", ")?; }
+            if i > 0 {
+                write!(f, ", ")?;
+            }
             write!(f, "{}", arg)?;
         }
         write!(f, ")")
@@ -152,23 +263,28 @@ impl fmt::Display for node::Expr {
         match &self.kind {
             node::ExprKind::IntLit(val) => write!(f, "{}", val),
             node::ExprKind::CharLit(val) => {
-                if let Some(c) = std::char::from_u32(*val) {
-                    write!(f, "'{}'", c.escape_default().collect::<String>())
-                } else {
-                    write!(f, "'\\u{{{:x}}}'", val)
-                }
+                write!(
+                    f,
+                    "'{}'",
+                    (*val as char).escape_default().collect::<String>()
+                )
             }
             node::ExprKind::BoolLit(val) => write!(f, "{}", val),
             node::ExprKind::Null => write!(f, "null"),
+            node::ExprKind::None => write!(f, "none"),
             node::ExprKind::ArrLit(arr_lit) => write!(f, "{}", arr_lit),
             node::ExprKind::ListLit(arr_lit, _label) => write!(f, "list{}", arr_lit), // e.g. list[...]
+            node::ExprKind::MapLit(map_lit) => write!(f, "{}", map_lit),
             node::ExprKind::StructLit(struct_lit) => write!(f, "{}", struct_lit),
             node::ExprKind::StringLit(fragments, _label) => {
                 write!(f, "(")?;
                 for fragment in fragments {
                     match fragment {
                         node::StringFragment::Lit(lit_val) => write!(f, "{}", lit_val)?, // crate::helpers::StringLit
-                        node::StringFragment::Expr { expr, str_fn: _ } => write!(f, "{{{}}}", expr)?,
+                        node::StringFragment::Expr {
+                            expr,
+                            str_fn: _,
+                        } => write!(f, "{{{}}}", expr)?,
                     }
                 }
                 write!(f, ")")
@@ -176,10 +292,14 @@ impl fmt::Display for node::Expr {
             node::ExprKind::TupleLit(exprs) => {
                 write!(f, "(")?;
                 for (i, expr_item) in exprs.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", expr_item)?;
                 }
-                if exprs.len() == 1 { write!(f, ",")?; }
+                if exprs.len() == 1 {
+                    write!(f, ",")?;
+                }
                 write!(f, ")")
             }
             node::ExprKind::Variable(name) => write!(f, "{}", name),
@@ -189,17 +309,6 @@ impl fmt::Display for node::Expr {
             node::ExprKind::UnExpr(un_expr) => write!(f, "{}", un_expr),
             node::ExprKind::PostUnExpr(un_expr) => write!(f, "({}{})", un_expr.expr, un_expr.op),
             node::ExprKind::TypeCast(type_cast) => write!(f, "{}", type_cast),
-            _ => todo!()
-        }
-    }
-}
-
-// ============== Display for node::LetOrExpr (used in For loops) ==============
-impl fmt::Display for node::LetOrExpr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            node::LetOrExpr::Let(l) => write!(f, "let {} = {}", l.name, l.expr),
-            node::LetOrExpr::Expr(e) => write!(f, "{}", e),
         }
     }
 }
@@ -208,15 +317,38 @@ impl fmt::Display for node::LetOrExpr {
 
 impl fmt::Display for node::Let {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // self.expr.ty is crate::types::Type
-        write!(f, "let {}: {} = {};", self.name, self.expr.ty, self.expr)
+        write!(
+            f,
+            "let {}: {} = {};",
+            self.capture, self.expr.ty, self.expr
+        )
+    }
+}
+
+impl fmt::Display for node::ElseExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "let {} else {}", self.unpack, self.else_expr)
+    }
+}
+
+impl fmt::Display for node::ElseScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "let {} else {{", self.unpack)?;
+        if !self.scope.stmts.is_empty() {
+            for stmt_in_scope in &self.scope.stmts {
+                let formatted_stmt = format!("{}", stmt_in_scope);
+                write!(f, "\n{}", indent_lines(&formatted_stmt, INDENT))?;
+            }
+            write!(f, "\n}}")
+        } else {
+            write!(f, "}}")
+        }
     }
 }
 
 impl fmt::Display for node::Decl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // self.ty is crate::types::Type
-        write!(f, "let {}: {};", self.name, self.ty)
+        write!(f, "let {}: {};", self.name, self.r#type)
     }
 }
 
@@ -228,7 +360,22 @@ impl fmt::Display for node::TypeDecl {
 
 impl fmt::Display for node::Enum {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "enum {}", self.name)
+        writeln!(f, "enum {} {{", self.name)?;
+        for (name, ty) in &self.variants {
+            write!(f, "{}", INDENT)?;
+            if let Some(t) = ty {
+                writeln!(f, "{}({}),", name, t)?;
+            } else {
+                writeln!(f, "{},", name)?;
+            }
+        }
+        write!(f, "}}")
+    }
+}
+
+impl fmt::Display for node::Extern {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "extern {};", self.sig)
     }
 }
 
@@ -238,14 +385,18 @@ impl fmt::Display for node::Fn {
         if !self.generics.is_empty() {
             write!(f, "<")?;
             for (i, gen) in self.generics.iter().enumerate() {
-                if i > 0 { write!(f, ", ")?; }
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
                 write!(f, "{}", gen)?;
             }
             write!(f, ">")?;
         }
         write!(f, "(")?;
         for (i, (name, ty)) in self.arg_names.iter().zip(&self.arg_types).enumerate() {
-            if i > 0 { write!(f, ", ")?; }
+            if i > 0 {
+                write!(f, ", ")?;
+            }
             write!(f, "{}: {}", name, ty)?; // ty is node::Type
         }
         write!(f, ")")?;
@@ -253,8 +404,8 @@ impl fmt::Display for node::Fn {
             write!(f, " -> {}", decl_type)?; // decl_type is node::Type
         }
         write!(f, " {{")?;
-        if !self.scope.is_empty() {
-            for stmt_in_scope in &self.scope {
+        if !self.scope.stmts.is_empty() {
+            for stmt_in_scope in &self.scope.stmts {
                 let formatted_stmt = format!("{}", stmt_in_scope);
                 write!(f, "\n{}", indent_lines(&formatted_stmt, INDENT))?;
             }
@@ -269,7 +420,9 @@ impl fmt::Display for node::MainFn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "fn main(")?;
         for (i, (name, ty)) in self.arg_names.iter().zip(&self.arg_types).enumerate() {
-            if i > 0 { write!(f, ", ")?; }
+            if i > 0 {
+                write!(f, ", ")?;
+            }
             write!(f, "{}: {}", name, ty)?; // ty is node::Type
         }
         write!(f, ")")?;
@@ -277,8 +430,8 @@ impl fmt::Display for node::MainFn {
             write!(f, " -> {}", decl_type)?; // decl_type is node::Type
         }
         write!(f, " {{")?;
-        if !self.scope.is_empty() {
-            for stmt_in_scope in &self.scope {
+        if !self.scope.stmts.is_empty() {
+            for stmt_in_scope in &self.scope.stmts {
                 let formatted_stmt = format!("{}", stmt_in_scope);
                 write!(f, "\n{}", indent_lines(&formatted_stmt, INDENT))?;
             }
@@ -312,19 +465,26 @@ impl fmt::Display for node::Ret {
 
 impl fmt::Display for node::If {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fn fmt_if_recursive(sif: &node::If, f: &mut fmt::Formatter<'_>, is_else_context: bool) -> fmt::Result {
+        fn fmt_if_recursive(
+            sif: &node::If,
+            f: &mut fmt::Formatter<'_>,
+            is_else_context: bool,
+        ) -> fmt::Result {
             if is_else_context {
                 write!(f, " else ")?;
             }
 
-            if let Some(expr) = &sif.expr {
-                write!(f, "if {} {{", expr)?;
-            } else {
-                write!(f, "{{")?; // This is an `else {}` block
+            match &sif.cond {
+                node::IfKind::None => {
+                    write!(f, "{{")?;
+                }
+                _ => {
+                    write!(f, "if {} {{", sif.cond)?;
+                }
             }
 
-            if !sif.scope.is_empty() {
-                for stmt_in_scope in &sif.scope {
+            if !sif.scope.stmts.is_empty() {
+                for stmt_in_scope in &sif.scope.stmts {
                     let formatted_stmt = format!("{}", stmt_in_scope);
                     write!(f, "\n{}", indent_lines(&formatted_stmt, INDENT))?;
                 }
@@ -342,11 +502,63 @@ impl fmt::Display for node::If {
     }
 }
 
+impl fmt::Display for node::Match {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "match {} {{", self.match_expr)?;
+        if !self.branches.is_empty() {
+            for (expr, scope) in &self.branches {
+                let scope_str = if scope.stmts.is_empty() {
+                    String::from(" {}")
+                } else {
+                    let mut s = String::from(" {\n");
+                    for stmt in &scope.stmts {
+                        s.push_str(&indent_lines(&format!("{}", stmt), INDENT));
+                        s.push('\n');
+                    }
+                    s.push('}');
+                    s
+                };
+                let branch_str = format!("{} =>{}", expr, scope_str);
+                write!(f, "\n{}", indent_lines(&branch_str, INDENT))?;
+            }
+            write!(f, "\n}}")
+        } else {
+            write!(f, "}}")
+        }
+    }
+}
+
+impl fmt::Display for node::MatchType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "match type {} {{", self.match_type)?;
+        if !self.branches.is_empty() {
+            for (ty, scope, _is_default) in &self.branches {
+                let scope_str = if scope.stmts.is_empty() {
+                    String::from(" {}")
+                } else {
+                    let mut s = String::from(" {\n");
+                    for stmt in &scope.stmts {
+                        s.push_str(&indent_lines(&format!("{}", stmt), INDENT));
+                        s.push('\n');
+                    }
+                    s.push('}');
+                    s
+                };
+                let branch_str = format!("{} =>{}", ty, scope_str);
+                write!(f, "\n{}", indent_lines(&branch_str, INDENT))?;
+            }
+            write!(f, "\n}}")
+        } else {
+            write!(f, "}}")
+        }
+    }
+}
+
 impl fmt::Display for node::Loop {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "loop {{")?;
-        if !self.scope.is_empty() {
-            for stmt_in_scope in &self.scope {
+        if !self.scope.stmts.is_empty() {
+            for stmt_in_scope in &self.scope.stmts {
                 let formatted_stmt = format!("{}", stmt_in_scope);
                 write!(f, "\n{}", indent_lines(&formatted_stmt, INDENT))?;
             }
@@ -360,23 +572,8 @@ impl fmt::Display for node::Loop {
 impl fmt::Display for node::While {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "while {} {{", self.expr)?;
-        if !self.scope.is_empty() {
-            for stmt_in_scope in &self.scope {
-                let formatted_stmt = format!("{}", stmt_in_scope);
-                write!(f, "\n{}", indent_lines(&formatted_stmt, INDENT))?;
-            }
-            write!(f, "\n}}")
-        } else {
-            write!(f, "}}")
-        }
-    }
-}
-
-impl fmt::Display for node::For {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "for {}; {}; {} {{", self.init, self.cond, self.incr)?;
-        if !self.scope.is_empty() {
-            for stmt_in_scope in &self.scope {
+        if !self.scope.stmts.is_empty() {
+            for stmt_in_scope in &self.scope.stmts {
                 let formatted_stmt = format!("{}", stmt_in_scope);
                 write!(f, "\n{}", indent_lines(&formatted_stmt, INDENT))?;
             }
@@ -390,8 +587,8 @@ impl fmt::Display for node::For {
 impl fmt::Display for node::ForIn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "for {} in {} {{", self.capture, self.expr)?;
-        if !self.scope.is_empty() {
-            for stmt_in_scope in &self.scope {
+        if !self.scope.stmts.is_empty() {
+            for stmt_in_scope in &self.scope.stmts {
                 let formatted_stmt = format!("{}", stmt_in_scope);
                 write!(f, "\n{}", indent_lines(&formatted_stmt, INDENT))?;
             }
@@ -404,16 +601,7 @@ impl fmt::Display for node::ForIn {
 
 impl fmt::Display for node::Syscall {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "syscall {} {}(", self.id, self.name)?;
-        for (i, ty_arg) in self.types.iter().enumerate() {
-            if i > 0 { write!(f, ", ")?; }
-            write!(f, "{}", ty_arg)?; // ty_arg is node::Type
-        }
-        write!(f, ")")?;
-        if let Some(decl_type) = &self.decl_type {
-            write!(f, " -> {}", decl_type)?; // decl_type is node::Type
-        }
-        write!(f, ";")
+        write!(f, "syscall {} {};", self.id, self.sig)
     }
 }
 
@@ -423,22 +611,26 @@ impl fmt::Display for node::Stmt {
         match self {
             node::Stmt::Expr(expr_stmt) => write!(f, "{};", expr_stmt),
             node::Stmt::Let(l) => write!(f, "{}", l),
+            node::Stmt::LetElseExpr(lee) => write!(f, "{};", lee),
+            node::Stmt::LetElseScope(les) => write!(f, "{}", les),
             node::Stmt::Decl(d) => write!(f, "{}", d),
             node::Stmt::Fn(sfn) => write!(f, "{}", sfn),
             node::Stmt::MainFn(mfn) => write!(f, "{}", mfn),
             node::Stmt::TypeDecl(td) => write!(f, "{}", td),
             node::Stmt::Enum(e) => write!(f, "{}", e),
+            node::Stmt::Extern(e) => write!(f, "{}", e),
             node::Stmt::Decorator(dec) => write!(f, "{}", dec),
             node::Stmt::Ret(r) => write!(f, "{}", r),
             node::Stmt::If(sif) => write!(f, "{}", sif),
+            node::Stmt::Match(m) => write!(f, "{}", m),
+            node::Stmt::MatchType(mt) => write!(f, "{}", mt),
             node::Stmt::Loop(sl) => write!(f, "{}", sl),
             node::Stmt::While(sw) => write!(f, "{}", sw),
-            node::Stmt::For(sfor) => write!(f, "{}", sfor),
             node::Stmt::ForIn(sforin) => write!(f, "{}", sforin),
             node::Stmt::Break(_pos_id) => write!(f, "break;"),
             node::Stmt::Continue(_pos_id) => write!(f, "continue;"),
             node::Stmt::Syscall(sc) => write!(f, "{}", sc),
-            _ => todo!()
+            node::Stmt::Marker => write!(f, "<marker>;"),
         }
     }
 }

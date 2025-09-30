@@ -1,5 +1,5 @@
 use crate::types;
-//mod display;
+mod display;
 
 #[derive(Debug, Clone)]
 pub struct PosStr {

@@ -369,7 +369,17 @@ impl Process {
                 }
             }
         }
-        if bin.op.str.starts_with("=") && bin.op.str != "==" {
+        if (bin.op.str.starts_with("==") || bin.op.str.starts_with("!=")) && bin.op.str.len() != 2 {
+            let cmp_fn = &bin.op.str[2..];
+            let span = lhs.span.add(rhs.span);
+            let call = node::ExprKind::Call(node::Call { name: self.pos_str(cmp_fn.to_string()), args: vec![lhs, rhs] });
+            if bin.op.str.starts_with("!") {
+                return node::ExprKind::UnExpr(node::UnExpr { expr: Box::new(node::Expr { kind: call, ty: Type::Bool, span }), op: self.pos_str("!".to_string()) });
+            } else {
+                return call;
+            }
+        }
+        if bin.op.str.starts_with("=") && !bin.op.str.starts_with("==") {
             if let node::ExprKind::Call(c) = &lhs.kind {
                 let ins_fn = bin.op.str.split("=").last().unwrap();
                 let mut args = c.args.clone();
@@ -480,7 +490,7 @@ impl Process {
                 match &lhs.ty {
                     Type::Tuple(v) => {
                         let node::ExprKind::IntLit(i) = rhs.kind else { unreachable!() };
-                        let o: u32 = v.iter().take(i as usize).map(|ty| ty.size()).sum();
+                        let o: u32 = v.iter().take(i as usize).map(|ty| ty.aligned_size()).sum();
                         let mut temp = rhs;
                         temp.kind = node::ExprKind::IntLit(o as i64);
                         if let Type::Pointer(_) = lhs.ty {

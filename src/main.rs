@@ -31,7 +31,8 @@ struct Config {
     compile_only: bool,
     diagnostics_mode: bool,
     print_ir_symbols: bool,
-    print_ir: Option<String>
+    print_ir: Option<String>,
+    print_ast: Option<String>
 }
 
 /// Parses command-line arguments into a Config struct.
@@ -45,7 +46,8 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
         compile_only: false,
         diagnostics_mode: false,
         print_ir_symbols: false,
-        print_ir: None
+        print_ir: None,
+        print_ast: None
     };
 
     // Check for a help flag first
@@ -60,6 +62,7 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
              --diagnostics          Output errors in a machine-readable format for IDEs.\n\
              --print-ir-symbols     Print all ir symbols.
              --print-ir <symbol>    Print the given symbol in the ir.
+             --print-ast <symbol>   Print the given symbol in the ast.
              -h, --help             Display this help message.",
             args.get(0).unwrap_or(&"compiler".to_string())
         );
@@ -98,6 +101,13 @@ fn parse_config(args: &[String]) -> Result<Config, String> {
                     config.print_ir = Some(val.clone());
                 } else {
                     return Err("Expected a function name after '--print-ir' flag.".to_string());
+                }
+            }
+            "--print-ast" => {
+                if let Some(val) = args_iter.next() {
+                    config.print_ast = Some(val.clone());
+                } else {
+                    return Err("Expected a function name after '--print_ast' flag.".to_string());
                 }
             }
             _ => {
@@ -429,6 +439,17 @@ fn gen_module(module: node::Module, mut ir: HashMap<String, ir::Symbol>, config:
     let res_file = format!("{}.S", stem.to_string_lossy());
 
     let processed_stmts = process::process(module);
+
+    if let Some(print_ast) = &config.print_ast {
+        for s in &processed_stmts {
+            if let node::Stmt::Fn(f) = s {
+                if f.name.str == *print_ast {
+                    println!("{}", display_path);
+                    println!("{}", f);
+                }
+            }
+        }
+    }
 
     lower::lower(processed_stmts, &mut ir);
 

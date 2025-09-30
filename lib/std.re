@@ -162,18 +162,6 @@ pub fn cmp(l: int, r: int) -> bool {
     return l == r;
 }
 
-pub fn cmp(l: <char>, r: <char>) -> bool {
-    if len(l) != len(r) {
-        return false;
-    }
-    for i in 0..len(r) {
-        if l[i] != r[i] {
-            return false;
-        }
-    }
-    return true;
-}
-
 pub fn cmp(l: *char, r: <char>) -> bool {
     let found = true;
     for i in 0..len(r) {
@@ -186,6 +174,18 @@ pub fn cmp(l: *char, r: <char>) -> bool {
         return true;
     }
     return false;
+}
+
+pub fn cmp<T>(l: <T>, r: <T>) -> bool {
+    if len(l) != len(r) {
+        return false;
+    }
+    for i in 0..len(r) {
+        if l[i] != r[i] {
+            return false;
+        }
+    }
+    return true;
 }
 
 // -- PRINTING --
@@ -1228,14 +1228,16 @@ fn get_forward(ptr: *any) -> *any {
 }
 
 pub fn print_heap() {
-    print("HEAP: ");
+    write(1, "HEAP: " as *char, 6);
     let ptr = (allocator.base) as *int;
     while ptr < allocator.base + allocator.offset {
-        print(*ptr);
-        print(" :: ");
+        decl int_buf: char[32];
+        let end = int2str(*ptr, &int_buf as *char);
+        write(1, &int_buf as *char, end - &int_buf);
+        write(1, " :: " as *char, 4);
         ptr += 1;
     }
-    print('\n');
+    write(1, "\n" as *char, 1);
 }
 
 pub fn print_stack(offset: int, len: int) {

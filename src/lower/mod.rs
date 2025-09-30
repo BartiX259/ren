@@ -701,8 +701,54 @@ impl<'a> Lower<'a> {
         Term::Temp(self.temp_count)
     }
 
+    fn get_salloc_ptr(&mut self, salloc: Term, pos_id: usize) -> Term {
+        if let Term::Pointer(_) = salloc {
+            if self.salloc_offset == 0 {
+                return salloc;
+            }
+            self.temp_count += 1;
+            self.push_op(
+                Op::BinOp {
+                    res: Some(Term::Temp(self.temp_count)),
+                    lhs: salloc.clone(),
+                    op: "+".to_string(),
+                    rhs: Term::IntLit(self.salloc_offset),
+                    size: 8,
+                },
+                pos_id,
+            );
+        } else {
+            self.temp_count += 1;
+            self.push_op(Op::UnOp { res: Term::Temp(self.temp_count), op: "&".to_string(), term: salloc, size: 8 }, pos_id);
+            if self.salloc_offset == 0 {
+                return Term::Temp(self.temp_count);
+            }
+            self.temp_count += 1;
+            self.push_op(
+                Op::BinOp {
+                    res: Some(Term::Temp(self.temp_count)),
+                    lhs: Term::Temp(self.temp_count - 1),
+                    op: "+".to_string(),
+                    rhs: Term::IntLit(self.salloc_offset),
+                    size: 8,
+                },
+                pos_id,
+            );
+        }
+        Term::Temp(self.temp_count)
+    }
+
     fn un_expr(&mut self, un: &node::UnExpr, ty: &Type) -> Term {
         let size = ty.aligned_size();
+        if un.op.str == "*" && ty.salloc() {
+            if let Some(p) = self.cur_salloc.clone() {
+                let term = self.expr(&un.expr);
+                let s = self.get_salloc_ptr(p, un.op.pos_id);
+                self.push_op(Op::Copy { from: term, to: s.clone(), size: Term::IntLit(size as i64) }, un.op.pos_id);
+                self.salloc_offset += size as i64;
+                return s;
+            }
+        }
         if un.op.str == "*" && size <= 8 {
             if let node::ExprKind::BinExpr(bin) = &un.expr.kind {
                 if bin.op.str == "+" {

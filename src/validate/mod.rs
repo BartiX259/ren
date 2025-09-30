@@ -904,9 +904,18 @@ impl Validate {
             }
             "==" | "!=" | "<" | ">" | "<=" | ">=" => {
                 // Comparison operators
-                // if ty1.size() > 8 || ty2.size() > 8 {
-                //     Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
-                // } else
+                if ty1.size() > 8 || ty2.size() > 8 {
+                    if bin.op.str == "==" || bin.op.str == "!=" {
+                        let mut args = vec![*bin.lhs.clone(), *bin.rhs.clone()];
+                        let cmp_fn = self.find_fn("cmp", vec![ty1.clone(), ty2.clone()], Some(Type::Bool), &mut args, span)?;
+                        bin.lhs = Box::new(args.swap_remove(0));
+                        bin.rhs = Box::new(args.swap_remove(0));
+                        bin.op.str += &cmp_fn;
+                        Ok(Type::Bool)
+                    } else {
+                        Err(SemanticError::TypeMismatch(bin.op.clone(), ty1, ty2))
+                    }
+                } else
                 // if ty1.size() > 8 || ty2.size() > 8 {
                 //     panic!("{:?}\n\n{:?}", bin.lhs, bin.rhs);
                 // }

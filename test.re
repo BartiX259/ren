@@ -1,15 +1,9 @@
 import lib/std
-import lib/json
 
 fn main() {
-    let counter = 0;
-    decl result: int;
-    loop {
-        counter += 1;
-        if counter == 10 {
-            result = counter * 2;
-            break;
-        }
+    let names = ["A", "B"];
+    let scores = [99, 88, 77];
+    for name, score in zip(names, scores) {
+        print("{name}: {score}\n");
     }
-    print("The result is {result}.\n");
 }
